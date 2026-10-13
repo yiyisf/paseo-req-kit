@@ -5,7 +5,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentRuntime, RuntimeFactory, StepAgent, WaitOutcome } from "../src/runtime.js";
+import type { PaseoProfile } from "../src/paseo-profiles.js";
+import type { ActivityItem, AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, StepAgent, WaitOutcome } from "../src/runtime.js";
 
 export interface FakeBehavior {
   result?: Record<string, unknown>;
@@ -33,6 +34,12 @@ export interface FakeScenario {
   /** Behaviors by step key ("code_review-r2") or step id ("code_review"). */
   steps?: Record<string, FakeBehavior>;
   notifyFails?: boolean;
+  /** Agent profiles the daemon reports; null means they cannot be read. */
+  paseoProfiles?: PaseoProfile[] | null;
+  /** paseo.json service scripts of the chat's workspace. */
+  services?: { names: string[]; failing?: string[]; output?: string };
+  quota?: ProviderQuota[] | null;
+  activity?: ActivityItem[] | null;
 }
 
 const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
@@ -110,6 +117,7 @@ export const createRuntime: RuntimeFactory = async () => {
         key,
         role: input.role,
         provider: input.profile?.provider ?? null,
+        modeId: input.profile?.modeId ?? null,
         title: input.title,
         parentAgentId: input.parentAgentId,
         labels: input.labels,
@@ -189,6 +197,39 @@ export const createRuntime: RuntimeFactory = async () => {
     async notifyAgent(agentId, text) {
       record({ type: "notify", agentId, text });
       if (scenario.notifyFails) throw new Error("agent archived");
+    },
+    async listPaseoProfiles() {
+      return scenario.paseoProfiles === undefined ? [] : scenario.paseoProfiles;
+    },
+    async listServices(originAgentId) {
+      record({ type: "listServices", originAgentId });
+      return scenario.services?.names ?? null;
+    },
+    async startServices(originAgentId, names, readyTimeoutMs) {
+      record({ type: "startServices", originAgentId, names, readyTimeoutMs });
+      return names.map((name, i): ManagedService => {
+        const failing = scenario.services?.failing?.includes(name) ?? false;
+        return {
+          name,
+          url: failing ? null : `http://${name}--feature--repo.localhost:6767`,
+          port: failing ? null : 41000 + i,
+          running: !failing,
+          health: failing ? null : "healthy",
+          exitCode: failing ? 1 : null,
+          output: failing ? (scenario.services?.output ?? "Error: Cannot find module 'express'") : null,
+        };
+      });
+    },
+    async stopServices(originAgentId, names) {
+      record({ type: "stopServices", originAgentId, names });
+    },
+    async providerQuota(providers) {
+      record({ type: "providerQuota", providers });
+      return scenario.quota ?? null;
+    },
+    async recentActivity(agentId, limit) {
+      record({ type: "recentActivity", agentId, limit });
+      return scenario.activity ?? null;
     },
     async close() {
       record({ type: "close" });

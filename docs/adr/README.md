@@ -18,3 +18,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0014 外部通知只留接口，不内置任何 IM](0014-notifier-slot.md)
 - [0015 需求变更后增量继续，而不是从零重做](0015-incremental-continue.md)
 - [0016 一键升级：从 git 标签下载到 versions/ 再切换](0016-upgrade-from-tags.md)
+- [0017 用好 Paseo 自身的能力：profile、工作区脚本、用量和时间线](0017-use-paseo-capabilities.md)

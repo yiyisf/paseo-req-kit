@@ -82,6 +82,9 @@ interface FakeEvent {
   agentId?: string;
   role?: string;
   provider?: string | null;
+  modeId?: string | null;
+  names?: string[];
+  providers?: string[];
   title?: string;
   parentAgentId?: string | null;
   labels?: Record<string, string>;
@@ -859,7 +862,7 @@ test("评审小组：首轮方案审核和代码评审先由成员并行评审�
   const member = byKey("code_review-r1-p1");
   assert.equal(member.provider, "codex/panel-a");
   assert.equal(byKey("code_review-r1-p2").provider, "opencode/openai/panel-b");
-  assert.equal(byKey("code_review-r1").provider, null, "汇总者使用配置的 reviewer");
+  assert.equal(byKey("code_review-r1").provider, "codex/test-model", "汇总者使用配置的 reviewer");
   assert.match(member.title ?? "", /6-代码评审 评审小组·安全视角/);
   assert.match(byKey("code_review-r1-p2").title ?? "", /评审小组·成员 2/);
   const prompt = member.prompt ?? "";
@@ -1026,6 +1029,117 @@ test("简写：--feature 可以只写名称的一部分；--status 不写 --feat
   assert.equal(ambiguous.status, 2);
   assert.match(ambiguous.stderr, /对应多个需求/);
   assert.match(status("--feature", "nothing-like-this").stderr, /没有找到/);
+});
+
+const PASEO_PROFILES = [
+  { id: "p-1", name: "实现", provider: "claude", model: "opus-x", modeId: "bypassPermissions", notes: "写代码" },
+  { id: "p-2", name: "评审", provider: "codex", model: "gpt-x", modeId: "read-only" },
+];
+
+test("Paseo profile：角色写 profile 名称，启动时按 daemon 中的 profile 解析，自己写的字段优先", () => {
+  const env = setup({ agents: { builder: { paseoProfile: "实现" }, reviewer: { paseoProfile: "评审", modeId: "full-access" } } });
+  const { code, out } = runMain(env, { paseoProfiles: PASEO_PROFILES });
+  assert.equal(code, 0, out);
+  const byKey = (key: string) => events(env).find((e) => e.type === "start" && e.key === key)!;
+  assert.equal(byKey("design").provider, "claude/opus-x");
+  assert.equal(byKey("design").modeId, "bypassPermissions");
+  assert.equal(byKey("code_review-r1").provider, "codex/gpt-x");
+  assert.equal(byKey("code_review-r1").modeId, "full-access", "配置中写的 modeId 覆盖 profile 的");
+  assert.match(out, /builder：Paseo profile「实现」→ claude\/opus-x（模式 bypassPermissions）/);
+});
+
+test("Paseo profile：名称不存在时不启动，告诉对话现有哪些 profile", () => {
+  const env = setup({ agents: { builder: { paseoProfile: "实现者" }, reviewer: { provider: "codex/test-model", modeId: "full-access" } } });
+  const { code } = runMain(env, { paseoProfiles: PASEO_PROFILES });
+  assert.equal(code, 2);
+  assert.ok(!fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "state.json")), "拒绝启动时不留下状态文件");
+  const text = notifications(env).at(-1)?.text ?? "";
+  assert.match(text, /流水线没有启动：agents\.builder 使用的 Paseo profile「实现者」不存在。现有的 profile：「实现」、「评审」/);
+});
+
+test("Paseo 管理的服务：服务启动和验证前用当前代码重启 paseo.json 中的服务，报告前停止", () => {
+  const env = setup();
+  const { code, out } = runMain(env, {
+    steps: { design: { result: { has_runnable_service: true } } },
+    services: { names: ["web"] },
+  });
+  assert.equal(code, 0, out);
+  const all = events(env);
+  const order = all
+    .filter((e) => ["start", "startServices", "stopServices"].includes(e.type))
+    .map((e) => (e.type === "start" ? e.key : e.type));
+  assert.deepEqual(order, [
+    "design",
+    "design_review-r1",
+    "implement",
+    "code_review-r1",
+    "startServices",
+    "service_start",
+    "startServices",
+    "verify",
+    "stopServices",
+    "report",
+  ]);
+  const prompt = all.find((e) => e.type === "start" && e.key === "service_start")?.prompt ?? "";
+  assert.match(prompt, /Paseo 管理的服务：web → http:\/\/web--feature--repo\.localhost:6767（端口 41000），已启动，健康检查通过/);
+  assert.match(prompt, /# Paseo 管理的服务/);
+  assert.doesNotMatch(all.find((e) => e.type === "start" && e.key === "design")?.prompt ?? "", /Paseo 管理的服务/);
+  assert.deepEqual(all.find((e) => e.type === "stopServices")?.names, ["web"]);
+});
+
+test("Paseo 管理的服务：启动失败时把输出写到文件交给步骤；关闭后或没有发起对话时不使用", () => {
+  const env = setup();
+  assert.equal(runMain(env, { services: { names: ["web"], failing: ["web"] } }).code, 0);
+  const prompt = events(env).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "";
+  assert.match(prompt, new RegExp(`web 没有启动成功（退出码 1），最后的输出见 ${FEATURE}/\\.pipeline/services/web\\.log`));
+  assert.match(fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", "services", "web.log"), "utf8"), /Cannot find module/);
+
+  const off = setup({ paseoServices: "off" });
+  assert.equal(runMain(off, { services: { names: ["web"] } }).code, 0);
+  assert.ok(!events(off).some((e) => e.type === "listServices" || e.type === "startServices"));
+
+  const headless = setup();
+  assert.equal(runMain(headless, { services: { names: ["web"] } }, [], null).code, 0);
+  assert.ok(!events(headless).some((e) => e.type === "startServices"), "没有发起对话时不知道是哪个工作区");
+});
+
+test("额度提醒：开始前查看所用 agent 的订阅额度，接近用完时在对话里提醒一次，不阻止运行", () => {
+  const env = setup();
+  const quota = [
+    { provider: "claude", displayName: "Claude", window: "5 小时", usedPct: 92, resetsAt: null, tone: "warning" },
+    { provider: "codex", displayName: "Codex", window: "每周", usedPct: 30, resetsAt: null, tone: "ok" },
+  ] as const;
+  assert.equal(runMain(env, { quota: [...quota] }).code, 0);
+  assert.deepEqual(events(env).find((e) => e.type === "providerQuota")?.providers, ["claude", "codex"]);
+  const warnings = notifications(env).filter((n) => /额度提醒/.test(n.text ?? ""));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].text ?? "", /Claude 的「5 小时」额度已用 92%/);
+  assert.doesNotMatch(warnings[0].text ?? "", /Codex/);
+
+  const calm = setup();
+  assert.equal(runMain(calm, { quota: [{ ...quota[0], usedPct: 40, tone: "ok" as const }] }).code, 0);
+  assert.ok(!notifications(calm).some((n) => /额度提醒/.test(n.text ?? "")));
+});
+
+test("进度查询：运行中时附上当前步骤 agent 最近在做什么（从 Paseo 读取，读不到就省略）", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  const file = path.join(env.repo, FEATURE, ".pipeline", "state.json");
+  const s = state(env);
+  s.status = "running";
+  s.pid = process.pid;
+  s.history.push({ ...s.history.at(-1), key: "verify", stepId: "verify", agentId: "agent-live", outcome: "running", endedAt: null, round: null });
+  fs.writeFileSync(file, JSON.stringify(s));
+  const status = (scenario: FakeScenario) =>
+    spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--status"], {
+      encoding: "utf8",
+      env: fakeEnv(env, scenario),
+    }).stdout;
+  const live = status({ activity: [{ at: new Date().toISOString(), text: "运行命令：npm test" }] });
+  assert.match(live, /当前步骤：功能验证/);
+  assert.match(live, /「功能验证」的 agent 最近在做：\n  刚刚：运行命令：npm test/);
+  assert.ok(events(env).some((e) => e.type === "recentActivity" && e.agentId === "agent-live"));
+  assert.doesNotMatch(status({ activity: null }), /最近在做/);
 });
 
 test("prompts.local：同名文件替换随工具发布的提示词", () => {

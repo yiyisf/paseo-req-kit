@@ -1,18 +1,19 @@
 ---
 name: req-setup
-description: req-kit 项目接入。在项目根目录为 req-kit 生成或更新项目说明、验证方法（实际运行其中的命令）和项目配置，确认后提交。新项目第一次使用 /req 之前、项目的构建或测试方式变了、或用户输入 /req-setup 时使用。
+description: req-kit 项目接入。在项目根目录为 req-kit 生成或更新项目说明、验证方法（实际运行其中的命令）、Paseo 的 paseo.json 和项目配置，确认后提交。新项目第一次使用 /req 之前、项目的构建或测试方式变了、或用户输入 /req-setup 时使用。
 metadata:
   opencode/slash: "true"
 ---
 
 # req-kit 项目接入（{{REQ_KIT_VERSION}}）
 
-为当前项目生成三份文件，让流水线的每个步骤不必每次重新摸索这个项目：
+为当前项目生成以下文件，让流水线的每个步骤不必每次重新摸索这个项目：
 
 | 文件 | 内容 | 谁读 |
 | --- | --- | --- |
 | `.requirement-pipeline/project-notes.md` | 本项目的约定：包管理工具、目录结构、不能改的地方、提交信息格式、已知的坑 | 流水线每个步骤、`/req` 访谈前 |
 | `.requirement-pipeline/verify.md` | 验证方法：安装依赖、启动服务、运行测试、准备测试数据，命令都实际跑过 | 实现、修复、服务启动、验证、复验步骤 |
+| `paseo.json` | Paseo 的工作区设置（推荐）：新建 worktree 时自动安装依赖、复制本地配置；把常驻服务定义为由 Paseo 管理的服务，每个 worktree 分到独立的端口 | Paseo；流水线在服务启动和验证前通过 Paseo 启动这些服务 |
 | `.requirement-pipeline.json` | 项目配置（可选）：本项目用的 agent、默认档位、轮数、超时 | 流水线 |
 
 格式见 `{{REQ_KIT_ROOT}}/contracts/verify.md`。这个入口通常由开发同事或熟悉项目的测试同事运行。
@@ -55,6 +56,7 @@ metadata:
 - 外部服务（短信、支付、邮件）在本地怎么替代
 - 端到端验证用什么方式：现有工具，还是手工按步骤走
 - 这个项目的需求默认走哪个档位，要不要换 agent（不需要就不写项目配置）
+- 项目已经有 `paseo.json` 时，要不要由你补充；没有时，要不要生成（推荐生成，见第 5 步）
 
 ## 4. 实际运行验证命令
 
@@ -62,19 +64,25 @@ metadata:
 
 - 失败的命令不要写成可用。查明原因：是环境问题（缺少服务、缺少配置）就写明准备步骤后重试；是项目本身的问题就写进"已知问题"。
 - 启动的服务、容器在结束前关掉。
+- 生成了 `paseo.json` 的服务定义时，用 `PASEO_PORT=<一个空闲端口>` 手工跑一遍它的启动命令，确认服务确实监听这个端口，再关掉。
 - 不连接生产环境，不使用生产凭据，不触发真实的外部动作。
 
 ## 5. 写文件并展示
 
 - `verify.md`：按 `{{REQ_KIT_ROOT}}/contracts/verify.md` 的结构，第一行之后写"最后核对：<日期>（/req-setup，<全部命令已运行 / 哪些没能运行>）"。只写实际跑通的命令；跑不通的写在"已知问题"。
 - `project-notes.md`：一条一行，只写对做需求有影响的约定。例如"包管理用 pnpm，不要用 npm""数据库变更必须写成 migrations/ 下的迁移脚本""不要改动 legacy/ 目录""提交信息用 Conventional Commits 格式"。
+- `paseo.json`（Paseo 读取，格式见 Paseo 文档的 Git worktrees 一节）：
+  - `worktree.setup`：新建 worktree 后要执行的准备命令，通常是安装依赖（用锁文件对应的命令，例如 `npm ci`、`pnpm install --frozen-lockfile`），以及从主目录复制不提交的本地配置，例如 `cp "$PASEO_SOURCE_CHECKOUT_PATH/.env" .env`（文件不存在时不要报错：`[ -f "$PASEO_SOURCE_CHECKOUT_PATH/.env" ] && cp …`）。Windows 上 Paseo 用什么 shell 执行取决于安装方式，命令尽量写成 `npm`、`node` 这类跨平台的形式。
+  - `scripts`：常用的命令写成脚本（如 `test`、`lint`）；常驻服务写成 `"type": "service"`，启动命令必须监听 `$PASEO_PORT`（例如 `npm run dev -- --port $PASEO_PORT`），不要写死端口。服务之间互相调用时用 `$PASEO_SERVICE_<名称>_URL`。
+  - 已有 `paseo.json` 时只补充缺少的部分，不改别人写的内容。
+  - 在 `verify.md` 的启动服务一节注明：服务已定义在 `paseo.json`，由流水线通过 Paseo 启动；同时保留手工启动的命令，供没有 Paseo 时使用。
 - `.requirement-pipeline.json`：只在需要和本机配置不同的设置时才写，例如 `{ "defaultProfile": "quick" }`。不要写 `daemonUrl`、`daemonPasswordEnv`、`teamConfig`，写了也会被忽略。
 - `.gitignore`：确认包含 `docs/features/*/.pipeline/`（流水线的运行状态），没有就建议加上。
 
-把三份文件的内容（更新时是差异）展示给用户，并说明运行验证的结果：哪些通过、哪些没能运行以及原因。
+把这些文件的内容（更新时是差异）展示给用户，并说明运行验证的结果：哪些通过、哪些没能运行以及原因。
 
 ## 6. 确认后提交
 
-用户确认后，只提交这几个文件（和 `.gitignore` 的改动），提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
+用户确认后，只提交这几个文件（和 `.gitignore` 的改动）。`paseo.json` 必须提交：Paseo 新建 worktree 时读取的是基准分支上已提交的版本，提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
 
 最后告诉用户：之后项目的构建、测试或启动方式有变化时，再运行一次 `/req-setup`；也可以直接编辑这些文件。可以运行 `/req-doctor` 确认项目检查全部正常。

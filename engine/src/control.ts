@@ -1,8 +1,9 @@
 // --status and --stop: what a chat agent runs when the user asks "how far along
 // is it?" or "stop for now". Output is plain language for relaying to the user.
 
+import { describeActivity } from "./activity.js";
 import { PROFILE_LABELS, type PipelineConfig } from "./config.js";
-import type { RuntimeFactory } from "./runtime.js";
+import type { AgentRuntime, RuntimeFactory } from "./runtime.js";
 import { isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
 import { STEPS } from "./steps.js";
 import { describeTotals, totals } from "./usage.js";
@@ -160,4 +161,28 @@ export async function stopPipeline(input: StopInput): Promise<{ stopped: boolean
       ? `流水线已停止${where}。已完成的步骤会保留，之后可以用 --resume 从这里继续。`
       : `流水线的后台进程已经意外退出${where}，状态已更新。可以用 --resume 继续。`,
   };
+}
+
+/**
+ * What the running step agents did most recently, read from Paseo. Empty when the
+ * pipeline is not running or the daemon cannot be reached within `timeoutMs`.
+ */
+export async function describeLiveActivity(
+  state: PipelineState | null,
+  runtime: Pick<AgentRuntime, "recentActivity">,
+  timeoutMs = 8000,
+  now = new Date(),
+): Promise<string[]> {
+  if (!state || state.status !== "running" || !isAlive(state.pid)) return [];
+  const running = state.history.filter((h) => h.attempt === state.attempt && h.outcome === "running" && h.agentId).slice(0, 3);
+  const lines: string[] = [];
+  for (const record of running) {
+    const items = await Promise.race([
+      runtime.recentActivity(record.agentId, 5).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs).unref()),
+    ]);
+    if (!items || items.length === 0) continue;
+    lines.push(`「${stepName(record)}」的 agent 最近在做：`, ...describeActivity(items, now));
+  }
+  return lines;
 }

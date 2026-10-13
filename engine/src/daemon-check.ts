@@ -1,6 +1,7 @@
 // Checks against the real Paseo daemon, shared by the smoke test and the doctor.
 
 import type { AgentProfile, PipelineConfig } from "./config.js";
+import { profilesFromDaemonConfig, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 
 export type Report = (level: "ok" | "warn" | "fail", text: string, fix?: string) => void;
 
@@ -14,11 +15,19 @@ export async function connect(config: PipelineConfig) {
 
 export type Client = Awaited<ReturnType<typeof connect>>;
 
+/** The config with Paseo profile names resolved against this daemon. Throws ProfileResolutionError. */
+export async function resolveWithDaemon(client: Client, config: PipelineConfig): Promise<PipelineConfig> {
+  if (!usesPaseoProfiles(config)) return config;
+  const daemonConfig = await client.config.get().then((r) => r.config).catch(() => null);
+  return resolveConfigProfiles(config, daemonConfig ? profilesFromDaemonConfig(daemonConfig) : null);
+}
+
 /** Checks that a role's provider, model and mode exist and will not stop for approvals. */
 export async function checkProfile(client: Client, role: string, profile: AgentProfile, report: Report): Promise<boolean> {
-  const slash = profile.provider.indexOf("/");
-  const provider = profile.provider.slice(0, slash);
-  const model = profile.provider.slice(slash + 1);
+  const full = profile.provider ?? "";
+  const slash = full.indexOf("/");
+  const provider = full.slice(0, slash);
+  const model = full.slice(slash + 1);
   const where = `~/.req-kit/config.json 的 agents.${role}`;
   let ok = true;
   try {

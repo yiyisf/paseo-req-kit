@@ -6,11 +6,18 @@ import type { StepId } from "./steps.js";
 
 export interface AgentProfile {
   /**
+   * Name (or ID) of a Paseo agent profile to take the settings from, e.g. "实现".
+   * Resolved against the daemon when a run starts; fields written next to it win.
+   * See paseo-profiles.ts.
+   */
+  paseoProfile?: string;
+  /**
    * "provider/model", split at the first "/". Examples: "claude/claude-sonnet-5",
    * "pi/anthropic/claude-sonnet-5" (Pi model IDs carry their own "upstream/model").
-   * Run `npm run smoke -- check` to list what your daemon offers.
+   * Run `npm run smoke -- check` to list what your daemon offers. Required unless
+   * paseoProfile is given.
    */
-  provider: string;
+  provider?: string;
   /**
    * Provider mode. Use one that does not stop for approvals, e.g. "bypassPermissions" (Claude)
    * or "full-access" (Codex). Omit it for providers without modes, such as Pi.
@@ -21,6 +28,13 @@ export interface AgentProfile {
   featureValues?: Record<string, unknown>;
   /** Provider-native options, passed through unchanged. */
   options?: Record<string, unknown>;
+}
+
+/** Settings ready to launch an agent: a Paseo profile, if named, has been resolved. */
+export type ResolvedProfile = AgentProfile & { provider: string };
+
+export function isResolved(profile: AgentProfile): profile is ResolvedProfile {
+  return typeof profile.provider === "string" && profile.provider.includes("/");
 }
 
 export interface ReviewPanelMember extends AgentProfile {
@@ -84,6 +98,16 @@ export interface PipelineConfig {
   notifiers: NotifierConfig[];
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
+  /**
+   * "auto": when the chat's workspace has service scripts in paseo.json, the pipeline starts
+   * them through Paseo (supervised, own port per worktree) for the service start and
+   * verification steps, and stops them afterwards. "off": step agents start services themselves.
+   */
+  paseoServices: "auto" | "off";
+  /** How long to wait for Paseo-managed services to report healthy. */
+  serviceReadySeconds: number;
+  /** Warn before a run when a provider's subscription window is at least this full (percent); 0 turns it off. */
+  quotaWarnPercent: number;
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -123,6 +147,9 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   reviewPanel: { enabled: false, steps: ["design_review", "code_review"], profiles: ["standard"], members: [] },
   notifiers: [],
   retry: { attempts: 2, backoffSeconds: [60, 300] },
+  paseoServices: "auto",
+  serviceReadySeconds: 120,
+  quotaWarnPercent: 85,
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -186,8 +213,14 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
 }
 
 function validateProvider(label: string, profile: unknown): void {
+  if (isRecord(profile) && profile.paseoProfile !== undefined) {
+    if (typeof profile.paseoProfile !== "string" || profile.paseoProfile.trim() === "") {
+      throw new ConfigError(`${label}.paseoProfile 必须是 Paseo 中 agent profile 的名称`);
+    }
+    if (profile.provider === undefined) return;
+  }
   if (!isRecord(profile) || typeof profile.provider !== "string") {
-    throw new ConfigError(`${label}.provider 缺失`);
+    throw new ConfigError(`${label}.provider 缺失（或用 paseoProfile 写 Paseo 中 agent profile 的名称）`);
   }
   const slash = profile.provider.indexOf("/");
   if (slash <= 0 || slash === profile.provider.length - 1) {
@@ -248,7 +281,11 @@ function validate(config: PipelineConfig): void {
   if (config.requiredVersion !== null && typeof config.requiredVersion !== "string") {
     throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
   }
-  for (const key of ["waitChunkSeconds", "permissionPollSeconds"] as const) {
+  if (config.paseoServices !== "auto" && config.paseoServices !== "off") throw new ConfigError('paseoServices 只能是 "auto" 或 "off"');
+  if (typeof config.quotaWarnPercent !== "number" || config.quotaWarnPercent < 0 || config.quotaWarnPercent > 100) {
+    throw new ConfigError("quotaWarnPercent 必须是 0 到 100 之间的数（0 表示不提醒）");
+  }
+  for (const key of ["waitChunkSeconds", "permissionPollSeconds", "serviceReadySeconds"] as const) {
     if (typeof config[key] !== "number" || config[key] <= 0) throw new ConfigError(`${key} 必须是正数`);
   }
 }

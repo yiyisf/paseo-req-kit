@@ -11,7 +11,7 @@ import path from "node:path";
 import { parseLaunchArgs } from "./cli-args.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
-import { describeStatus, stopPipeline } from "./control.js";
+import { describeLiveActivity, describeStatus, stopPipeline } from "./control.js";
 import { describeFeatures, featuresWithRuns, listFeatures, resolveFeatureArg } from "./features.js";
 import { normalizeFeatureDir, preflight } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
@@ -72,7 +72,22 @@ if (args.status || args.stop) {
   }
   const file = statePath(repo, featureDir);
   if (args.status) {
-    console.log(describeStatus(readState(file), featureDir));
+    const state = readState(file);
+    console.log(describeStatus(state, featureDir));
+    // Live detail from Paseo, best effort: the plain status above never depends on the daemon.
+    if (state?.status === "running") {
+      const fetchLive = async (): Promise<string[]> => {
+        const runtime = await (await loadRuntimeFactory())({ config: loadConfig(configPath, repo).config, log: () => undefined });
+        try {
+          return await describeLiveActivity(state, runtime);
+        } finally {
+          await runtime.close().catch(() => undefined);
+        }
+      };
+      // Daemon unreachable or config unreadable: the status above is still correct.
+      const live = await Promise.race([fetchLive().catch(() => []), new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 10_000))]);
+      if (live.length > 0) console.log(`\n${live.join("\n")}`);
+    }
     process.exit(0);
   }
   let config;

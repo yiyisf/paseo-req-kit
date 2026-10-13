@@ -14,6 +14,7 @@ import { checkProfile, connect, type Report, satisfies } from "./daemon-check.js
 import { gitInfo } from "./git.js";
 import { defaultConfigPath, KIT_ROOT, kitVersion } from "./locations.js";
 import { PROJECT_DIR } from "./prompts.js";
+import { describeAgentProfile, ProfileResolutionError, profilesFromDaemonConfig, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { isAlive, STATE_VERSION } from "./state.js";
 
 const counts = { fail: 0, warn: 0 };
@@ -107,7 +108,7 @@ function configuration(configPath: string, repo: string | null): PipelineConfig 
       report("warn", `${loaded.ignored.join("、")} 只能在本机配置中设置，已被忽略`, "从团队或项目配置中删除这些字段");
     }
     const { builder, reviewer } = loaded.config.agents;
-    report("ok", `builder：${builder.provider}${builder.modeId ? `（${builder.modeId}）` : ""}；reviewer：${reviewer.provider}${reviewer.modeId ? `（${reviewer.modeId}）` : ""}`);
+    report("ok", `builder：${describeAgentProfile(builder)}；reviewer：${describeAgentProfile(reviewer)}`);
     report("ok", `默认档位：${loaded.config.defaultProfile}`);
     const panel = loaded.config.reviewPanel;
     if (panel.enabled) {
@@ -137,6 +138,11 @@ function daemonSettings(configPath: string): PipelineConfig {
   }
 }
 
+/** Informational line: never counted as a problem. */
+function info(text: string): void {
+  console.log(`· ${text}`);
+}
+
 async function daemon(config: PipelineConfig | null, configPath: string): Promise<void> {
   section("Paseo daemon");
   const settings = config ?? daemonSettings(configPath);
@@ -156,6 +162,41 @@ async function daemon(config: PipelineConfig | null, configPath: string): Promis
     const snapshot = await client.providers.waitForReady({ timeoutMs: 30_000 });
     const providers = snapshot.entries.map((e) => `${e.provider}（${e.status}）`).join("、");
     report("ok", `可用的 provider：${providers || "（无）"}`);
+    const daemonConfig = await client.config.get().then((r) => r.config as Record<string, unknown>).catch(() => null);
+    const paseoProfiles = daemonConfig ? profilesFromDaemonConfig(daemonConfig) : null;
+    if (paseoProfiles && paseoProfiles.length > 0) {
+      report("ok", `Paseo agent profiles：${paseoProfiles.map((p) => `「${p.name}」`).join("、")}（配置中可以用 "paseoProfile": "<名称>" 引用）`);
+    } else if (paseoProfiles) {
+      info("Paseo 中还没有 agent profile。可选：在 设置 → Agents → Agent profiles 中建好\"实现\"\"评审\"等 profile，配置中用 paseoProfile 引用，之后换模型只需改 Paseo");
+    }
+    if (daemonConfig) {
+      const mcp = daemonConfig.mcp as { injectIntoAgents?: boolean } | undefined;
+      const browser = daemonConfig.browserTools as { enabled?: boolean } | undefined;
+      info(
+        mcp?.injectIntoAgents
+          ? "Paseo 工具已开启：步骤 agent 可以重启 Paseo 管理的服务"
+          : "Paseo 工具未开启（设置 → Agents → Enable Paseo tools）。不影响运行；开启后步骤 agent 可以自己重启 Paseo 管理的服务",
+      );
+      info(browser?.enabled ? "浏览器工具已开启（桌面端）" : "浏览器工具未开启（不影响运行）");
+    }
+    if (config && usesPaseoProfiles(config)) {
+      try {
+        config = resolveConfigProfiles(config, paseoProfiles);
+        report("ok", `Paseo profile 已解析：builder ${describeAgentProfile(config.agents.builder)}；reviewer ${describeAgentProfile(config.agents.reviewer)}`);
+      } catch (error) {
+        if (!(error instanceof ProfileResolutionError)) throw error;
+        report("fail", error.message, "在 Paseo 中建好这个 profile，或修改配置中的 paseoProfile");
+        config = null;
+      }
+    }
+    if (config) {
+      const used = [...new Set([config.agents.builder, config.agents.reviewer].map((p) => (p.provider ?? "").split("/")[0]))];
+      const usage = await client.providers.listUsage().catch(() => null);
+      for (const p of usage?.providers ?? []) {
+        if (!used.includes(p.providerId) || p.status !== "available" || p.windows.length === 0) continue;
+        info(`${p.displayName} 额度：${p.windows.map((w) => `${w.label} 已用 ${typeof w.usedPct === "number" ? `${Math.round(w.usedPct)}%` : "?"}`).join("，")}`);
+      }
+    }
     if (config) {
       for (const role of ["builder", "reviewer"] as const) await checkProfile(client, role, config.agents[role], report);
       if (config.reviewPanel.enabled) {
@@ -233,6 +274,39 @@ interface RawState {
   stopReason?: string | null;
 }
 
+/** paseo.json: worktree setup and the services Paseo can run for the pipeline. */
+function paseoJson(repo: string, isRepo: boolean): void {
+  const file = path.join(repo, "paseo.json");
+  if (!fs.existsSync(file)) {
+    info("没有 paseo.json。可选：/req-setup 可以生成它，让 Paseo 在新建 worktree 时自动安装依赖，并由 Paseo 管理服务和端口（几个需求同时验证也不会端口冲突）");
+    return;
+  }
+  let raw: { worktree?: { setup?: unknown }; scripts?: Record<string, { type?: string; command?: string; port?: number }> };
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8")) as typeof raw;
+  } catch (error) {
+    report("fail", `paseo.json 不是合法的 JSON：${(error as Error).message}`, "修正 paseo.json");
+    return;
+  }
+  const scripts = Object.entries(raw.scripts ?? {});
+  const services = scripts.filter(([, s]) => s.type === "service");
+  report(
+    "ok",
+    `paseo.json：${raw.worktree?.setup ? "新建 worktree 时自动准备环境；" : ""}脚本 ${scripts.length} 个${services.length ? `，其中服务 ${services.map(([n]) => n).join("、")}（由流水线通过 Paseo 启动）` : ""}`,
+  );
+  for (const [name, s] of services) {
+    if (s.port === undefined && !String(s.command ?? "").includes("PASEO_PORT")) {
+      report("warn", `paseo.json 中的服务 ${name} 没有使用 $PASEO_PORT，几个工作区同时运行时会端口冲突`, `让启动命令监听 $PASEO_PORT，例如 "npm run dev -- --port $PASEO_PORT"`);
+    }
+  }
+  if (!isRepo) return;
+  try {
+    execFileSync("git", ["ls-files", "--error-unmatch", "paseo.json"], { cwd: repo, stdio: "ignore" });
+  } catch {
+    report("warn", "paseo.json 还没有提交：Paseo 新建 worktree 时读取的是已提交的版本", "提交 paseo.json");
+  }
+}
+
 function project(repo: string): void {
   section(`项目：${repo}`);
   const git = gitInfo(repo);
@@ -251,6 +325,7 @@ function project(repo: string): void {
   if (fs.existsSync(notes)) report("ok", `项目说明：${PROJECT_DIR}/project-notes.md`);
   else report("warn", "没有项目说明（包管理工具、不能改的目录、提交格式等），步骤 agent 需要自己摸索", "在项目根目录的对话中运行 /req-setup");
   verifyInstructions(repo, git.isRepo);
+  paseoJson(repo, git.isRepo);
   if (!fs.existsSync(path.join(repo, "GLOSSARY.md")) && fs.existsSync(path.join(repo, "CONTEXT.md"))) {
     report("ok", "术语表为旧名 CONTEXT.md：会继续读取，新术语写入 GLOSSARY.md");
   }

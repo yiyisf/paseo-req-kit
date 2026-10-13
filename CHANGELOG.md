@@ -2,6 +2,27 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.4.0-beta.1
+
+用好 Paseo 本身的能力（第一批）：agent profiles、paseo.json 与受 Paseo 管理的服务、额度提醒、实时活动。
+
+### 使用者会看到的变化
+
+- **用 Paseo 的 agent profile 配置 agent**：配置中可以写 `"builder": { "paseoProfile": "实现" }`，引用在 Paseo 设置 → Agents → Agent profiles 中建好的 profile。之后换模型、改模式只需在 Paseo 中修改 profile，下一次运行生效。配置向导会先列出已有的 profile 供选择；写在 `paseoProfile` 旁边的字段优先于 profile 中的设置。
+- **服务由 Paseo 管理**：项目的 `paseo.json` 中定义了服务（`"type": "service"`）时，流水线在服务启动验证、功能验证、缺陷修复和复验之前，通过 Paseo 带着当前代码重启这些服务，把地址交给步骤 agent，验证结束后停止。Paseo 为每个 worktree 分配独立端口，几个需求同时验证不会端口冲突。服务没有启动成功时，最后的输出会写到 `.pipeline/services/<服务名>.log` 交给步骤。
+- **`/req-setup` 生成 `paseo.json`**：新建 worktree 时自动安装依赖、复制本地配置（如 `.env`），并把常驻服务定义为监听 `$PASEO_PORT` 的服务。
+- **额度提醒**：开始前读取 Paseo 的用量信息，所用 agent 的订阅额度用到 85% 以上时，在对话里提醒一次（不阻止运行）。
+- **"做到哪了"更具体**：运行中查看进度时，会附上当前步骤 agent 最近几分钟在做什么（运行了什么命令、改了哪些文件），从 Paseo 实时读取。
+- **体检**：显示 Paseo 中的 agent profile 和引用的解析结果、Paseo 工具和浏览器工具是否开启、各 agent 的额度；检查项目的 `paseo.json`（服务是否使用 `$PASEO_PORT`、是否已提交）。
+
+### 升级须知
+
+- 新的可选配置：`paseoServices`（`"auto"` 默认 / `"off"`）、`serviceReadySeconds`（默认 120）、`quotaWarnPercent`（默认 85，0 关闭）；角色和评审小组成员可以用 `paseoProfile` 代替 `provider`。现有配置无需改动。
+- 新增步骤提示词 `paseo-services.md`（只在服务由 Paseo 管理时附加）；`08-service-start.md`、`09-verify.md` 增加了"服务由 Paseo 管理时"的说明。用 `prompts.local/` 整篇替换过这两篇的，请对比新版。
+- `/req-setup` 有更新：已接入的项目可以再运行一次，生成 `paseo.json`。
+- 管理服务用到了 `@getpaseo/client` 0.11 导出的内部客户端（公开 API 还没有工作区脚本），见 ADR 0017；Paseo 版本不支持时自动退回到"步骤 agent 自己启动服务"。
+- 状态文件格式没有变化。
+
 ## 1.3.0-beta.1
 
 便利性与可靠性：配置向导、一键升级、`req` 命令、需求变更后增量继续、临时错误自动重试、用时与用量，以及接入企业 IM 的通知接口。

@@ -1,7 +1,9 @@
 import type { PaseoAgentHandle, PaseoClient } from "@getpaseo/client";
-import type { AgentProfile, PipelineConfig } from "./config.js";
+import { summarizeActivity } from "./activity.js";
+import { type AgentProfile, isResolved, type PipelineConfig } from "./config.js";
+import { profilesFromDaemonConfig } from "./paseo-profiles.js";
 import { samePath } from "./paths.js";
-import type { AgentRuntime, RuntimeFactory, StepAgent, WaitOutcome } from "./runtime.js";
+import type { AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, StepAgent, WaitOutcome } from "./runtime.js";
 
 // Checked against @getpaseo/client 0.11.2 (packages/client/src/index.ts) and the
 // daemon (packages/server/src/server/session.ts, agent/create-agent/intent.ts):
@@ -14,12 +16,41 @@ import type { AgentRuntime, RuntimeFactory, StepAgent, WaitOutcome } from "./run
 //   The daemon answers immediately when the agent is already idle or has a pending permission.
 // - handle.send(text, { activeTurnBehavior }) -> the daemon interrupts a running turn
 //   unless activeTurnBehavior is "steer".
+// - config.get() -> { config: { agentProfiles?: AgentProfile[], mcp, browserTools, ... } }
+// - providers.listUsage() -> { providers: [{ providerId, displayName, windows: [{ label, usedPct, resetsAt, tone }] }] }
+// - agent.timeline.refetch({ direction: "tail", limit }) -> { entries: [{ timestamp, item }] }
+// - Workspace scripts (paseo.json) are not on the public client in 0.11; they are reached
+//   through the exported internal DaemonClient (listWorkspaceScripts, startWorkspaceScriptWithStatus,
+//   stopWorkspaceScript). See WorkspaceScripts below; every use degrades to "not available".
 
-export type SdkClient = Pick<PaseoClient, "agents" | "close">;
+export type SdkClient = Pick<PaseoClient, "agents" | "close"> & Partial<Pick<PaseoClient, "config" | "providers" | "terminals">>;
+
+/** paseo.json scripts as the daemon reports them (protocol WorkspaceScriptPayloadSchema). */
+export interface ScriptInfo {
+  scriptName: string;
+  type?: "script" | "service";
+  port: number | null;
+  proxyUrl?: string | null;
+  localProxyUrl?: string | null;
+  lifecycle: "running" | "stopped";
+  health: "healthy" | "unhealthy" | null;
+  exitCode?: number | null;
+  terminalId?: string | null;
+}
+
+export interface WorkspaceScripts {
+  list(workspaceId: string): Promise<ScriptInfo[]>;
+  start(workspaceId: string, name: string): Promise<void>;
+  stop(workspaceId: string, name: string): Promise<void>;
+  close(): Promise<void>;
+}
 
 export { samePath };
 
 function agentConfig(profile: AgentProfile) {
+  if (!isResolved(profile)) {
+    throw new Error(`agent 配置没有 provider${profile.paseoProfile ? `（Paseo profile「${profile.paseoProfile}」没有解析）` : ""}`);
+  }
   return {
     provider: profile.provider,
     ...(profile.modeId ? { modeId: profile.modeId } : {}),
@@ -60,11 +91,45 @@ async function agentCwd(handle: PaseoAgentHandle): Promise<string | null> {
   return fetched?.agent.cwd ?? null;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function createRuntimeWithClient(
   client: SdkClient,
   config: PipelineConfig,
-  _log: (message: string) => void,
+  log: (message: string) => void,
+  scriptsFactory: (() => Promise<WorkspaceScripts | null>) | null = null,
 ): AgentRuntime {
+  let scripts: Promise<WorkspaceScripts | null> | null = null;
+  const getScripts = () => {
+    scripts ??= (scriptsFactory ? scriptsFactory() : Promise.resolve(null)).catch((error: Error) => {
+      log(`无法使用 Paseo 的工作区脚本：${error.message}`);
+      return null;
+    });
+    return scripts;
+  };
+  const workspaceOf = async (agentId: string): Promise<string | null> => {
+    const fetched = await client.agents.ref(agentId).refresh().catch(() => null);
+    return fetched?.agent.workspaceId ?? null;
+  };
+  const tail = async (terminalId: string | null | undefined): Promise<string | null> => {
+    if (!terminalId || !client.terminals) return null;
+    try {
+      const captured = await client.terminals.ref(terminalId).capture({ stripAnsi: true });
+      return captured.lines.slice(-60).join("\n").trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const toService = async (info: ScriptInfo): Promise<ManagedService> => ({
+    name: info.scriptName,
+    url: info.proxyUrl ?? info.localProxyUrl ?? (info.port ? `http://127.0.0.1:${info.port}` : null),
+    port: info.port,
+    running: info.lifecycle === "running",
+    health: info.health ?? null,
+    exitCode: info.exitCode ?? null,
+    output: await tail(info.terminalId),
+  });
+
   return {
     async verifyOrigin(agentId, cwd) {
       let originCwd: string | null;
@@ -109,7 +174,91 @@ export function createRuntimeWithClient(
     async interruptAgent(agentId, text) {
       await client.agents.ref(agentId).send(text, { activeTurnBehavior: "interrupt" });
     },
+    async listPaseoProfiles() {
+      if (!client.config) return null;
+      try {
+        return profilesFromDaemonConfig((await client.config.get()).config);
+      } catch (error) {
+        log(`无法读取 Paseo 的 agent profiles：${(error as Error).message}`);
+        return null;
+      }
+    },
+    async listServices(originAgentId) {
+      const api = await getScripts();
+      const workspaceId = api ? await workspaceOf(originAgentId) : null;
+      if (!api || !workspaceId) return null;
+      try {
+        const services = (await api.list(workspaceId)).filter((s) => (s.type ?? "service") === "service").map((s) => s.scriptName);
+        return services.length ? services : null;
+      } catch (error) {
+        log(`无法列出工作区脚本：${(error as Error).message}`);
+        return null;
+      }
+    },
+    async startServices(originAgentId, names, readyTimeoutMs) {
+      const api = await getScripts();
+      const workspaceId = await workspaceOf(originAgentId);
+      if (!api || !workspaceId) throw new Error("无法使用 Paseo 的工作区脚本");
+      const current = await api.list(workspaceId);
+      for (const name of names) {
+        // Stop first so the service runs the code as it is now.
+        if (current.find((s) => s.scriptName === name)?.lifecycle === "running") await api.stop(workspaceId, name);
+        await api.start(workspaceId, name);
+      }
+      const deadline = Date.now() + readyTimeoutMs;
+      let latest = await api.list(workspaceId);
+      for (;;) {
+        const wanted = latest.filter((s) => names.includes(s.scriptName));
+        const settled = wanted.every((s) => s.lifecycle === "stopped" || s.health === "healthy");
+        if (settled || Date.now() >= deadline) break;
+        await sleep(2000);
+        latest = await api.list(workspaceId);
+      }
+      return Promise.all(latest.filter((s) => names.includes(s.scriptName)).map(toService));
+    },
+    async stopServices(originAgentId, names) {
+      const api = await getScripts();
+      const workspaceId = await workspaceOf(originAgentId);
+      if (!api || !workspaceId) return;
+      const current = await api.list(workspaceId).catch(() => []);
+      for (const name of names) {
+        if (current.find((s) => s.scriptName === name)?.lifecycle !== "running") continue;
+        await api.stop(workspaceId, name).catch((error: Error) => log(`停止服务 ${name} 失败：${error.message}`));
+      }
+    },
+    async providerQuota(providers) {
+      if (!client.providers) return null;
+      try {
+        const usage = await client.providers.listUsage();
+        const quotas: ProviderQuota[] = [];
+        for (const p of usage.providers) {
+          if (!providers.includes(p.providerId) || p.status !== "available") continue;
+          for (const w of p.windows) {
+            quotas.push({
+              provider: p.providerId,
+              displayName: p.displayName,
+              window: w.label,
+              usedPct: w.usedPct ?? (typeof w.remainingPct === "number" ? 100 - w.remainingPct : null),
+              resetsAt: w.resetsAt ?? null,
+              tone: w.tone ?? null,
+            });
+          }
+        }
+        return quotas.length ? quotas : null;
+      } catch {
+        return null;
+      }
+    },
+    async recentActivity(agentId, limit) {
+      try {
+        const page = await client.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: Math.max(limit * 4, 20) });
+        return summarizeActivity(page.entries, limit);
+      } catch {
+        return null;
+      }
+    },
     async close() {
+      if (scripts) await (await scripts)?.close().catch(() => undefined);
       await client.close();
     },
   };
@@ -125,5 +274,50 @@ export const createRuntime: RuntimeFactory = async ({ config, log }) => {
     reconnect: { enabled: true },
   });
   await client.connect();
-  return createRuntimeWithClient(client, config, log);
+  return createRuntimeWithClient(client, config, log, () => connectScripts(config));
 };
+
+/** Workspace scripts through the internal DaemonClient that @getpaseo/client 0.11 exports. */
+async function connectScripts(config: PipelineConfig): Promise<WorkspaceScripts | null> {
+  const internal = (await import("@getpaseo/client/internal/daemon-client").catch(() => null)) as
+    | { DaemonClient?: new (options: Record<string, unknown>) => InternalDaemonClient }
+    | null;
+  if (!internal?.DaemonClient) return null;
+  const password = process.env[config.daemonPasswordEnv];
+  const daemon = new internal.DaemonClient({
+    url: config.daemonUrl,
+    clientId: `req-kit-${process.pid}-${Date.now().toString(36)}`,
+    clientType: "cli",
+    ...(password ? { password } : {}),
+    reconnect: { enabled: true },
+  });
+  if (typeof daemon.listWorkspaceScripts !== "function") return null;
+  await daemon.connect();
+  const check = (payload: { error: string | null }) => {
+    if (payload.error) throw new Error(payload.error);
+  };
+  return {
+    async list(workspaceId) {
+      const payload = await daemon.listWorkspaceScripts(workspaceId);
+      check(payload);
+      return (payload.scripts ?? []) as ScriptInfo[];
+    },
+    async start(workspaceId, name) {
+      check(await daemon.startWorkspaceScriptWithStatus(workspaceId, name));
+    },
+    async stop(workspaceId, name) {
+      check(await daemon.stopWorkspaceScript(workspaceId, name));
+    },
+    async close() {
+      await daemon.close();
+    },
+  };
+}
+
+interface InternalDaemonClient {
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  listWorkspaceScripts(workspaceId: string): Promise<{ scripts?: unknown[]; error: string | null }>;
+  startWorkspaceScriptWithStatus(workspaceId: string, name: string): Promise<{ error: string | null }>;
+  stopWorkspaceScript(workspaceId: string, name: string): Promise<{ error: string | null }>;
+}

@@ -13,7 +13,7 @@ import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
-import type { AgentRuntime, StepAgent } from "./runtime.js";
+import type { AgentRuntime, ManagedService, StepAgent } from "./runtime.js";
 import { type PipelineState, type StepRecord, writeState } from "./state.js";
 import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult } from "./steps.js";
 
@@ -29,6 +29,8 @@ export interface PipelineContext {
   resumeCommand: string;
   log: (message: string) => void;
   sleep: (ms: number) => Promise<void>;
+  /** Paseo-managed services of this run (filled in by the pipeline). */
+  services?: { names: string[] | null | undefined; started: Set<string> };
 }
 
 export type PipelineOutcome = "completed" | "waiting_for_business" | "failed";
@@ -312,6 +314,15 @@ async function runStepOnce(
   const resultAbs = path.join(ctx.repo, resultRel);
   fs.rmSync(resultAbs, { force: true });
 
+  const managed = await serviceExtras(ctx, id);
+  if (managed) {
+    extras = {
+      ...extras,
+      contextLines: [...(extras.contextLines ?? []), ...managed.contextLines],
+      sections: [...(extras.sections ?? []), ...managed.sections],
+    };
+  }
+
   const agentTitle =
     `[${featureName(ctx.featureDir)}] ` +
     (extras.title ?? `${def.number}-${def.title}${round !== null && round > 1 ? ` 第${round}轮` : ""}`);
@@ -341,7 +352,8 @@ async function runStepOnce(
         "pipeline-step": key,
       },
       parentAgentId: ctx.config.attachToOriginChat ? ctx.state.originAgentId : null,
-      ...(extras.profile ? { profile: extras.profile } : {}),
+      // Always passed: the run's config has Paseo profile names resolved; the runtime's may not.
+      profile: extras.profile ?? ctx.config.agents[def.role],
     });
     record.agentId = agent.id;
     ctx.state.history.push(record);
@@ -381,6 +393,105 @@ async function runStepOnce(
     if (error instanceof StepFailure) throw error;
     throw new StepFailure(def.title, (error as Error).message);
   }
+}
+
+/** Steps that need the project's services running. */
+const SERVICE_STEPS: readonly StepId[] = ["service_start", "verify", "defect_fix", "reverify"];
+
+function serviceState(ctx: PipelineContext): NonNullable<PipelineContext["services"]> {
+  ctx.services ??= { names: undefined, started: new Set() };
+  return ctx.services;
+}
+
+/** Service scripts from paseo.json that Paseo can run for this pipeline; null when not used. */
+async function serviceNames(ctx: PipelineContext): Promise<string[] | null> {
+  const state = serviceState(ctx);
+  if (state.names !== undefined) return state.names;
+  const origin = ctx.state.originAgentId;
+  if (ctx.config.paseoServices === "off" || !origin || !ctx.config.attachToOriginChat) {
+    state.names = null;
+    return null;
+  }
+  state.names = await ctx.runtime.listServices(origin).catch(() => null);
+  if (state.names) ctx.log(`项目在 paseo.json 中定义了服务（${state.names.join("、")}），服务启动和验证相关的步骤由流水线通过 Paseo 启动它们`);
+  return state.names;
+}
+
+function describeService(s: ManagedService, logFile: string | null): string {
+  const where = `${s.url ?? "（Paseo 没有给出地址）"}${s.port ? `（端口 ${s.port}）` : ""}`;
+  const output = logFile ? `，最后的输出见 ${logFile}` : "";
+  if (!s.running) return `Paseo 管理的服务：${s.name} 没有启动成功${s.exitCode !== null ? `（退出码 ${s.exitCode}）` : ""}${output}`;
+  if (s.health === "unhealthy") return `Paseo 管理的服务：${s.name} → ${where}，已启动但健康检查没有通过${output}`;
+  return `Paseo 管理的服务：${s.name} → ${where}，已启动${s.health === "healthy" ? "，健康检查通过" : ""}`;
+}
+
+/** Starts the services (fresh, with the current code) before a step that needs them. */
+async function serviceExtras(ctx: PipelineContext, id: StepId): Promise<{ contextLines: string[]; sections: string[] } | null> {
+  if (!SERVICE_STEPS.includes(id)) return null;
+  const names = await serviceNames(ctx);
+  const origin = ctx.state.originAgentId;
+  if (!names || !origin) return null;
+  const sections = [readToolPrompt({ ...ctx.prompts, repo: ctx.repo }, "paseo-services.md")];
+  let services: ManagedService[];
+  try {
+    services = await ctx.runtime.startServices(origin, names, ctx.config.serviceReadySeconds * 1000);
+  } catch (error) {
+    ctx.log(`通过 Paseo 启动服务失败：${(error as Error).message}`);
+    return {
+      contextLines: [`Paseo 管理的服务：这次没能通过 Paseo 启动（${(error as Error).message}），请按验证方法或 service-start.md 自己启动，用完关掉`],
+      sections: [],
+    };
+  }
+  for (const name of names) serviceState(ctx).started.add(name);
+  const dir = path.join(ctx.repo, ctx.featureDir, ".pipeline", "services");
+  const lines = services.map((s) => {
+    let logFile: string | null = null;
+    if (s.output && (!s.running || s.health === "unhealthy")) {
+      fs.mkdirSync(dir, { recursive: true });
+      logFile = `${ctx.featureDir}/.pipeline/services/${s.name}.log`;
+      fs.writeFileSync(path.join(ctx.repo, logFile), `${s.output}\n`);
+    }
+    return describeService(s, logFile);
+  });
+  ctx.log(lines.join("；"));
+  return { contextLines: lines, sections };
+}
+
+async function stopManagedServices(ctx: PipelineContext): Promise<void> {
+  const started = [...(ctx.services?.started ?? [])];
+  const origin = ctx.state.originAgentId;
+  if (started.length === 0 || !origin) return;
+  await ctx.runtime.stopServices(origin, started).catch((error: Error) => ctx.log(`停止服务失败：${error.message}`));
+  ctx.services?.started.clear();
+  ctx.log(`已停止 Paseo 管理的服务：${started.join("、")}`);
+}
+
+/** Warns once at the start when a provider's subscription is nearly used up. Never blocks. */
+async function checkQuota(ctx: PipelineContext): Promise<void> {
+  const threshold = ctx.config.quotaWarnPercent;
+  if (threshold <= 0) return;
+  const profiles = [ctx.config.agents.builder, ctx.config.agents.reviewer];
+  if (ctx.config.reviewPanel.enabled && ctx.config.reviewPanel.profiles.includes(ctx.state.profile)) profiles.push(...ctx.config.reviewPanel.members);
+  const providers = [...new Set(profiles.map((p) => (p.provider ?? "").split("/")[0]).filter(Boolean))];
+  const quotas = await ctx.runtime.providerQuota(providers).catch(() => null);
+  if (!quotas) return;
+  const tight = quotas.filter((q) => (q.usedPct !== null && q.usedPct >= threshold) || q.tone === "danger");
+  if (tight.length === 0) {
+    ctx.log(`额度：${quotas.map((q) => `${q.displayName} ${q.window} ${q.usedPct === null ? "?" : `${Math.round(q.usedPct)}%`}`).join("，")}`);
+    return;
+  }
+  const items = tight.map((q) => {
+    const reset = q.resetsAt ? `，${new Date(q.resetsAt).toLocaleString("zh-CN", { hour12: false })} 恢复` : "";
+    return `${q.displayName} 的「${q.window}」额度已用 ${q.usedPct === null ? "大部分" : `${Math.round(q.usedPct)}%`}${reset}`;
+  });
+  await notifyOrigin(
+    ctx,
+    [
+      "【需求开发流水线通知】这条消息来自后台流水线，不是用户发的。",
+      `额度提醒：${items.join("；")}。`,
+      "流水线照常进行；额度用完时会遇到限流，流水线会自动等待重试，重试用完会中断，之后可以继续。如果希望等额度恢复后再开发，请转告用户，用户同意的话可以先暂停。",
+    ].join("\n"),
+  );
 }
 
 function panelApplies(ctx: PipelineContext, step: PanelStep, round: number): boolean {
@@ -521,6 +632,7 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
   const allAttempts = ctx.state.history;
   const usageLines = [`用时与用量（本次尝试，截至报告前）：${describeTotals(totals(thisAttempt))}`];
   if (ctx.state.attempt > 1) usageLines.push(`用时与用量（这个需求的全部尝试）：${describeTotals(totals(allAttempts))}`);
+  await stopManagedServices(ctx);
   return runStep(ctx, "report", null, null, { contextLines: usageLines });
 }
 
@@ -529,6 +641,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
   ctx.state.stopReason = null;
   save(ctx);
   try {
+    await checkQuota(ctx);
     const report = await flow(ctx);
     ctx.state.status = "completed";
     ctx.state.outcome = report.outcome as string;
@@ -588,5 +701,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       resumeCommand: ctx.resumeCommand,
     });
     return "failed";
+  } finally {
+    await stopManagedServices(ctx);
   }
 }

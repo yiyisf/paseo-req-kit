@@ -73,3 +73,20 @@ test("配置向导：找不到免确认模式时请用户选择", async () => {
   assert.ok(answers.some((q) => q.includes("没有找到") && q.includes("免确认模式")));
   assert.equal((config.agents as { builder: { modeId: string } }).builder.modeId, "auto");
 });
+
+test("配置向导：Paseo 中有 agent profile 时先推荐 profile（按名称和说明匹配角色），选中后写 paseoProfile", async () => {
+  const withProfiles: Catalog = {
+    ...catalog,
+    profiles: async () => [
+      { id: "1", name: "草稿", provider: "claude" },
+      { id: "2", name: "评审", provider: "codex", model: "gpt-x", modeId: "full-access", notes: "独立 review" },
+      { id: "3", name: "实现", provider: "claude", model: "claude-x", modeId: "bypassPermissions" },
+    ],
+  };
+  const { choose, seen } = recorder();
+  const { config, summary } = await runWizard({}, withProfiles, choose);
+  assert.deepEqual(config.agents, { builder: { paseoProfile: "实现" }, reviewer: { paseoProfile: "评审" } });
+  assert.ok(!seen[0].options.some((o) => o.includes("草稿")), "没有模型的 profile 不列出");
+  assert.match(seen[0].options.at(-1) ?? "", /不用 profile/);
+  assert.match(summary.join("\n"), /builder：Paseo profile「实现」/);
+});

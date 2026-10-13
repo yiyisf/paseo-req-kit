@@ -203,7 +203,7 @@ test("体检（离线）：报告配置、项目分支和卡住或格式更新�
   });
   const out = `${result.stdout}${result.stderr}`;
   assert.match(out, /## 安装[\s\S]*## 配置[\s\S]*## Paseo daemon[\s\S]*## 项目/);
-  assert.match(out, /✓ builder：claude\/test-model（bypassPermissions）/);
+  assert.match(out, /✓ builder：claude\/test-model（模式 bypassPermissions）/);
   assert.match(out, /⚠ 当前在默认分支 main 上/);
   assert.match(out, /⚠ docs\/features\/20261012-stuck：状态为运行中，但进程已不在/);
   assert.match(out, /✗ 20261013-future：状态文件由更新版本的 req-kit 写入（第 99 版）/);
@@ -375,4 +375,33 @@ test("req notify-test：给配置的通知模块发一条示例事件；没有�
   assert.deepEqual(options, { group: "dev" });
   assert.match(notify("--type", "failed").stdout, /没有订阅 failed 事件/);
   assert.equal(notify("--type", "nonsense").status, 2);
+});
+
+test("体检：paseo.json 的服务没有用 $PASEO_PORT、没有提交时提醒；配置引用 Paseo profile 时显示名称", () => {
+  const home = tempHome();
+  run(ROOT, home);
+  fillConfig(home);
+  const configFile = path.join(home, ".req-kit", "config.json");
+  const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  config.agents.builder = { paseoProfile: "实现" };
+  fs.writeFileSync(configFile, JSON.stringify(config));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-doctor-paseo-"));
+  execFileSync("git", ["init", "-q", "-b", "feature/x"], { cwd: repo });
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.REQ_KIT_HOME;
+  delete env.PASEO_AGENT_CWD;
+  const doctor = () =>
+    spawnSync(process.execPath, [path.join(ROOT, "bin", "req-doctor.mjs"), "--offline", "--repo", repo], { encoding: "utf8", env }).stdout;
+
+  const none = doctor();
+  assert.match(none, /builder：Paseo profile「实现」（运行时从 Paseo 读取设置）/);
+  assert.match(none, /· 没有 paseo\.json/);
+  fs.writeFileSync(
+    path.join(repo, "paseo.json"),
+    JSON.stringify({ worktree: { setup: "npm ci" }, scripts: { test: { command: "npm test" }, web: { type: "service", command: "npm run dev" } } }),
+  );
+  const out = doctor();
+  assert.match(out, /✓ paseo\.json：新建 worktree 时自动准备环境；脚本 2 个，其中服务 web/);
+  assert.match(out, /⚠ paseo\.json 中的服务 web 没有使用 \$PASEO_PORT/);
+  assert.match(out, /⚠ paseo\.json 还没有提交/);
 });

@@ -7,6 +7,7 @@ import { LAUNCHER, parseLaunchArgs, resumeCommand } from "./cli-args.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
 import { satisfies } from "./daemon-check.js";
+import { describeAgentProfile, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { runPipeline } from "./pipeline.js";
 import { preflight } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
@@ -38,7 +39,9 @@ async function main(): Promise<number> {
   const configPath = args.configPath ?? defaultConfigPath();
   const checked = preflight(args, hashFile);
   const { repo, featureDir, mode } = checked;
-  const { config, sources, ignored } = loadConfig(configPath, repo);
+  const loaded = loadConfig(configPath, repo);
+  const { sources, ignored } = loaded;
+  let config = loaded.config;
   log(`req-kit ${kitVersion()}；配置：${sources.join(" → ")}`);
   if (ignored.length > 0) log(`${ignored.join("、")} 只能在本机配置中设置，已忽略`);
   if (config.requiredVersion && !satisfies(kitVersion(), config.requiredVersion)) {
@@ -58,20 +61,25 @@ async function main(): Promise<number> {
   const originAgentId = args.originAgentId ?? (mode.kind === "fresh" ? null : mode.previous.originAgentId);
 
   // Checked before the state file is touched, so a refused launch leaves no record behind.
-  if (originAgentId) {
+  {
     try {
-      await runtime.verifyOrigin(originAgentId, repo);
+      if (originAgentId) await runtime.verifyOrigin(originAgentId, repo);
+      if (usesPaseoProfiles(config)) config = resolveConfigProfiles(config, await runtime.listPaseoProfiles());
     } catch (error) {
       const reason = (error as Error).message;
       log(`未启动：${reason}`);
-      await runtime
-        .notifyAgent(originAgentId, `【需求开发流水线通知】这条消息来自后台流水线，不是用户发的。流水线没有启动：${reason}`)
-        .catch(() => undefined);
+      if (originAgentId) {
+        await runtime
+          .notifyAgent(originAgentId, `【需求开发流水线通知】这条消息来自后台流水线，不是用户发的。流水线没有启动：${reason}`)
+          .catch(() => undefined);
+      }
       await runtime.close().catch(() => undefined);
       release();
       return 2;
     }
   }
+
+  log(`builder：${describeAgentProfile(config.agents.builder)}；reviewer：${describeAgentProfile(config.agents.reviewer)}`);
 
   const previous = mode.kind === "fresh" ? null : mode.previous;
   const profile =

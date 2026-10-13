@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { type AgentProfile, loadConfig, type PipelineConfig } from "./config.js";
-import { checkProfile as checkProfileWith, type Client, connect, type Report } from "./daemon-check.js";
+import { checkProfile as checkProfileWith, type Client, connect, type Report, resolveWithDaemon } from "./daemon-check.js";
 import { defaultConfigPath } from "./locations.js";
 
 const HEARTBEAT = path.join(os.tmpdir(), "requirement-pipeline-heartbeat.json");
@@ -31,7 +31,7 @@ async function tinyAgent(client: Client, role: string, profile: AgentProfile): P
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `requirement-pipeline-smoke-${role}-`));
   const agent = await client.agents.create({
     config: {
-      provider: profile.provider,
+      provider: profile.provider ?? "",
       ...(profile.modeId ? { modeId: profile.modeId } : {}),
       ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
       ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
@@ -76,6 +76,12 @@ async function check(config: PipelineConfig): Promise<number> {
     for (const entry of snapshot.entries) {
       console.log(`    - ${entry.provider}（${entry.status}）`);
     }
+    try {
+      config = await resolveWithDaemon(client, config);
+    } catch (error) {
+      line(false, (error as Error).message);
+      return 1;
+    }
     let ok = true;
     for (const role of ["builder", "reviewer"] as const) {
       ok = (await checkProfileWith(client, role, config.agents[role], report)) && ok;
@@ -103,9 +109,10 @@ async function notify(config: PipelineConfig, origin: string): Promise<number> {
     );
     line(true, `已向 agent ${origin} 发送测试通知。请到该对话中确认 agent 转告了"通知通道工作正常"。`);
 
+    config = await resolveWithDaemon(client, config);
     const child = await client.agents.create({
       config: {
-        provider: config.agents.builder.provider,
+        provider: config.agents.builder.provider ?? "",
         ...(config.agents.builder.modeId ? { modeId: config.agents.builder.modeId } : {}),
       },
       cwd: process.cwd(),

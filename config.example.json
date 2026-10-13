@@ -59,6 +59,9 @@
       300
     ]
   },
+  "paseoServices": "auto",
+  "serviceReadySeconds": 120,
+  "quotaWarnPercent": 85,
   "reviewPanel": {
     "enabled": false,
     "steps": [
