@@ -1,98 +1,76 @@
-# Paseo 需求开发工作流 · 使用说明
+# paseo-req-kit
 
-帮助不写代码的业务同事，用业务语言把需求谈清楚，再由一组 AI agent 按标准步骤完成设计、实现、评审、验证，最后给出一份白话报告。
+req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，帮助非专职开发、但有一定技术背景的同事（测试、产品经理、项目经理等）把一个需求从对齐做到可验收：
 
-## 1. 工作流的 11 个步骤
+- 在对话中输入 `/req`，用访谈的方式把需求谈清楚，生成并确认一份需求说明（`spec.md`）。
+- 确认后，引擎在后台按固定顺序驱动一组 Paseo agent：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 →（有常驻服务时）服务启动验证 → 功能验证 →（发现缺陷时）缺陷修复 ⇄ 复验 → 完成报告。
+- 进展、需要决定的问题和最终结论都发回同一个对话；每个步骤以子 agent 的形式挂在对话下。只做本地提交，合并上线由人决定。
 
-| 步骤 | 内容 | 谁来做 | 产物（都在功能目录下） |
-| --- | --- | --- | --- |
-| 1 | 用业务语言对齐需求（基于 grill-with-docs） | 聊天 agent 与用户对话 | `alignment.md`、`CONTEXT.md`、`docs/adr/` |
-| 2 | 生成标准需求说明，用户确认 | 聊天 agent | `spec.md` |
-| 3 | 方案设计 | 实现 agent | `design.md` |
-| 4 | 方案审核（需要时修订，可多轮） | 审核 agent / 实现 agent | `design-review.md` |
-| 5 | 代码实现（适合时采用 TDD） | 实现 agent | 代码、`implementation.md` |
-| 6 | 代码评审 | 审核 agent | `code-review.md` |
-| 7 | 评审问题修复（与第 6 步可多轮） | 实现 agent | 代码、处理记录 |
-| 8 | 服务启动验证（项目有常驻服务时） | 实现 agent | `service-start.md` |
-| 9 | 功能验证：基础测试 + 端到端 | 审核 agent | `verification.md` |
-| 10 | 缺陷修复与复验（可多轮） | 实现 agent / 审核 agent | 代码、`verification.md` |
-| 11 | 完成报告与总结 | 实现 agent | `report.md` |
+当前版本：**1.0.0-beta.1**（第一阶段：骨架）。变化见 [CHANGELOG.md](CHANGELOG.md)。
 
-功能目录形如 `docs/features/20261012-sms-login/`，代码改动在分支 `feature/20261012-sms-login` 上，只做本地提交，合并上线由人决定。
+## 体系结构
 
-## 2. 包里有什么
-
-```text
-paseo-requirement-workflow/
-├── README.md              本文件（使用说明）
-├── script-pipeline/       推荐：脚本版（第 1–2 步在聊天中，第 3–11 步由脚本驱动）
-│   ├── README.md          安装、配置、冒烟测试、日常使用、运行规则
-│   ├── skill/             第 1–2 步的 skill（requirement-kickoff），含启动流水线和处理通知
-│   ├── prompts/           第 3–11 步的提示词
-│   ├── src/  bin/         流水线程序与启动命令
-│   ├── test/              模拟环境下的场景测试
-│   └── pipeline.config.example.json
-└── hub-workflow/          备选：Paseo Hub 工作流版（第 3–11 步由 Hub 执行）
-    ├── README.md
-    ├── skills/            第 1–2 步的 skill（结尾只给出功能目录，不自动启动）
-    └── .paseo/            hub.yml 与工作流定义、提示词
-```
-
-两个版本的提示词内容基本相同，区别在于由谁来驱动第 3–11 步：
-
-| | 脚本版（推荐） | Hub 版 |
+| 层 | 内容 | 位置 |
 | --- | --- | --- |
-| 与第 1–2 步的衔接 | 用户确认 spec 后，在同一个聊天里自动启动 | 需要另行启动 Hub 工作流 |
-| 进展和结果 | 发回同一个聊天；步骤以子 agent 的形式显示在聊天下面 | 在 Hub 控制台和功能目录中查看 |
-| 需要业务决定时 | 暂停，把问题发回聊天，用户回答后继续 | 直接生成"未完成"报告 |
-| 审核、修复轮数 | 可多轮，可配置 | 各一轮（Hub 没有循环） |
-| 断点续跑 | 支持 | 不支持 |
-| 运行条件 | 运行 Paseo daemon 的机器上有 Node.js 22+ | Paseo Hub，且多步骤格式在文档中属于旧格式；手动启动方式文档未写明 |
+| 入口 | `/req`（使用者入口，含新需求、小改动、进度/暂停/继续三本手册）；`/req-doctor`（体检） | `skills/req/`、`skills/req-doctor/` |
+| 方法 | 需求访谈、需求说明、验收标准 | `skills/requirement-interview/`、`skills/spec-writing/`、`skills/acceptance-criteria/` |
+| 原则 | 七条工作原则，聊天和引擎共用一份索引 | `principles/INDEX.md`、`skills/principle-*/` |
+| 引擎 | 第 3–11 步的流水线程序和步骤提示词 | `engine/` |
 
-## 3. 快速开始（脚本版）：在所有 Paseo 对话中启用
+入口之间不互相调用；引擎不调用 skill，只读取提示词和原则索引。设计决定见 [docs/adr/](docs/adr/)，文件格式见 [contracts/](contracts/)，范围见 [SCOPE.md](SCOPE.md)。
 
-在运行 Paseo daemon 的机器上做一次即可，之后任何项目的新对话里都能用 `/requirement-kickoff`。详细说明见 `script-pipeline/README.md`。
+## 快速开始
+
+在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
 
 ```bash
-mkdir -p ~/tools && cp -r script-pipeline ~/tools/requirement-pipeline
-cd ~/tools/requirement-pipeline && npm install
-npx skills add mattpocock/skills -g --copy     # 依赖的 grilling、domain-modeling
-node install.mjs                               # 安装 skill 到各 agent 的全局目录并检查环境
+git clone --branch v1.0.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.0.0-beta.1
+cd ~/tools/req-kit/versions/1.0.0-beta.1
+npm install
+node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/requirement-pipeline
 ```
 
-第一次运行 `install.mjs` 会提示在 `pipeline.config.json` 中为两个角色选择 agent，填好后再运行一次，全部 ✓ 即完成。常用写法（完整说明见 `script-pipeline/README.md` 的"不同 agent 的配置"一节）：
+然后编辑 `~/.req-kit/config.json`，为 `builder` 和 `reviewer` 各选一个 agent：
 
 | agent | 配置 |
 | --- | --- |
 | Claude Code | `{ "provider": "claude/<模型 ID>", "modeId": "bypassPermissions" }` |
+| Codex | `{ "provider": "codex/<模型 ID>", "modeId": "full-access" }` |
 | OpenCode | `{ "provider": "opencode/<上游>/<模型 ID>", "modeId": "build", "featureValues": { "auto_accept": true } }` |
 | Pi | `{ "provider": "pi/<上游>/<模型 ID>" }`（不写 `modeId`） |
-| Codex | `{ "provider": "codex/<模型 ID>", "modeId": "full-access" }` |
 
-模型 ID 等可用值用 `npm run smoke -- check` 查看。然后按 `script-pipeline/README.md` 的"冒烟测试"一节确认真实环境可用。
+再运行一次 `node install.mjs`，然后 `node bin/req-doctor.mjs --no-project` 检查 daemon 和 agent，并按指南做冒烟测试。
 
-使用：业务同事在需求所在项目中新开 Paseo 对话，输入 `/requirement-kickoff 我想……`（聊天 agent 是 Pi 时输入 `/skill:requirement-kickoff 我想……`；各 agent 的触发方式见 README），回答提问、确认 spec、同意开始开发，然后等对话里的通知。
+之后在任意项目的 Paseo 对话中输入 `/req 我想……`（Pi 中为 `/skill:req`）。
 
-## 4. 业务同事会经历什么
+## 文档
 
-1. 在 Paseo 中为这个需求新建一个工作区（New workspace → Isolation 选 New worktree），在里面开对话。在项目主目录里开也可以，AI 会先建议改用独立工作区。
-2. 和 AI 聊需求。AI 先判断是小改动还是常规需求，推荐"快速"或"标准"档；小改动只问几个关键问题。全程一次问一个问题，给出选项和推荐，不用技术词汇。
-3. 读一份 10 行以内的需求摘要，确认。
-4. 回答"现在开始开发吗"。
-5. 等待。期间会收到几句进展（方案定了、开始验证等）；可能收到需要你做的业务决定，或者某一步在等待批准（需要请技术同事处理）。随时可以问"做到哪了"，也可以说"先停一下""继续开发"。
-6. 收到结论和摘要，按报告中"需要你做的事"去试用和验收，再请技术同事合并上线。
+| 读者 | 文档 |
+| --- | --- |
+| 使用者 | [使用者指南](docs/guide/使用者指南.md) |
+| 安装和维护的人 | [安装与升级](docs/guide/安装与升级.md)：安装、各 agent 配置、冒烟测试、升级、回滚、从脚本版迁移、卸载 |
+| 项目维护者 | [项目定制与运行规则](docs/guide/项目定制与运行规则.md)：项目配置、项目说明、档位、运行规则、注意事项 |
+| 体系维护者 | [docs/adr/](docs/adr/)、[contracts/](contracts/)、[SCOPE.md](SCOPE.md)、[.out-of-scope/](.out-of-scope/) |
 
-## 5. 需要技术同事负责的事
+## 开发
 
-- 安装、配置和冒烟测试（第 3 节）。
-- 按项目定制（可选）：在仓库里放 `.requirement-pipeline.json`（本项目用的 agent、默认档位、轮数等）和 `.requirement-pipeline/project-notes.md`（本项目的约定，如包管理工具、不能改的目录、测试命令），随代码提交即对团队生效。见 `script-pipeline/README.md` 的"按项目定制"。
-- 流水线中断时查看原因：功能目录下的 `.pipeline/pipeline.log` 和 `.pipeline/state.json`。修好后用通知里给出的继续命令续跑。
-- 审阅功能分支上的代码和 `report.md`，决定是否合并。
-- 提醒业务同事：在需求所在项目的 Paseo 对话中发起（最好是为这个需求新建的 worktree 工作区），对话过程中不要切换工作目录。流水线的每个步骤都挂在这个对话下、在对话的工作目录和当前分支上进行；目录不一致或当前在默认分支上时会拒绝启动。
-- 安全：步骤 agent 以免确认模式运行，在本机可以执行命令。仓库目录中不要放生产环境凭据。
+```bash
+npm test            # 引擎场景测试（模拟 Paseo）、安装器、体检、skill 校验
+npm run typecheck
+```
 
-## 6. 验证情况
+引擎的编排逻辑用模拟的 Paseo 运行时（`engine/test/fake-runtime.ts`）运行真实代码来测试；安装器和体检在临时的 HOME 中测试。真实 daemon 和 agent 的行为、提示词的产出质量需要通过冒烟测试和真实需求确认。
 
-- 脚本版的编排逻辑：用模拟的 Paseo 运行真实代码，36 个场景测试全部通过；对 Paseo 0.11.2 的 SDK 源码做了类型检查，没有错误。
-- 尚未在真实环境中验证：真实 daemon 与 agent 的行为、通知效果、后台进程在聊天回合结束后能否继续运行、提示词的实际产出质量。冒烟测试和一次小需求试跑就是用来确认这些的。
-- Hub 版：按 Paseo 官方文档核对了字段和步骤引用，未部署运行过。
+## 目录
+
+```text
+skills/            安装到各 agent 的 skill（入口、方法、原则、旧入口的引导）
+principles/        原则索引
+engine/            流水线引擎：src/ 程序、prompts/ 步骤提示词、test/ 测试
+bin/               start-pipeline.mjs（启动器）、req-doctor.mjs（体检）
+install.mjs        安装、升级、回滚、卸载
+contracts/         spec、状态文件、结果文件的格式约定
+docs/              使用指南与设计决定
+test/              安装器、体检、skill 的测试
+legacy/            不再维护的 Hub 工作流版本
+```

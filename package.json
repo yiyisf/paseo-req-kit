@@ -1,0 +1,32 @@
+{
+  "name": "paseo-req-kit",
+  "version": "1.0.0-beta.1",
+  "private": true,
+  "description": "req-kit: a requirement-development workflow for Paseo. /req aligns a requirement in chat; the engine runs design, implementation, review and verification as Paseo agents.",
+  "type": "module",
+  "license": "MIT",
+  "repository": "github:yiyisf/paseo-req-kit",
+  "engines": {
+    "node": ">=22"
+  },
+  "reqKit": {
+    "paseo": ">=0.11.0 <0.12.0"
+  },
+  "bin": {
+    "start-pipeline": "bin/start-pipeline"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 engine/test/*.test.ts test/*.test.ts",
+    "smoke": "tsx engine/src/smoke-test.ts",
+    "doctor": "node bin/req-doctor.mjs"
+  },
+  "dependencies": {
+    "@getpaseo/client": "^0.11.2",
+    "tsx": "^4.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

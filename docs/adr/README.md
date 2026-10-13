@@ -1,0 +1,13 @@
+# 设计决定（ADR）
+
+req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR 说明理由，并在旧的一条中注明被哪条取代。
+
+- [0001 步骤 agent 挂在发起的对话下](0001-step-agents-under-origin-chat.md)
+- [0002 对话过程中不切换工作目录](0002-no-directory-switch-in-chat.md)
+- [0003 第 3–11 步由脚本引擎驱动，不用 Hub 多步骤工作流](0003-script-engine-not-hub.md)
+- [0004 步骤结论只看结果文件](0004-result-files.md)
+- [0005 不在默认分支上运行，只做本地提交](0005-no-default-branch-local-commits-only.md)
+- [0006 只安装到 ~/.agents/skills 和 ~/.claude/skills](0006-skill-install-targets.md)
+- [0007 自带需求访谈 skill，不依赖外部 skill 包](0007-own-interview-skill.md)
+- [0008 入口 skill 之间不互相调用](0008-entries-do-not-call-entries.md)
+- [0009 程序与本机配置分开存放，按版本目录并存](0009-versioned-install-layout.md)
