@@ -69,11 +69,21 @@ function configuration(configPath: string, repo: string | null): PipelineConfig 
     const loaded = loadConfig(configPath, repo ?? undefined);
     report("ok", `配置：${loaded.sources.join(" → ")}`);
     if (loaded.ignored.length > 0) {
-      report("warn", `项目配置中的 ${loaded.ignored.join("、")} 只能在本机配置中设置，已被忽略`, `从 ${PROJECT_CONFIG_FILE} 中删除这些字段`);
+      report("warn", `${loaded.ignored.join("、")} 只能在本机配置中设置，已被忽略`, "从团队或项目配置中删除这些字段");
     }
     const { builder, reviewer } = loaded.config.agents;
     report("ok", `builder：${builder.provider}${builder.modeId ? `（${builder.modeId}）` : ""}；reviewer：${reviewer.provider}${reviewer.modeId ? `（${reviewer.modeId}）` : ""}`);
     report("ok", `默认档位：${loaded.config.defaultProfile}`);
+    const panel = loaded.config.reviewPanel;
+    if (panel.enabled) {
+      report("ok", `评审小组：${panel.members.length} 位成员，用于 ${panel.steps.join("、")}（${panel.profiles.join("、")}档，首轮）`);
+      if (panel.members.length === 1) report("warn", "评审小组只有 1 位成员，效果接近单人评审", "建议配置 2–3 位，使用不同厂商的模型");
+    }
+    const required = loaded.config.requiredVersion;
+    if (required) {
+      if (satisfies(kitVersion(), required)) report("ok", `版本要求 ${required}：当前 ${kitVersion()} 满足`);
+      else report("warn", `团队或项目要求 req-kit ${required}，当前为 ${kitVersion()}`, "按 docs/guide/安装与升级.md 升级到符合要求的版本");
+    }
     return loaded.config;
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
@@ -113,6 +123,11 @@ async function daemon(config: PipelineConfig | null, configPath: string): Promis
     report("ok", `可用的 provider：${providers || "（无）"}`);
     if (config) {
       for (const role of ["builder", "reviewer"] as const) await checkProfile(client, role, config.agents[role], report);
+      if (config.reviewPanel.enabled) {
+        for (const [i, member] of config.reviewPanel.members.entries()) {
+          await checkProfile(client, `评审小组·${member.name ?? `成员 ${i + 1}`}`, member, report);
+        }
+      }
     } else {
       report("warn", "配置不完整，跳过 agent 检查", "修好配置后再运行一次");
     }

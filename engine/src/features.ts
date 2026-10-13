@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { PROFILE_LABELS, type ProfileName } from "./config.js";
+import { samePath } from "./paths.js";
 import { isSpecConfirmed, specProfile } from "./preflight.js";
 import { isAlive } from "./state.js";
 
@@ -48,7 +49,8 @@ export function worktrees(repo: string): Worktree[] {
   let current: Worktree | null = null;
   for (const line of out.split("\n")) {
     if (line.startsWith("worktree ")) {
-      current = { path: line.slice("worktree ".length).trim(), branch: null };
+      // git prints forward slashes on Windows too; normalize for display and comparison.
+      current = { path: path.resolve(line.slice("worktree ".length).trim()), branch: null };
       list.push(current);
     } else if (line.startsWith("branch ") && current) {
       current.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
@@ -150,6 +152,18 @@ export function listFeatures(repo: string): FeatureSummary[] {
   return [...byName.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+/** Same directory, following symlinks (e.g. macOS /tmp) and the platform's case rules. */
+function isSameDir(a: string, b: string): boolean {
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  return samePath(real(a), real(b));
+}
+
 export function describeFeatures(features: FeatureSummary[], here: string): string {
   if (features.length === 0) return "这个项目里还没有需求（docs/features 下没有 spec.md）。";
   const lines = [`共 ${features.length} 个需求（按最近更新排序）：`, ""];
@@ -163,7 +177,7 @@ export function describeFeatures(features: FeatureSummary[], here: string): stri
     ].filter(Boolean);
     lines.push(`${i + 1}. ${f.title}（${f.featureDir}）`);
     lines.push(`   ${facts.join("；")}`);
-    const where = path.resolve(f.worktree) === path.resolve(here) ? "当前工作区" : `工作区 ${f.worktree}`;
+    const where = isSameDir(f.worktree, here) ? "当前工作区" : `工作区 ${f.worktree}`;
     lines.push(`   位置：${where}${f.branch ? `，分支 ${f.branch}` : ""}`);
   });
   return lines.join("\n");

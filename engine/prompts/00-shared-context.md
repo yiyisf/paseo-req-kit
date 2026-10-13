@@ -55,6 +55,8 @@ time	step	ref	decision	alternatives	reason	kind	needs_human
 
 显而易见、不影响结果的选择不用记。
 
+所有产物文件（包括 `decisions.tsv`、`progress.md`）一律用 UTF-8 编码、不带 BOM。在 Windows 上不要用 PowerShell 的 `>`、`>>` 或 `Out-File` 写文件（Windows PowerShell 5 默认写成 UTF-16），用你的文件编辑工具，或者 `node -e` 追加。
+
 **前面步骤的产物缺失或明显不完整时**，不要替它们补做。在你的产物里如实写明，并选择最保守的结果。
 
 **遵循项目已有的做法。** 开始前阅读 `CLAUDE.md`、`AGENTS.md`、`README`、`CONTRIBUTING`（存在哪个读哪个），以及 `GLOSSARY.md`（业务与领域术语；较早的项目可能叫 `CONTEXT.md`）和 `docs/adr/`（已有决定）。命名、目录结构、测试写法、提交信息格式都跟随项目现状。

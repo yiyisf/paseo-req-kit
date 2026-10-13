@@ -81,6 +81,7 @@ interface FakeEvent {
   text?: string;
   agentId?: string;
   role?: string;
+  provider?: string | null;
   title?: string;
   parentAgentId?: string | null;
   labels?: Record<string, string>;
@@ -820,6 +821,81 @@ test("--list：列出所有工作区中的需求及其阶段，同一需求取�
   assert.match(out, /卡住的需求[\s\S]*?已中断（可继续）/);
   assert.match(out, /短信验证码登录[\s\S]*?已确认，未开始开发[\s\S]*?位置：当前工作区，分支 feature\/20261012-sms-login/);
   assert.match(out, new RegExp(`位置：工作区 ${other.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}，分支 feature/20261013-export`));
+});
+
+const PANEL = {
+  reviewPanel: {
+    enabled: true,
+    members: [
+      { name: "安全视角", provider: "codex/panel-a", modeId: "full-access", focus: "重点检查权限和数据安全" },
+      { provider: "opencode/openai/panel-b", modeId: "build", featureValues: { auto_accept: true } },
+    ],
+  },
+};
+
+test("评审小组：首轮方案审核和代码评审先由成员并行评审，再由评审者核实汇总；后续轮次不用小组", () => {
+  const env = setup(PANEL);
+  const scenario = { steps: { "code_review-r1": { result: { verdict: "changes_required" } } } };
+  const result = runMain(env, scenario);
+  assert.equal(result.code, 0, result.out);
+  assert.deepEqual(starts(env), [
+    "design",
+    "design_review-r1-p1",
+    "design_review-r1-p2",
+    "design_review-r1",
+    "implement",
+    "code_review-r1-p1",
+    "code_review-r1-p2",
+    "code_review-r1",
+    "review_fix-r1",
+    "code_review-r2",
+    "verify",
+    "report",
+  ]);
+  const all = events(env).filter((e) => e.type === "start");
+  const byKey = (key: string) => all.find((e) => e.key === key)!;
+  const member = byKey("code_review-r1-p1");
+  assert.equal(member.provider, "codex/panel-a");
+  assert.equal(byKey("code_review-r1-p2").provider, "opencode/openai/panel-b");
+  assert.equal(byKey("code_review-r1").provider, null, "汇总者使用配置的 reviewer");
+  assert.match(member.title ?? "", /6-代码评审 评审小组·安全视角/);
+  assert.match(byKey("code_review-r1-p2").title ?? "", /评审小组·成员 2/);
+  const prompt = member.prompt ?? "";
+  assert.match(prompt, /# 本步骤任务：评审小组成员[\s\S]*# 评审标准（引用自该评审步骤的说明）[\s\S]*# 本步骤任务：代码评审/);
+  assert.match(prompt, /你的意见文件：docs\/features\/20261012-sms-login\/review-panel\/code_review-r1-p1\.md/);
+  assert.match(prompt, /你的关注重点：重点检查权限和数据安全/);
+  const consolidate = byKey("code_review-r1").prompt ?? "";
+  assert.match(consolidate, /# 评审小组的意见[\s\S]*由 2 位评审者各自独立评审/);
+  assert.match(consolidate, /review-panel\/code_review-r1-p1\.md[\s\S]*review-panel\/code_review-r1-p2\.md/);
+  assert.match(consolidate, /已驳回[\s\S]*评审小组意见汇总/);
+  assert.doesNotMatch(byKey("code_review-r2").prompt ?? "", /评审小组/);
+  assert.ok(fs.existsSync(path.join(env.repo, FEATURE, "review-panel", "design_review-r1-p2.md")));
+});
+
+test("评审小组：快速档不使用；成员失败时只汇总完成的成员；续跑时沿用已完成成员的结果", () => {
+  const quick = setup(PANEL);
+  assert.equal(runMain(quick, {}, ["--profile", "quick"]).code, 0);
+  assert.ok(!starts(quick).some((k) => k.includes("-p")), "快速档不应启动评审小组");
+
+  const env = setup(PANEL);
+  const partial = runMain(env, { steps: { "design_review-r1-p2": { error: "model unavailable" } } });
+  assert.equal(partial.code, 0, partial.out);
+  const consolidate = events(env).find((e) => e.type === "start" && e.key === "design_review-r1")?.prompt ?? "";
+  assert.match(consolidate, /其中 1 位没有完成，只有下面 1 份/);
+  assert.doesNotMatch(consolidate, /design_review-r1-p2\.md/);
+
+  const resumed = setup(PANEL);
+  assert.equal(runMain(resumed, { steps: { "design_review-r1": { error: "boom" } } }).code, 1);
+  const before = events(resumed).length;
+  assert.equal(runMain(resumed, {}, ["--resume"]).code, 0);
+  assert.equal(starts(resumed, before)[0], "design_review-r1", "成员已完成，续跑时直接汇总");
+});
+
+test("评审小组：开启但没有成员时，启动前就报配置错误", () => {
+  const env = setup({ reviewPanel: { enabled: true, members: [] } });
+  const result = runMain(env, {});
+  assert.notEqual(result.code, 0);
+  assert.match(result.out, /开启了 reviewPanel，但 reviewPanel\.members 为空/);
 });
 
 test("prompts.local：同名文件替换随工具发布的提示词", () => {

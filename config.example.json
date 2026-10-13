@@ -1,6 +1,7 @@
 {
   "daemonUrl": "ws://127.0.0.1:6767/ws",
   "daemonPasswordEnv": "PASEO_DAEMON_PASSWORD",
+  "teamConfig": null,
   "agents": {
     "builder": {
       "provider": "claude/CHANGE-ME",
@@ -42,11 +43,23 @@
     "verify": 120,
     "defect_fix": 120,
     "reverify": 90,
-    "report": 30
+    "report": 30,
+    "panel_review": 45
   },
   "waitChunkSeconds": 600,
   "permissionPollSeconds": 30,
   "resultFollowUps": 2,
   "attachToOriginChat": true,
-  "archiveStepAgents": false
+  "archiveStepAgents": false,
+  "reviewPanel": {
+    "enabled": false,
+    "steps": [
+      "design_review",
+      "code_review"
+    ],
+    "profiles": [
+      "standard"
+    ],
+    "members": []
+  }
 }

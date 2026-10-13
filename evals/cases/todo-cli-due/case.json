@@ -1,0 +1,10 @@
+{
+  "title": "待办任务支持截止日期和逾期筛选",
+  "fixture": "todo-cli",
+  "feature": "20261013-todo-due-date",
+  "profile": "standard",
+  "hidden": {
+    "dir": ".eval-hidden",
+    "command": ["node", "--test", ".eval-hidden/due.hidden.test.js"]
+  }
+}

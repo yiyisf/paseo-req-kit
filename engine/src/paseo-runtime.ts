@@ -84,7 +84,7 @@ export function createRuntimeWithClient(
     },
     async startAgent(input) {
       const base = {
-        config: agentConfig(config.agents[input.role]),
+        config: agentConfig(input.profile ?? config.agents[input.role]),
         cwd: input.cwd,
         title: input.title,
         labels: input.labels,

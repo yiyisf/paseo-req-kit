@@ -11,7 +11,9 @@ export type StepId =
   | "verify"
   | "defect_fix"
   | "reverify"
-  | "report";
+  | "report"
+  /** One member of the optional review panel; runs before design_review / code_review consolidates. */
+  | "panel_review";
 
 type FieldSpec =
   | { kind: "boolean" }
@@ -38,7 +40,19 @@ export interface StepDef {
 
 const done: ResultSpec = { required: { status: { kind: "enum", values: ["done", "partial"] } } };
 
+/** Review steps that can run with a review panel. */
+export const PANEL_STEPS = ["design_review", "code_review"] as const;
+export type PanelStep = (typeof PANEL_STEPS)[number];
+
 export const STEPS: Record<StepId, StepDef> = {
+  panel_review: {
+    id: "panel_review",
+    number: 0,
+    title: "评审小组成员",
+    role: "reviewer",
+    promptFile: "panel-member.md",
+    result: done,
+  },
   design: {
     id: "design",
     number: 3,

@@ -45,6 +45,7 @@ const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
   defect_fix: { status: "done" },
   reverify: { result: "pass" },
   report: { outcome: "completed", summary: "短信登录已经做好，可以验收。" },
+  panel_review: { status: "done" },
 };
 
 const ARTIFACTS: Record<string, string> = {
@@ -91,7 +92,8 @@ export const createRuntime: RuntimeFactory = async () => {
       const resultRel = contextValue(input.prompt, "结果文件");
       const featureDir = contextValue(input.prompt, "功能目录");
       const key = path.basename(resultRel, ".json");
-      const stepId = key.replace(/-r\d+$/, "");
+      const isPanel = /-p\d+$/.test(key);
+      const stepId = isPanel ? "panel_review" : key.replace(/-r\d+$/, "");
       const behavior: FakeBehavior = scenario.steps?.[key] ?? scenario.steps?.[stepId] ?? {};
       const result = behavior.result ?? DEFAULT_RESULTS[stepId];
       const resultAbs = path.join(input.cwd, resultRel);
@@ -101,6 +103,7 @@ export const createRuntime: RuntimeFactory = async () => {
         agentId: id,
         key,
         role: input.role,
+        provider: input.profile?.provider ?? null,
         title: input.title,
         parentAgentId: input.parentAgentId,
         labels: input.labels,
@@ -114,9 +117,15 @@ export const createRuntime: RuntimeFactory = async () => {
       let permissionWaits = 0;
 
       const finishTurn = () => {
-        const artifact = path.join(input.cwd, featureDir, ARTIFACTS[stepId]);
-        fs.appendFileSync(artifact, `\n## ${key}（模拟 agent，第 ${turn + 1} 个回合）\n`);
-        fs.appendFileSync(path.join(input.cwd, featureDir, "progress.md"), `- ${key}：完成\n`);
+        if (isPanel) {
+          const findings = path.join(input.cwd, contextValue(input.prompt, "你的意见文件"));
+          fs.mkdirSync(path.dirname(findings), { recursive: true });
+          fs.appendFileSync(findings, `## ${key} 的意见（模拟评审者）\n`);
+        } else {
+          const artifact = path.join(input.cwd, featureDir, ARTIFACTS[stepId]);
+          fs.appendFileSync(artifact, `\n## ${key}（模拟 agent，第 ${turn + 1} 个回合）\n`);
+          fs.appendFileSync(path.join(input.cwd, featureDir, "progress.md"), `- ${key}：完成\n`);
+        }
         if (behavior.neverWritesResult) return;
         if (turn === 0 && behavior.skipResultFirst) return;
         if (turn === 0 && behavior.invalidFirst) {

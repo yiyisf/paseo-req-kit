@@ -12,5 +12,6 @@
 | `verify` | `result`: `pass` \| `defects_found` \| `blocked` |
 | `reverify` | `result`: `pass` \| `defects_remaining` |
 | `report` | `outcome`: `completed` \| `completed_with_issues` \| `not_completed`；`summary`: string |
+| `panel_review`（评审小组成员，键为 `<评审步骤>-r<轮次>-p<序号>`） | `status`: `done` \| `partial`；意见写在 `<功能目录>/review-panel/<键>.md` |
 
 字段定义以 `engine/src/steps.ts` 为准；改动时同步更新各步骤提示词末尾的"结果文件"一节。

@@ -5,6 +5,7 @@ import path from "node:path";
 import { LAUNCHER, parseLaunchArgs, resumeCommand } from "./cli-args.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
+import { satisfies } from "./daemon-check.js";
 import { runPipeline } from "./pipeline.js";
 import { preflight } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
@@ -30,7 +31,10 @@ async function main(): Promise<number> {
   const { repo, featureDir, mode } = checked;
   const { config, sources, ignored } = loadConfig(configPath, repo);
   log(`req-kit ${kitVersion()}；配置：${sources.join(" → ")}`);
-  if (ignored.length > 0) log(`项目配置中的 ${ignored.join("、")} 只能在本机配置中设置，已忽略`);
+  if (ignored.length > 0) log(`${ignored.join("、")} 只能在本机配置中设置，已忽略`);
+  if (config.requiredVersion && !satisfies(kitVersion(), config.requiredVersion)) {
+    log(`提醒：团队或项目要求 req-kit ${config.requiredVersion}，当前为 ${kitVersion()}。流水线照常运行，请找时间升级（见 /req-doctor）。`);
+  }
 
   ensurePipelineDir(repo, featureDir);
   const release = acquireLock(repo, featureDir);

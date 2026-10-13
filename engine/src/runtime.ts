@@ -33,6 +33,8 @@ export interface StartAgentInput {
   labels: Record<string, string>;
   /** Attach the step agent under this chat agent (shows in its Subagents track). */
   parentAgentId: string | null;
+  /** Use this agent instead of the role's configured one (review panel members). */
+  profile?: import("./config.js").AgentProfile;
 }
 
 export interface AgentRuntime {

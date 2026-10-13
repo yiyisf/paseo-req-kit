@@ -6,16 +6,17 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 - 确认后，引擎在后台按固定顺序驱动一组 Paseo agent：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 →（有常驻服务时）服务启动验证 → 功能验证 →（发现缺陷时）缺陷修复 ⇄ 复验 → 完成报告。
 - 进展、需要决定的问题和最终结论都发回同一个对话；每个步骤以子 agent 的形式挂在对话下。只做本地提交，合并上线由人决定。
 
-当前版本：**1.1.0-beta.1**（第二阶段：生命周期）。变化见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**1.2.0-beta.1**（第三阶段：质量与分发）。变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 体系结构
 
 | 层 | 内容 | 位置 |
 | --- | --- | --- |
-| 入口 | `/req`（使用者入口，七本手册：新需求、小改动、进度/暂停/继续、修改需求、验收、上线后问题、接手）；`/req-setup`（项目接入）；`/req-doctor`（体检） | `skills/req/`、`skills/req-setup/`、`skills/req-doctor/` |
+| 入口 | `/req`（使用者入口，七本手册：新需求、小改动、进度/暂停/继续、修改需求、验收、上线后问题、接手）；`/req-setup`（项目接入）；`/req-doctor`（体检）；`/req-retro`（复盘） | `skills/req/`、`skills/req-setup/`、`skills/req-doctor/`、`skills/req-retro/` |
 | 方法 | 需求访谈、需求说明、验收标准、结果说明 | `skills/requirement-interview/`、`skills/spec-writing/`、`skills/acceptance-criteria/`、`skills/result-report/` |
 | 原则 | 七条工作原则，聊天和引擎共用一份索引 | `principles/INDEX.md`、`skills/principle-*/` |
-| 引擎 | 第 3–11 步的流水线程序和步骤提示词 | `engine/` |
+| 引擎 | 第 3–11 步的流水线程序和步骤提示词；可选的评审小组 | `engine/` |
+| 评估 | 样例仓库与隐藏验收测试、端到端评估运行器、对话评估剧本与评分规则 | `evals/` |
 
 入口之间不互相调用；引擎不调用 skill，只读取提示词和原则索引。设计决定见 [docs/adr/](docs/adr/)，文件格式见 [contracts/](contracts/)，范围见 [SCOPE.md](SCOPE.md)。
 
@@ -24,8 +25,8 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
 
 ```bash
-git clone --branch 1.1.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.1.0-beta.1
-cd ~/tools/req-kit/versions/1.1.0-beta.1
+git clone --branch 1.2.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.2.0-beta.1
+cd ~/tools/req-kit/versions/1.2.0-beta.1
 npm install
 node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/requirement-pipeline
 ```
@@ -50,13 +51,15 @@ node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/
 | 使用者 | [使用者指南](docs/guide/使用者指南.md) |
 | 安装和维护的人 | [安装与升级](docs/guide/安装与升级.md)：安装、各 agent 配置、冒烟测试、升级、回滚、从脚本版迁移、卸载 |
 | 项目维护者 | [项目定制与运行规则](docs/guide/项目定制与运行规则.md)：项目配置、项目说明、档位、运行规则、注意事项 |
-| 体系维护者 | [docs/adr/](docs/adr/)、[contracts/](contracts/)、[SCOPE.md](SCOPE.md)、[.out-of-scope/](.out-of-scope/) |
+| 体系维护者 | [维护者指南](docs/guide/维护者指南.md)、[evals/](evals/README.md)、[docs/adr/](docs/adr/)、[contracts/](contracts/)、[SCOPE.md](SCOPE.md)、[.out-of-scope/](.out-of-scope/) |
 
 ## 开发
 
 ```bash
-npm test            # 引擎场景测试（模拟 Paseo）、安装器、体检、skill 校验
+npm test                  # 引擎场景测试（模拟 Paseo）、安装器、体检、skill 校验、评估用例自检
 npm run typecheck
+npm run eval:self-check   # 评估用例的参考实现能否通过隐藏验收（不需要 Paseo）
+npm run eval              # 用真实的 Paseo 和 agent 跑端到端评估
 ```
 
 引擎的编排逻辑用模拟的 Paseo 运行时（`engine/test/fake-runtime.ts`）运行真实代码来测试；安装器和体检在临时的 HOME 中测试。真实 daemon 和 agent 的行为、提示词的产出质量需要通过冒烟测试和真实需求确认。
@@ -72,5 +75,6 @@ install.mjs        安装、升级、回滚、卸载
 contracts/         spec、状态文件、结果文件的格式约定
 docs/              使用指南与设计决定
 test/              安装器、体检、skill 的测试
+evals/             评估：样例仓库、用例、对话剧本
 legacy/            不再维护的 Hub 工作流版本
 ```

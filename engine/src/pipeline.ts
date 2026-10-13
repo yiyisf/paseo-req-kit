@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PROFILE_LABELS, type PipelineConfig } from "./config.js";
+import { type AgentProfile, PROFILE_LABELS, type PipelineConfig, type ReviewPanelMember } from "./config.js";
 import {
   blockedMessage,
   completedMessage,
@@ -12,7 +12,7 @@ import {
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, StepAgent } from "./runtime.js";
 import { type PipelineState, type StepRecord, writeState } from "./state.js";
-import { STEPS, type StepDef, type StepId, stepKey, validateResult } from "./steps.js";
+import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult } from "./steps.js";
 
 export interface PipelineContext {
   repo: string;
@@ -71,7 +71,29 @@ async function notifyOrigin(ctx: PipelineContext, text: string): Promise<void> {
   }
 }
 
-function buildPrompt(ctx: PipelineContext, def: StepDef, round: number | null, maxRounds: number | null, resultFile: string): string {
+/** Extra material for one run of a step: panel member details, or the panel's findings to consolidate. */
+interface StepExtras {
+  key?: string;
+  title?: string;
+  profile?: AgentProfile;
+  /** Appended as extra lines inside <pipeline-context>. */
+  contextLines?: string[];
+  /** Prompt sections appended after the step task (before project additions). */
+  sections?: string[];
+  /** Prompt file to quote as the review criteria (panel members). */
+  criteriaFile?: string;
+  /** Step whose project additions (steps/<id>.md) apply; defaults to the step itself. */
+  additionsFor?: StepId;
+}
+
+function buildPrompt(
+  ctx: PipelineContext,
+  def: StepDef,
+  round: number | null,
+  maxRounds: number | null,
+  resultFile: string,
+  extras: StepExtras = {},
+): string {
   const sources = { ...ctx.prompts, repo: ctx.repo };
   const profile = ctx.state.profile;
   const lines = [
@@ -83,12 +105,25 @@ function buildPrompt(ctx: PipelineContext, def: StepDef, round: number | null, m
     `本步骤：${def.title}（流水线第 ${def.number} 步）`,
   ];
   if (round !== null && maxRounds !== null) lines.push(`轮次：第 ${round} 轮，最多 ${maxRounds} 轮`);
+  if (extras.contextLines) lines.push(...extras.contextLines);
   lines.push(`结果文件：${resultFile}`, `结果文件绝对路径：${path.join(ctx.repo, resultFile)}`, "</pipeline-context>");
   const parts = [readToolPrompt(sources, "00-shared-context.md")];
   const principles = principlesSection(sources);
   if (principles) parts.push(principles);
   parts.push(readToolPrompt(sources, def.promptFile));
-  const extra = projectAdditions(sources, def.id);
+  if (extras.criteriaFile) {
+    parts.push(
+      [
+        "# 评审标准（引用自该评审步骤的说明）",
+        "",
+        "下面是这一轮评审本来的完整说明，用来确定评审什么、怎么判断级别。其中关于写哪个产物文件、结果文件写什么、是否提交的要求不适用于你，以上一节\"评审小组成员\"的说明为准。",
+        "",
+        readToolPrompt(sources, extras.criteriaFile),
+      ].join("\n"),
+    );
+  }
+  if (extras.sections) parts.push(...extras.sections);
+  const extra = projectAdditions(sources, extras.additionsFor ?? def.id);
   if (extra) parts.push(extra);
   parts.push(lines.join("\n"));
   return `${parts.join("\n\n")}\n`;
@@ -165,9 +200,10 @@ async function runStep(
   id: StepId,
   round: number | null = null,
   maxRounds: number | null = null,
+  extras: StepExtras = {},
 ): Promise<Record<string, unknown>> {
   const def = STEPS[id];
-  const key = stepKey(id, round);
+  const key = extras.key ?? stepKey(id, round);
   const cached = ctx.state.results[key];
   if (cached) {
     ctx.log(`跳过 ${key}：沿用上次运行的结果 ${JSON.stringify(cached)}`);
@@ -178,7 +214,9 @@ async function runStep(
   const resultAbs = path.join(ctx.repo, resultRel);
   fs.rmSync(resultAbs, { force: true });
 
-  const agentTitle = `[${featureName(ctx.featureDir)}] ${def.number}-${def.title}${round !== null && round > 1 ? ` 第${round}轮` : ""}`;
+  const agentTitle =
+    `[${featureName(ctx.featureDir)}] ` +
+    (extras.title ?? `${def.number}-${def.title}${round !== null && round > 1 ? ` 第${round}轮` : ""}`);
   const record: StepRecord = {
     key,
     stepId: id,
@@ -198,13 +236,14 @@ async function runStep(
     const agent = await ctx.runtime.startAgent({
       role: def.role,
       title: agentTitle,
-      prompt: buildPrompt(ctx, def, round, maxRounds, resultRel),
+      prompt: buildPrompt(ctx, def, round, maxRounds, resultRel, extras),
       cwd: ctx.repo,
       labels: {
         "requirement-pipeline": featureName(ctx.featureDir),
         "pipeline-step": key,
       },
       parentAgentId: ctx.config.attachToOriginChat ? ctx.state.originAgentId : null,
+      ...(extras.profile ? { profile: extras.profile } : {}),
     });
     record.agentId = agent.id;
     ctx.state.history.push(record);
@@ -246,6 +285,86 @@ async function runStep(
   }
 }
 
+function panelApplies(ctx: PipelineContext, step: PanelStep, round: number): boolean {
+  const panel = ctx.config.reviewPanel;
+  return panel.enabled && round === 1 && panel.steps.includes(step) && panel.profiles.includes(ctx.state.profile);
+}
+
+const PANEL_OUTPUT: Record<PanelStep, string> = { design_review: "design-review.md", code_review: "code-review.md" };
+
+function memberName(member: ReviewPanelMember, index: number): string {
+  return member.name?.trim() || `成员 ${index + 1}`;
+}
+
+/**
+ * Runs the panel members of one review in parallel. Returns the findings files
+ * (relative to the repository) of the members that finished; a member that fails
+ * is logged and left out. Fails only when no member finishes.
+ */
+async function runPanel(ctx: PipelineContext, step: PanelStep, round: number): Promise<string[]> {
+  const members = ctx.config.reviewPanel.members;
+  const stepTitle = STEPS[step].title;
+  const runs = members.map((member, i) => {
+    const key = `${step}-r${round}-p${i + 1}`;
+    const findings = `${ctx.featureDir}/review-panel/${key}.md`;
+    const name = memberName(member, i);
+    const contextLines = [
+      `评审小组：${stepTitle}，第 ${round} 轮，${name}（共 ${members.length} 位）`,
+      `你的意见文件：${findings}`,
+      `你的意见文件绝对路径：${path.join(ctx.repo, findings)}`,
+    ];
+    if (member.focus) contextLines.push(`你的关注重点：${member.focus}`);
+    return runStep(ctx, "panel_review", round, null, {
+      key,
+      title: `${STEPS[step].number}-${stepTitle} 评审小组·${name}`,
+      profile: member,
+      contextLines,
+      criteriaFile: STEPS[step].promptFile,
+      additionsFor: step,
+    }).then(() => findings);
+  });
+  const settled = await Promise.allSettled(runs);
+  const done: string[] = [];
+  settled.forEach((outcome, i) => {
+    if (outcome.status === "fulfilled") done.push(outcome.value);
+    else ctx.log(`评审小组${memberName(members[i], i)}没有完成，汇总时不包含它的意见：${(outcome.reason as Error).message}`);
+  });
+  if (done.length === 0) {
+    const first = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+    throw first?.reason instanceof StepFailure ? first.reason : new StepFailure(stepTitle, "评审小组的成员都没有完成");
+  }
+  return done;
+}
+
+function consolidationSection(step: PanelStep, findings: string[], total: number): string {
+  return [
+    "# 评审小组的意见",
+    "",
+    `这一轮先由 ${total} 位评审者各自独立评审${findings.length < total ? `（其中 ${total - findings.length} 位没有完成，只有下面 ${findings.length} 份）` : ""}，意见文件如下。你负责核实并汇总，再按上文的要求完成本步骤：`,
+    "",
+    ...findings.map((f) => `- \`${f}\``),
+    "",
+    "做法：",
+    "1. 逐条读完所有意见。不同成员说的是同一个问题的，合并为一条。",
+    "2. 每条都亲自核实（读代码、对照 spec、能运行的就运行），然后归入四类之一：",
+    "   - **必须修改**：成立，且属于\"阻塞\"或\"重要\"。按上文的格式写进评审意见，参与结论判断。",
+    "   - **建议修改**：成立，但属于\"建议\"。",
+    "   - **留给人决定**：涉及需求取舍、只有需求方或开发同事能判断的。在 `decisions.tsv` 中记一行，`needs_human` 为 `yes`。",
+    "   - **已驳回**：核实后不成立。写明依据，并在 `decisions.tsv` 中记一行，`kind` 为 `驳回意见`。",
+    `3. 在 \`${PANEL_OUTPUT[step]}\` 中增加\"评审小组意见汇总\"一节，表格列出每条原始意见：来源成员、意见摘要、归类、理由。被驳回的也要列出，最终报告会展示它们。`,
+    "4. 结论和结果文件只根据你核实后的\"必须修改\"判断，不按成员的数量投票。",
+  ].join("\n");
+}
+
+/** One review round; with a panel in the first round, members review first and this step consolidates. */
+async function runReview(ctx: PipelineContext, step: PanelStep, round: number, maxRounds: number): Promise<Record<string, unknown>> {
+  if (!panelApplies(ctx, step, round)) return runStep(ctx, step, round, maxRounds);
+  const findings = await runPanel(ctx, step, round);
+  return runStep(ctx, step, round, maxRounds, {
+    sections: [consolidationSection(step, findings, ctx.config.reviewPanel.members.length)],
+  });
+}
+
 /** Steps 3–11. Loop rounds and optional steps come from the run's profile. */
 async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
   const settings = ctx.config.profiles[ctx.state.profile];
@@ -255,7 +374,7 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
 
   let designRounds = 0;
   for (let r = 1; r <= rounds.designReview; r++) {
-    const review = await runStep(ctx, "design_review", r, rounds.designReview);
+    const review = await runReview(ctx, "design_review", r, rounds.designReview);
     designRounds = r;
     if (review.verdict === "approved") break;
     if (review.verdict === "blocked") throw new BusinessDecisionNeeded(review.questions as string[]);
@@ -272,7 +391,7 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
   await runStep(ctx, "implement");
 
   for (let r = 1; r <= rounds.codeReview; r++) {
-    const review = await runStep(ctx, "code_review", r, rounds.codeReview);
+    const review = await runReview(ctx, "code_review", r, rounds.codeReview);
     if (review.verdict === "pass") break;
     await runStep(ctx, "review_fix", r, rounds.codeReview);
   }

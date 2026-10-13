@@ -1,0 +1,10 @@
+{
+  "title": "formatBytes 支持 TB、负数和小数位数",
+  "fixture": "text-utils",
+  "feature": "20261013-format-bytes-tb",
+  "profile": "quick",
+  "hidden": {
+    "dir": ".eval-hidden",
+    "command": ["node", "--test", ".eval-hidden/format.hidden.test.js"]
+  }
+}

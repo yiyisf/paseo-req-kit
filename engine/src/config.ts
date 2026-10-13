@@ -21,6 +21,23 @@ export interface AgentProfile {
   options?: Record<string, unknown>;
 }
 
+export interface ReviewPanelMember extends AgentProfile {
+  /** Short name shown in titles and the consolidated review, e.g. "安全视角". */
+  name?: string;
+  /** Extra focus for this member, appended to its prompt, e.g. "重点检查权限和数据安全". */
+  focus?: string;
+}
+
+export interface ReviewPanelSettings {
+  enabled: boolean;
+  /** Which reviews use the panel (first round only; later rounds check fixes with the single reviewer). */
+  steps: Array<"design_review" | "code_review">;
+  /** Which profiles use the panel. */
+  profiles: ProfileName[];
+  /** Reviewers that run in parallel; the configured reviewer then consolidates their findings. */
+  members: ReviewPanelMember[];
+}
+
 export type ProfileName = "quick" | "standard";
 
 export const PROFILE_NAMES: readonly ProfileName[] = ["quick", "standard"];
@@ -55,6 +72,12 @@ export interface PipelineConfig {
   attachToOriginChat: boolean;
   /** Archive each step agent after its step completes. */
   archiveStepAgents: boolean;
+  /** Machine config only: path of a team config file merged between the machine and project configs. */
+  teamConfig: string | null;
+  /** Range of req-kit versions this team or project expects, e.g. ">=1.2.0 <2". Checked, never enforced. */
+  requiredVersion: string | null;
+  /** Optional review panel: several reviewers in parallel, then a consolidation. Off by default. */
+  reviewPanel: ReviewPanelSettings;
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -81,6 +104,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     defect_fix: 120,
     reverify: 90,
     report: 30,
+    panel_review: 45,
   },
   notifyMilestones: true,
   waitChunkSeconds: 600,
@@ -88,6 +112,9 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   resultFollowUps: 2,
   attachToOriginChat: true,
   archiveStepAgents: false,
+  teamConfig: null,
+  requiredVersion: null,
+  reviewPanel: { enabled: false, steps: ["design_review", "code_review"], profiles: ["standard"], members: [] },
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -144,24 +171,41 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
     }
   }
   merged.profiles = profiles;
+  merged.reviewPanel = { ...base.reviewPanel, ...(isRecord(raw.reviewPanel) ? (raw.reviewPanel as Partial<ReviewPanelSettings>) : {}) };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
 }
 
-function validate(config: PipelineConfig): void {
-  for (const role of ["builder", "reviewer"] as const) {
-    const profile = config.agents[role];
-    if (!isRecord(profile) || typeof profile.provider !== "string") {
-      throw new ConfigError(`agents.${role}.provider 缺失`);
-    }
-    const slash = profile.provider.indexOf("/");
-    if (slash <= 0 || slash === profile.provider.length - 1) {
-      throw new ConfigError(`agents.${role}.provider 必须是 "provider/model" 格式，当前为 "${profile.provider}"`);
-    }
-    if (profile.provider.includes("CHANGE-ME")) {
-      throw new ConfigError(`agents.${role}.provider 还是示例值，请填写真实的 provider/model（npm run smoke -- check 会列出可用的值）`);
-    }
+function validateProvider(label: string, profile: unknown): void {
+  if (!isRecord(profile) || typeof profile.provider !== "string") {
+    throw new ConfigError(`${label}.provider 缺失`);
   }
+  const slash = profile.provider.indexOf("/");
+  if (slash <= 0 || slash === profile.provider.length - 1) {
+    throw new ConfigError(`${label}.provider 必须是 "provider/model" 格式，当前为 "${profile.provider}"`);
+  }
+  if (profile.provider.includes("CHANGE-ME")) {
+    throw new ConfigError(`${label}.provider 还是示例值，请填写真实的 provider/model（npm run smoke -- check 会列出可用的值）`);
+  }
+}
+
+function validatePanel(panel: ReviewPanelSettings): void {
+  if (typeof panel.enabled !== "boolean") throw new ConfigError("reviewPanel.enabled 必须是 true 或 false");
+  if (!Array.isArray(panel.steps) || !panel.steps.every((s) => s === "design_review" || s === "code_review")) {
+    throw new ConfigError('reviewPanel.steps 只能包含 "design_review" 和 "code_review"');
+  }
+  if (!Array.isArray(panel.profiles) || !panel.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('reviewPanel.profiles 只能包含 "quick" 和 "standard"');
+  }
+  if (!Array.isArray(panel.members)) throw new ConfigError("reviewPanel.members 必须是数组");
+  if (panel.enabled && panel.members.length === 0) {
+    throw new ConfigError("开启了 reviewPanel，但 reviewPanel.members 为空。请至少配置一位成员（建议 2–3 位，使用不同的模型）");
+  }
+  panel.members.forEach((member, i) => validateProvider(`reviewPanel.members[${i}]`, member));
+}
+
+function validate(config: PipelineConfig): void {
+  for (const role of ["builder", "reviewer"] as const) validateProvider(`agents.${role}`, config.agents[role]);
   if (!PROFILE_NAMES.includes(config.defaultProfile)) {
     throw new ConfigError(`defaultProfile 必须是 ${PROFILE_NAMES.join(" 或 ")}`);
   }
@@ -178,6 +222,10 @@ function validate(config: PipelineConfig): void {
   for (const [key, value] of Object.entries(config.stepTimeoutMinutes)) {
     if (typeof value !== "number" || value <= 0) throw new ConfigError(`stepTimeoutMinutes.${key} 必须是正数`);
   }
+  validatePanel(config.reviewPanel);
+  if (config.requiredVersion !== null && typeof config.requiredVersion !== "string") {
+    throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
+  }
   for (const key of ["waitChunkSeconds", "permissionPollSeconds"] as const) {
     if (typeof config[key] !== "number" || config[key] <= 0) throw new ConfigError(`${key} 必须是正数`);
   }
@@ -187,13 +235,26 @@ export interface LoadedConfig {
   config: PipelineConfig;
   /** Files that contributed, in the order they were applied. */
   sources: string[];
-  /** Keys a project file tried to set but may not. */
+  /** Settings a team or project file tried to set but may not, e.g. "项目配置中的 daemonUrl". */
   ignored: string[];
 }
 
+/** Removes machine-only keys from a shared (team or project) file, recording them. */
+function stripMachineKeys(raw: Record<string, unknown>, label: string, ignored: string[]): Record<string, unknown> {
+  for (const key of MACHINE_ONLY_KEYS) {
+    if (key in raw) {
+      ignored.push(`${label}中的 ${key}`);
+      delete raw[key];
+    }
+  }
+  return raw;
+}
+
 /**
- * Machine-wide file (~/.req-kit/config.json by default), then the project's own file at the
- * repository root when `repo` is given. Later files win.
+ * Layers, later wins: machine file (~/.req-kit/config.json by default) → team file named by
+ * the machine file's teamConfig → the project's own file at the repository root when `repo`
+ * is given. Machine-only keys (daemon address and password, teamConfig) are honoured only
+ * in the machine file.
  */
 export function loadConfig(configPath: string, repo?: string): LoadedConfig {
   if (!fs.existsSync(configPath)) {
@@ -205,17 +266,19 @@ export function loadConfig(configPath: string, repo?: string): LoadedConfig {
   const sources = [configPath];
   const ignored: string[] = [];
 
+  if (config.teamConfig) {
+    const teamFile = path.resolve(path.dirname(configPath), config.teamConfig);
+    if (!fs.existsSync(teamFile)) {
+      throw new ConfigError(`找不到本机配置中 teamConfig 指向的团队配置文件：${teamFile}`);
+    }
+    config = merge(config, stripMachineKeys(readJson(teamFile, "团队配置文件"), "团队配置", ignored));
+    sources.push(teamFile);
+  }
+
   if (repo) {
     const projectFile = path.join(repo, PROJECT_CONFIG_FILE);
     if (fs.existsSync(projectFile)) {
-      const raw = readJson(projectFile, "项目配置文件");
-      for (const key of MACHINE_ONLY_KEYS) {
-        if (key in raw) {
-          ignored.push(key);
-          delete raw[key];
-        }
-      }
-      config = merge(config, raw);
+      config = merge(config, stripMachineKeys(readJson(projectFile, "项目配置文件"), "项目配置", ignored));
       sources.push(projectFile);
     }
   }

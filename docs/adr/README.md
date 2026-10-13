@@ -13,3 +13,5 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0009 程序与本机配置分开存放，按版本目录并存](0009-versioned-install-layout.md)
 - [0010 需求总览现场生成，不维护 INDEX.md](0010-generated-feature-overview.md)
 - [0011 完成后修改 spec 可以继续开发](0011-resume-after-completion.md)
+- [0012 评审小组：首轮并行评审，评审者核实汇总](0012-review-panel.md)
+- [0013 发布不使用 changesets 等工具](0013-no-release-tooling.md)
