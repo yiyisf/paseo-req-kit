@@ -26,6 +26,14 @@ export interface EvalCase {
   hidden: { dir: string; command: string[] };
   /** Paths (prefixes, "/"-separated) the change may touch besides the feature directory. */
   scope?: string[];
+  /** Run in two phases: develop (must stop at the gate with a handoff note), then verify. */
+  phases?: "gated";
+  /** Take spec.md, hidden/ and reference/ from this case (a variant of it). */
+  sameAs?: string;
+}
+
+function caseDir(c: EvalCase): string {
+  return path.join(EVALS_DIR, "cases", c.sameAs ?? c.name);
 }
 
 export type Honesty = "一致" | "夸大" | "保守" | "参考实现";
@@ -50,6 +58,8 @@ export interface EvalResult {
   resultFollowUps: number;
   /** Times the run stopped for a human: waiting for a decision, or a failed step. */
   humanInterventions: number;
+  /** Phased cases: whether the develop phase stopped at the gate with a handoff note ("ok" or what went wrong). */
+  phaseGate: string | null;
   repo: string | null;
   error: string | null;
 }
@@ -80,28 +90,28 @@ export function prepareRepo(c: EvalCase, base: string): { repo: string; featureD
   git(repo, "checkout", "-q", "-b", `feature/${c.feature}`);
   const featureDir = `docs/features/${c.feature}`;
   fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
-  fs.copyFileSync(path.join(EVALS_DIR, "cases", c.name, "spec.md"), path.join(repo, featureDir, "spec.md"));
+  fs.copyFileSync(path.join(caseDir(c), "spec.md"), path.join(repo, featureDir, "spec.md"));
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", `docs(${c.feature}): 需求说明已确认`);
   return { repo, featureDir };
 }
 
-function runPipeline(repo: string, featureDir: string, c: EvalCase, configPath: string | null, timeoutMs: number): string | null {
+function runPipeline(repo: string, featureDir: string, c: EvalCase, configPath: string | null, timeoutMs: number, extra: string[] = []): string | null {
   const tsx = path.join(findDependency("tsx") ?? path.join(KIT_ROOT, "node_modules", "tsx"), "dist", "cli.mjs");
-  const args = [tsx, path.join(KIT_ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--profile", c.profile];
+  const args = [tsx, path.join(KIT_ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--profile", c.profile, ...extra];
   if (configPath) args.push("--config", configPath);
   // Not launched from a chat: no origin, notifications go to the log only.
   const env = { ...process.env };
   delete env.PASEO_AGENT_ID;
   delete env.PASEO_AGENT_CWD;
   const run = spawnSync(process.execPath, args, { cwd: repo, env, encoding: "utf8", timeout: timeoutMs, windowsHide: true });
-  fs.writeFileSync(path.join(repo, featureDir, ".pipeline", "eval-run.log"), `${run.stdout ?? ""}${run.stderr ?? ""}`);
+  fs.appendFileSync(path.join(repo, featureDir, ".pipeline", "eval-run.log"), `${run.stdout ?? ""}${run.stderr ?? ""}`);
   if (run.error) return `流水线进程出错：${run.error.message}`;
   return null;
 }
 
 function runHidden(repo: string, c: EvalCase): { passed: number; failed: number; output: string } {
-  const source = path.join(EVALS_DIR, "cases", c.name, "hidden");
+  const source = path.join(caseDir(c), "hidden");
   fs.cpSync(source, path.join(repo, c.hidden.dir), { recursive: true });
   const [command, ...rest] = c.hidden.command;
   // node --test: force the TAP reporter so the counts can be read, and drop the
@@ -156,6 +166,7 @@ export function evaluateCase(
     reviewRounds: { design: 0, code: 0, defectFix: 0 },
     resultFollowUps: 0,
     humanInterventions: 0,
+    phaseGate: null,
     repo: null,
     error: null,
   };
@@ -163,9 +174,22 @@ export function evaluateCase(
     const { repo, featureDir } = prepareRepo(c, options.base);
     result.repo = repo;
     if (options.reference) {
-      fs.cpSync(path.join(EVALS_DIR, "cases", c.name, "reference"), repo, { recursive: true });
+      fs.cpSync(path.join(caseDir(c), "reference"), repo, { recursive: true });
+    } else if (c.phases === "gated") {
+      result.error = runPipeline(repo, featureDir, c, options.configPath, options.timeoutMs, ["--phases", "gated"]);
+      const statePath = path.join(repo, featureDir, ".pipeline", "state.json");
+      const gate = fs.existsSync(statePath) ? (JSON.parse(fs.readFileSync(statePath, "utf8")) as RawState).status : null;
+      const handoff = fs.existsSync(path.join(repo, featureDir, "handoff.md"));
+      const verified = fs.existsSync(path.join(repo, featureDir, "verification.md"));
+      result.phaseGate =
+        gate !== "phase_done" ? `研发阶段结束时状态是 ${gate ?? "（无）"}，没有停在闸口` : !handoff ? "停在闸口，但没有提测说明 handoff.md" : verified ? "研发阶段就做了功能验证" : "ok";
+      if (!result.error && gate === "phase_done") {
+        result.error = runPipeline(repo, featureDir, c, options.configPath, options.timeoutMs, ["--phase", "verify"]);
+      }
     } else {
       result.error = runPipeline(repo, featureDir, c, options.configPath, options.timeoutMs);
+    }
+    if (!options.reference) {
       const statePath = path.join(repo, featureDir, ".pipeline", "state.json");
       if (fs.existsSync(statePath)) {
         const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as RawState;
@@ -243,6 +267,8 @@ export function summarize(results: EvalResult[]): string {
       "",
     );
   }
+  const gates = results.filter((r) => r.phaseGate !== null);
+  if (gates.length > 0) lines.push("分阶段用例的闸口检查：", "", ...gates.map((r) => `- ${r.case}：${r.phaseGate === "ok" ? "研发完成后停在闸口，提测说明已写" : r.phaseGate}`), "");
   const errors = results.filter((r) => r.error);
   if (errors.length > 0) lines.push("运行错误：", "", ...errors.map((r) => `- ${r.case}：${r.error}`), "");
   return lines.join("\n");
@@ -284,7 +310,7 @@ async function main(): Promise<number> {
   console.log(`结果：${out}`);
   if (values.keep) console.log(`各用例的仓库保留在 ${base}`);
   else fs.rmSync(base, { recursive: true, force: true });
-  return results.some((r) => r.error) ? 1 : 0;
+  return results.some((r) => r.error || (r.phaseGate !== null && r.phaseGate !== "ok")) ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {

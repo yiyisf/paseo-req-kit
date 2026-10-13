@@ -8,15 +8,15 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { launchArgv, parseLaunchArgs, startCommand } from "./cli-args.js";
+import { launchArgv, parseLaunchArgs, startCommand, verifyCommand } from "./cli-args.js";
 import { scheduledStartPrompt } from "./messages.js";
 import { describeTime, parseStartTime } from "./schedule-time.js";
 import { moveToOwnWorktree, type OwnWorktree } from "./worktree.js";
-import { loadConfig, type PipelineConfig, PROFILE_LABELS } from "./config.js";
+import { loadConfig, PHASE_MODE_LABELS, type PipelineConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeLiveActivity, describeStatus, stopPipeline } from "./control.js";
 import { describeFeatures, featuresWithRuns, findWorktreeRun, listFeatures, resolveFeatureArg } from "./features.js";
-import { checkChatCwd, normalizeFeatureDir, preflight, type PreflightResult, specProfile } from "./preflight.js";
+import { checkChatCwd, normalizeFeatureDir, preflight, type PreflightResult, specProfile, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import type { AgentRuntime } from "./runtime.js";
 import { ensurePipelineDir, hashFile, isAlive, pipelineDir, readState, statePath } from "./state.js";
@@ -147,6 +147,7 @@ if (args.status || args.stop) {
       process.exit(0);
     }
     console.log(describeStatus(state, featureDir));
+    if (state && reservation) console.log(`已预约：${describeTime(new Date(reservation.at))} 开始（Paseo 定时任务，到时由对话执行；执行暂停命令可以取消）`);
     if (args.sourceRepo) console.log(`位置：为这个需求新建的工作区 ${repo}（需求文件在 ${path.join(repo, featureDir)}）`);
     // Live detail from Paseo, best effort: the plain status above never depends on the daemon.
     if (state?.status === "running") {
@@ -248,19 +249,38 @@ try {
   fail((error as Error).message);
 }
 
+if (args.verifyAt) {
+  const at = parseStartTime(args.verifyAt);
+  if (!at) fail(`看不懂测试验证的开始时间"${args.verifyAt}"。可以写 22:00、明天 8:30、2026-10-14 08:30 或 +2h`);
+  if (!args.originAgentId) fail("预约测试验证需要在 Paseo 的对话中执行：到时由这个对话执行开始测试验证的命令。");
+  if (args.phases === "develop-only") fail("只做研发时没有测试验证阶段，--verify-at 不适用");
+  args.verifyAt = at.toISOString();
+}
+
+if (checked.entersVerify) {
+  const previous = checked.mode.kind === "fresh" ? null : checked.mode.previous;
+  const environment = args.verifyEnv ?? previous?.phases?.environment ?? loaded.config.phases.verify.environment;
+  const problem = verifyPhaseProblem(checked.repo, checked.featureDir, environment);
+  if (problem) fail(problem);
+}
+
 if (args.at) {
   const at = parseStartTime(args.at);
   if (!at) fail(`看不懂开始时间"${args.at}"。可以写 22:00、明天 8:30、2026-10-14 08:30 或 +2h`);
   if (at.getTime() < Date.now() + 60_000) fail("开始时间要在至少 1 分钟之后");
   const origin = args.originAgentId;
   if (!origin) fail("预约开始需要在 Paseo 的对话中执行：到时由这个对话执行启动命令。");
-  const command = startCommand({
-    repo: checked.repo,
-    featureDir: checked.featureDir,
-    configPath: args.configPath,
-    profile: args.profile,
-    worktree: args.worktree,
-  });
+  const command = args.phase
+    ? verifyCommand({ repo: checked.repo, featureDir: checked.featureDir, configPath: args.configPath, verifyEnv: args.verifyEnv, defects: args.defects })
+    : startCommand({
+        repo: checked.repo,
+        featureDir: checked.featureDir,
+        configPath: args.configPath,
+        profile: args.profile,
+        worktree: args.worktree,
+        phases: args.phases,
+        verifyAt: args.verifyAt,
+      });
   let scheduleId: string | null;
   try {
     await dropReservation(checked.repo, checked.featureDir, loaded.config);
@@ -268,7 +288,7 @@ if (args.at) {
       runtime.scheduleMessage({
         agentId: origin,
         at,
-        name: `req-kit 预约开发：${path.basename(checked.featureDir)}`,
+        name: `req-kit 预约${args.phase ? "测试验证" : "开发"}：${path.basename(checked.featureDir)}`,
         prompt: scheduledStartPrompt({ featureDir: checked.featureDir, command }),
       }),
     );
@@ -281,7 +301,7 @@ if (args.at) {
   fs.writeFileSync(reservationFile(checked.repo, checked.featureDir), `${JSON.stringify(reservation, null, 2)}\n`);
   console.log(
     [
-      `已预约在 ${describeTime(at)} 开始开发（Paseo 定时任务，在 Paseo 的 Schedules 中可以看到）。到时会在这个对话里自动执行启动命令。`,
+      `已预约在 ${describeTime(at)} 开始${args.phase ? "测试验证" : "开发"}（Paseo 定时任务，在 Paseo 的 Schedules 中可以看到）。到时会在这个对话里自动执行启动命令。`,
       `功能目录：${checked.featureDir}`,
       "查看：查看进度命令；取消：暂停命令。在那之前修改需求说明也没关系，开始时以最新的为准。",
     ].join("\n"),
@@ -344,6 +364,12 @@ const modeText: Record<string, string> = {
   "resume-reuse": "从中断处继续",
   "resume-from-design": "需求有变化，从方案设计开始增量处理",
 };
+const phaseMode =
+  args.phases ??
+  (checked.mode.kind === "resume-reuse" ? checked.mode.previous.phases?.mode : null) ??
+  checked.specPhases ??
+  (checked.mode.kind === "fresh" ? null : checked.mode.previous.phases?.mode) ??
+  (args.verifyAt ? "gated" : loaded.config.phases.mode);
 const profile =
   args.profile ??
   (checked.mode.kind === "resume-reuse" ? checked.mode.previous.profile : null) ??
@@ -352,7 +378,14 @@ const profile =
 
 console.log(
   [
-    `已在后台启动（${modeText[checked.mode.kind]}，${PROFILE_LABELS[profile]}档），进程 ${child.pid}。`,
+    checked.entersVerify
+      ? `已在后台开始测试验证阶段（${PROFILE_LABELS[profile]}档），进程 ${child.pid}。提测说明：${checked.featureDir}/handoff.md`
+      : `已在后台启动（${modeText[checked.mode.kind]}，${PROFILE_LABELS[profile]}档${phaseMode === "continuous" ? "" : `，执行方式：${PHASE_MODE_LABELS[phaseMode]}`}），进程 ${child.pid}。`,
+    !checked.entersVerify && phaseMode === "gated"
+      ? `研发完成（写好提测说明）后会停下来通知这个对话，等待测试验证${args.verifyAt ? `；已安排在 ${describeTime(new Date(args.verifyAt))} 之后自动开始测试验证` : ""}。`
+      : !checked.entersVerify && phaseMode === "develop-only"
+        ? "只做研发：写好提测说明和研发报告后结束，测试由人完成。"
+        : null,
     ownWorktree
       ? `已为这个需求新建工作区：${ownWorktree.repo}（分支 ${ownWorktree.branch}，在 Paseo 侧边栏中可以看到）。开发在那里进行，步骤仍挂在这个对话下；这个对话的工作目录不变。` +
         `需求文件已移到 ${path.join(ownWorktree.repo, checked.featureDir)}${ownWorktree.removedSource ? "" : "（这里原有的已提交版本保留不动）"}，之后读写需求文件请用这个路径。`

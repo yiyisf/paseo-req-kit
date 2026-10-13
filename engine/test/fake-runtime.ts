@@ -26,6 +26,8 @@ export interface FakeBehavior {
   neverWritesResult?: boolean;
   /** The first N agents started for this step end with a transient (rate-limit) error. */
   transientErrors?: number;
+  /** Result of the Nth agent started for this step key (falls back to `result`). */
+  resultsByStart?: Array<Record<string, unknown>>;
 }
 
 export interface FakeScenario {
@@ -60,6 +62,7 @@ const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
   defect_fix: { status: "done" },
   reverify: { result: "pass" },
   report: { outcome: "completed", summary: "短信登录已经做好，可以验收。" },
+  handoff: { status: "done" },
   panel_review: { status: "done" },
   design_proposal: { status: "done" },
   spec_review: { verdict: "issues", issues: ["AC-1.1 没有说明验证码过期后怎么提示"] },
@@ -77,6 +80,7 @@ const ARTIFACTS: Record<string, string> = {
   defect_fix: "verification.md",
   reverify: "verification.md",
   report: "report.md",
+  handoff: "handoff.md",
   spec_review: "spec-review.md",
 };
 
@@ -116,10 +120,10 @@ export const createRuntime: RuntimeFactory = async () => {
       const isPanel = !isProposal && /-p\d+$/.test(key);
       const stepId = isProposal ? "design_proposal" : isPanel ? "panel_review" : key.replace(/-r\d+$/, "");
       const behavior: FakeBehavior = scenario.steps?.[key] ?? scenario.steps?.[stepId] ?? {};
-      const result = behavior.result ?? DEFAULT_RESULTS[stepId];
       const resultAbs = path.join(input.cwd, resultRel);
       const startNumber = (startsByKey.get(key) ?? 0) + 1;
       startsByKey.set(key, startNumber);
+      const result = behavior.resultsByStart?.[startNumber - 1] ?? behavior.result ?? DEFAULT_RESULTS[stepId];
       const transient = startNumber <= (behavior.transientErrors ?? 0);
 
       record({

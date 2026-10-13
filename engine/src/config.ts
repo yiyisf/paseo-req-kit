@@ -67,6 +67,39 @@ export interface ProfileSettings {
   serviceStart: boolean;
 }
 
+/**
+ * How the develop phase (design → code review → handoff) and the verify phase
+ * (service start → verification → defect fixes) relate. See ADR 0022.
+ * - continuous: verification follows straight away (the behaviour before 1.7)
+ * - gated: the run stops after the handoff ("研发完成，待测试验证"); someone starts the verify phase later
+ * - develop-only: the run ends after the handoff with a development report; people test by hand
+ */
+export type PhaseMode = "continuous" | "gated" | "develop-only";
+
+export const PHASE_MODES: readonly PhaseMode[] = ["continuous", "gated", "develop-only"];
+
+export const PHASE_MODE_LABELS: Record<PhaseMode, string> = { continuous: "连续", gated: "分阶段", "develop-only": "只做研发" };
+
+/** Where the verify phase checks the result: services started here, or an environment deployed for testing. */
+export type VerifyEnvironment = "local" | "deployed";
+
+/** What the verify phase does with defects: fix and re-verify, hand back to a new develop round, or only record them. */
+export type DefectHandling = "fix" | "handback" | "report";
+
+export interface VerifyPhaseSettings {
+  environment: VerifyEnvironment;
+  /** Agents for the verify-phase steps, per role; a role left out uses the top-level agents. */
+  agents: Partial<Record<"builder" | "reviewer", AgentProfile>>;
+  defects: DefectHandling;
+  /** Run the service start check in the verify phase; null: as the profile says. Ignored for "deployed". */
+  serviceStart: boolean | null;
+}
+
+export interface PhaseSettings {
+  mode: PhaseMode;
+  verify: VerifyPhaseSettings;
+}
+
 export interface PipelineConfig {
   daemonUrl: string;
   /** Name of the environment variable holding the daemon password, if the daemon has one. */
@@ -130,6 +163,8 @@ export interface PipelineConfig {
   autoResumeMax: number;
   /** Ask the chat to check on a running pipeline this often and continue it if the process died; 0: off. */
   watchdogMinutes: number;
+  /** Develop and verify phases: continuous (default), gated, or develop-only, plus verify-phase options. */
+  phases: PhaseSettings;
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -156,6 +191,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     defect_fix: 120,
     reverify: 90,
     report: 30,
+    handoff: 30,
     panel_review: 45,
     spec_review: 20,
     design_proposal: 45,
@@ -183,6 +219,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   autoResumeMinutes: 30,
   autoResumeMax: 2,
   watchdogMinutes: 0,
+  phases: { mode: "continuous", verify: { environment: "local", agents: {}, defects: "fix", serviceStart: null } },
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -245,6 +282,17 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
     ...base.designProposals,
     ...(isRecord(raw.designProposals) ? (raw.designProposals as Partial<PipelineConfig["designProposals"]>) : {}),
   };
+  const rawPhases = isRecord(raw.phases) ? raw.phases : {};
+  const rawVerify = isRecord(rawPhases.verify) ? rawPhases.verify : {};
+  merged.phases = {
+    ...base.phases,
+    ...(rawPhases as Partial<PhaseSettings>),
+    verify: {
+      ...base.phases.verify,
+      ...(rawVerify as Partial<VerifyPhaseSettings>),
+      agents: { ...base.phases.verify.agents, ...(isRecord(rawVerify.agents) ? rawVerify.agents : {}) },
+    },
+  };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
 }
@@ -281,6 +329,19 @@ function validatePanel(panel: ReviewPanelSettings): void {
     throw new ConfigError("开启了 reviewPanel，但 reviewPanel.members 为空。请至少配置一位成员（建议 2–3 位，使用不同的模型）");
   }
   panel.members.forEach((member, i) => validateProvider(`reviewPanel.members[${i}]`, member));
+}
+
+function validatePhases(phases: PhaseSettings): void {
+  if (!PHASE_MODES.includes(phases.mode)) throw new ConfigError(`phases.mode 只能是 ${PHASE_MODES.map((m) => `"${m}"`).join("、")}`);
+  const v = phases.verify;
+  if (v.environment !== "local" && v.environment !== "deployed") throw new ConfigError('phases.verify.environment 只能是 "local" 或 "deployed"');
+  if (!["fix", "handback", "report"].includes(v.defects)) throw new ConfigError('phases.verify.defects 只能是 "fix"、"handback" 或 "report"');
+  if (v.serviceStart !== null && typeof v.serviceStart !== "boolean") throw new ConfigError("phases.verify.serviceStart 必须是 true、false 或 null");
+  if (!isRecord(v.agents)) throw new ConfigError("phases.verify.agents 必须是对象，例如 { \"reviewer\": { \"paseoProfile\": \"测试\" } }");
+  for (const [role, profile] of Object.entries(v.agents)) {
+    if (role !== "builder" && role !== "reviewer") throw new ConfigError("phases.verify.agents 只能包含 builder 和 reviewer");
+    validateProvider(`phases.verify.agents.${role}`, profile);
+  }
 }
 
 function validate(config: PipelineConfig): void {
@@ -334,6 +395,7 @@ function validate(config: PipelineConfig): void {
   for (const key of ["maxConcurrentPipelines", "waitingReminderHours", "autoResumeMinutes", "autoResumeMax", "watchdogMinutes"] as const) {
     if (typeof config[key] !== "number" || config[key] < 0) throw new ConfigError(`${key} 必须是不小于 0 的数（0 表示关闭）`);
   }
+  validatePhases(config.phases);
   for (const key of ["waitChunkSeconds", "permissionPollSeconds", "serviceReadySeconds", "queuePollSeconds"] as const) {
     if (typeof config[key] !== "number" || config[key] <= 0) throw new ConfigError(`${key} 必须是正数`);
   }

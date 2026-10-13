@@ -1,0 +1,12 @@
+{
+  "title": "分阶段执行：formatBytes 支持 TB（研发完成后停在闸口，再开始测试验证）",
+  "sameAs": "text-utils-tb",
+  "fixture": "text-utils",
+  "feature": "20261013-format-bytes-tb-gated",
+  "profile": "quick",
+  "phases": "gated",
+  "hidden": {
+    "dir": ".eval-hidden",
+    "command": ["node", "--test", ".eval-hidden/format.hidden.test.js"]
+  }
+}

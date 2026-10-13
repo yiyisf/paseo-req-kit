@@ -6,7 +6,7 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 - 确认后，引擎在后台按固定顺序驱动一组 Paseo agent：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 →（有常驻服务时）服务启动验证 → 功能验证 →（发现缺陷时）缺陷修复 ⇄ 复验 → 完成报告。
 - 进展、需要决定的问题和最终结论都发回同一个对话；每个步骤以子 agent 的形式挂在对话下。只做本地提交，合并上线由人决定。
 
-当前版本：**1.7.0-beta.1**（npm 分发：`npm i -g paseo-req-kit`，按支持的 Paseo 版本升级）。1.4–1.6 让 req-kit 用上了 Paseo 自身的能力：agent profile、`paseo.json` 服务、并行子 agent、内置浏览器和定时任务，见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**1.7.0-beta.2**（分阶段执行：研发完成后可以停下来提测，再由人或测试同事开始测试验证；1.7.0-beta.1 起可用 `npm i -g paseo-req-kit` 安装）。1.4–1.6 让 req-kit 用上了 Paseo 自身的能力：agent profile、`paseo.json` 服务、并行子 agent、内置浏览器和定时任务，见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 体系结构
 
@@ -33,8 +33,8 @@ req configure                 # 配置向导：从 Paseo 中可用的 agent 和�
 不用 npm 全局安装时，也可以用 git 安装（见[安装与升级](docs/guide/安装与升级.md)第 3 节）：
 
 ```bash
-git clone --branch 1.7.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.7.0-beta.1
-cd ~/tools/req-kit/versions/1.7.0-beta.1 && npm install && node install.mjs && node install.mjs --configure
+git clone --branch 1.7.0-beta.2 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.7.0-beta.2
+cd ~/tools/req-kit/versions/1.7.0-beta.2 && npm install && node install.mjs && node install.mjs --configure
 ```
 
 配置向导会为 `builder` 和 `reviewer` 各选一个 agent，并自动选择不需要确认的模式；Paseo 中建有 agent profile 时，推荐直接引用它（`{ "paseoProfile": "实现" }`），之后在 Paseo 中改 profile 即可换模型。也可以手工编辑 `~/.req-kit/config.json`：

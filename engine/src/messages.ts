@@ -88,7 +88,25 @@ export function completedMessage(input: {
   outcome: string;
   summary: string;
   reportPath: string;
+  /** Set for a develop-only run: people test by hand from this handoff note. */
+  handoffPath?: string | null;
 }): string {
+  if (input.handoffPath) {
+    return [
+      HEADER,
+      "",
+      `需求的研发已经完成（执行方式：只做研发，流水线没有做测试验证）。研发结论：${OUTCOME_TEXT[input.outcome] ?? input.outcome}`,
+      "",
+      "摘要：",
+      input.summary,
+      "",
+      `研发报告：${input.reportPath}`,
+      `提测说明：${input.handoffPath}`,
+      "",
+      "请把结论和摘要转告用户，说明接下来需要人工测试：按 /req 的验收手册，以提测说明中的“建议重点测试”和验收标准为线索，带用户逐条测试。",
+      "如果之后想让流水线做测试验证，在用户同意后执行继续命令并加上 --phase verify。",
+    ].join("\n");
+  }
   return [
     HEADER,
     "",
@@ -219,5 +237,72 @@ export function scheduledStartPrompt(input: { featureDir: string; command: strin
     "请执行下面的启动命令，然后用一句话告诉用户预约的开发已经开始（输出\"未启动\"时，按 /req 中的说明处理并告诉用户原因）：",
     "",
     input.command,
+  ].join("\n");
+}
+
+const ENVIRONMENT_HINT = {
+  local: "测试验证会在本地启动服务进行。",
+  deployed: "测试验证会在已部署的测试环境中进行：开始前要先把版本部署到测试环境，并在功能目录写好 test-env.md（地址、账号从哪里取、可以用的测试数据；不写口令本身）。",
+} as const;
+
+/** The develop phase is done and the run stopped at the gate (phases.mode "gated"). */
+export function phaseDoneMessage(input: {
+  featureDir: string;
+  handoffPath: string;
+  verifyCommand: string;
+  environment: "local" | "deployed";
+  /** The verify phase is scheduled at this time (text). */
+  verifyAt?: string | null;
+  /** A reminder is scheduled after this many hours. */
+  reminderHours?: number | null;
+  /** How many times verification has handed defects back so far. */
+  handbacks?: number;
+}): string {
+  return [
+    HEADER,
+    "",
+    `功能目录：${input.featureDir}`,
+    `研发阶段已经完成${input.handbacks ? `（这是测试退回后第 ${input.handbacks} 次修复完成）` : ""}：代码已写完并通过代码评审，提测说明在 ${input.handoffPath}。按这个需求的执行方式（分阶段），流水线在这里停下，等待测试验证。`,
+    "",
+    "请这样处理：",
+    "1. 告诉用户研发已完成、可以提测，用两三句话讲提测说明里\"这次改了什么\"和\"建议重点测试\"。",
+    `2. ${ENVIRONMENT_HINT[input.environment]}`,
+    input.verifyAt
+      ? `3. 已预约在 ${input.verifyAt} 自动开始测试验证（Paseo 定时任务）。用户想提前开始或改用别的方式时，按 /req 的"开始测试验证"手册处理；想取消预约，执行暂停命令。`
+      : "3. 用户（或测试同事）准备好之后，按 /req 的\"开始测试验证\"手册处理；确认后执行下面的命令：",
+    "",
+    input.verifyCommand,
+    ...(input.reminderHours && !input.verifyAt ? ["", `（如果 ${input.reminderHours} 小时内还没有开始测试验证，会在这个对话里提醒一次。）`] : []),
+  ].join("\n");
+}
+
+/** Sent by a Paseo schedule when a requirement has waited at the gate for a long time. */
+export function phaseWaitingReminderMessage(input: { featureDir: string; hours: number; handoffPath: string; verifyCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的提醒，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `这个需求的研发已经完成超过 ${input.hours} 小时，一直在等待测试验证（提测说明：${input.handoffPath}）。`,
+    "",
+    "请先执行查看进度的命令确认：仍然是\"研发完成，待测试验证\"时，在用户下次说话时提醒他可以提测了；已经开始测试验证、已完成或已停止时，忽略这条提醒，不要打扰用户。",
+    `开始测试验证的命令是：${input.verifyCommand}`,
+  ].join("\n");
+}
+
+/** Sent by a Paseo schedule at the time given with --verify-at. */
+export function verifyStartPrompt(input: { featureDir: string; statusCommand: string; verifyCommand: string; environment: "local" | "deployed" }): string {
+  return [
+    "【需求开发流水线通知】这是用户之前预约的测试验证开始时间，不是用户现在发的消息。",
+    "",
+    `功能目录：${input.featureDir}`,
+    "请这样处理：",
+    `1. 先执行查看进度的命令：${input.statusCommand}`,
+    "2. 状态是\"研发完成，待测试验证\"时：" +
+      (input.environment === "deployed"
+        ? "检查功能目录里有 test-env.md；有就执行下面的命令，没有就不要启动，等用户下次说话时告诉他需要先写好测试环境说明。"
+        : "执行下面的命令。") +
+      "然后用一句话告诉用户预约的测试验证已经开始（输出\"未启动\"时告诉用户原因）：",
+    `   ${input.verifyCommand}`,
+    "3. 其他情况（已经开始、已完成、用户已经手动处理过）：什么也不做，也不要回复用户。",
   ].join("\n");
 }

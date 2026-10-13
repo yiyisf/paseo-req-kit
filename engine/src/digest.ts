@@ -16,8 +16,11 @@ import { resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 
 const GROUPS: Array<{ title: string; match: (stage: string) => boolean }> = [
-  { title: "需要处理", match: (s) => s.startsWith("等待需求方决定") || s.startsWith("已中断") || s.startsWith("验收未通过") },
-  { title: "待验收", match: (s) => s === "待验收" || s.startsWith("开发结束") },
+  {
+    title: "需要处理",
+    match: (s) => s.startsWith("等待需求方决定") || s.startsWith("已中断") || s.startsWith("验收未通过") || s.startsWith("研发完成，待测试验证"),
+  },
+  { title: "待验收", match: (s) => s.startsWith("待验收") || s.startsWith("开发结束") },
   { title: "开发中", match: (s) => s === "开发中" },
   { title: "对齐中 / 未开始", match: (s) => s === "对齐中" || s.startsWith("已确认") },
   { title: "已验收", match: (s) => s === "已验收" },

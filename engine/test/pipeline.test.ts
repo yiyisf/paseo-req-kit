@@ -126,7 +126,7 @@ test("全部一次通过：按顺序执行，跳过不需要的步骤，结果�
   const env = setup();
   const { code, out } = runMain(env, {});
   assert.equal(code, 0, out);
-  assert.deepEqual(starts(env), ["design", "design_review-r1", "implement", "code_review-r1", "verify", "report"]);
+  assert.deepEqual(starts(env), ["design", "design_review-r1", "implement", "code_review-r1", "handoff", "verify", "report"]);
 
   const startEvents = events(env).filter((e) => e.type === "start");
   for (const e of startEvents) {
@@ -140,6 +140,7 @@ test("全部一次通过：按顺序执行，跳过不需要的步骤，结果�
     design: "builder",
     "design_review-r1": "reviewer",
     implement: "builder",
+    handoff: "builder",
     "code_review-r1": "reviewer",
     verify: "reviewer",
     report: "builder",
@@ -156,7 +157,7 @@ test("全部一次通过：按顺序执行，跳过不需要的步骤，结果�
   const s = state(env);
   assert.equal(s.status, "completed");
   assert.equal(s.outcome, "completed");
-  assert.equal(s.history.length, 6);
+  assert.equal(s.history.length, 7);
   assert.ok(s.history.every((h: { outcome: string }) => h.outcome === "completed"));
   assert.equal(fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", ".gitignore"), "utf8"), "*\n");
   assert.ok(!fs.existsSync(lockPath(env.repo)), "锁没有释放");
@@ -183,6 +184,7 @@ test("返工路径：审核、评审、验证各自循环，直到通过", () =>
     "code_review-r1",
     "review_fix-r1",
     "code_review-r2",
+    "handoff",
     "service_start",
     "verify",
     "defect_fix-r1",
@@ -220,6 +222,7 @@ test("轮数用完：继续往下走，报告结论为有遗留问题", () => {
     "review_fix-r2",
     "code_review-r3",
     "review_fix-r3",
+    "handoff",
     "verify",
     "defect_fix-r1",
     "reverify-r1",
@@ -260,7 +263,7 @@ test("需要业务决定：暂停并把问题发回对话；更新 spec 后用 -
   const before = events(env).length;
   const resumed = runMain(env, {}, ["--resume"]);
   assert.equal(resumed.code, 0, resumed.out);
-  assert.deepEqual(starts(env, before), ["design", "design_review-r1", "implement", "code_review-r1", "verify", "report"]);
+  assert.deepEqual(starts(env, before), ["design", "design_review-r1", "implement", "code_review-r1", "handoff", "verify", "report"]);
   const s = state(env);
   assert.equal(s.status, "completed");
   assert.equal(s.attempt, 2);
@@ -282,7 +285,7 @@ test("步骤失败：通知中断原因；--resume 沿用已完成的步骤，�
   const before = events(env).length;
   const resumed = runMain(env, {}, ["--resume"]);
   assert.equal(resumed.code, 0, resumed.out);
-  assert.deepEqual(starts(env, before), ["implement", "code_review-r1", "verify", "report"]);
+  assert.deepEqual(starts(env, before), ["implement", "code_review-r1", "handoff", "verify", "report"]);
   assert.match(resumed.out, /跳过 design：沿用上次运行的结果/);
   assert.equal(state(env).attempt, 1);
 });
@@ -689,6 +692,7 @@ test("快速档：各环节只做一轮，跳过服务启动验证；提示词�
     "implement",
     "code_review-r1",
     "review_fix-r1",
+    "handoff",
     "verify",
     "defect_fix-r1",
     "reverify-r1",
@@ -858,6 +862,7 @@ test("评审小组：首轮方案审核和代码评审先由成员并行评审�
     "code_review-r1",
     "review_fix-r1",
     "code_review-r2",
+    "handoff",
     "verify",
     "report",
   ]);
@@ -1077,6 +1082,7 @@ test("Paseo 管理的服务：服务启动和验证前用当前代码重启 pase
     "design_review-r1",
     "implement",
     "code_review-r1",
+    "handoff",
     "startServices",
     "service_start",
     "startServices",
@@ -1435,3 +1441,276 @@ test("关闭里程碑通知后只发结果", () => {
   assert.equal(notifications(env).length, 1);
 });
 
+
+// ---------------------------------------------------------------------------
+// Phased execution (1.7): develop phase → gate → verify phase. ADR 0022.
+// ---------------------------------------------------------------------------
+
+const DEVELOP = ["design", "design_review-r1", "implement", "code_review-r1", "handoff"];
+
+test("分阶段：研发完成写提测说明后停在闸口，通知对话；--phase verify 开始测试验证，沿用研发结果", () => {
+  const env = setup();
+  const first = runMain(env, {}, ["--phases", "gated"]);
+  assert.equal(first.code, 0, first.out);
+  assert.deepEqual(starts(env), DEVELOP);
+  let s = state(env);
+  assert.equal(s.status, "phase_done");
+  assert.equal(s.phase, "develop");
+  assert.deepEqual(s.phases, { mode: "gated", environment: "local", defects: "fix" });
+  assert.ok(fs.existsSync(path.join(env.repo, FEATURE, "handoff.md")));
+  const note = notifications(env).at(-1)?.text ?? "";
+  assert.match(note, /研发阶段已经完成/);
+  assert.match(note, /handoff\.md/);
+  assert.match(note, /--resume --phase verify/);
+  // Waiting at the gate is reminded like an unanswered question.
+  const reminder = events(env).find((e) => e.type === "scheduleMessage");
+  assert.match(reminder?.prompt ?? "", /一直在等待测试验证/);
+  assert.equal(s.schedules[0].kind, "reminder");
+
+  // Without --resume the launch is refused with a hint.
+  const refused = runMain(env, {});
+  assert.equal(refused.code, 2, refused.out);
+  assert.match(refused.out, /等待测试验证.*--phase verify/);
+
+  const before = events(env).length;
+  const second = runMain(env, {}, ["--phase", "verify"]);
+  assert.equal(second.code, 0, second.out);
+  assert.deepEqual(starts(env, before), ["verify", "report"]);
+  assert.ok(events(env).slice(before).some((e) => e.type === "cancelSchedule"), "进入测试验证时取消提醒");
+  s = state(env);
+  assert.equal(s.status, "completed");
+  assert.equal(s.phase, "verify");
+  assert.equal(s.attempt, 1);
+  const byKey = Object.fromEntries(s.history.map((h: { key: string; phase: string }) => [h.key, h.phase]));
+  assert.equal(byKey.design, "develop");
+  assert.equal(byKey.handoff, "develop");
+  assert.equal(byKey.verify, "verify");
+  const verifyPrompt = events(env).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "";
+  assert.match(verifyPrompt, /执行方式：分阶段（当前阶段：测试验证）/);
+  assert.match(verifyPrompt, /提测说明：docs\/features\/20261012-sms-login\/handoff\.md/);
+  const reportPrompt = events(env).find((e) => e.type === "start" && e.key === "report")?.prompt ?? "";
+  assert.match(reportPrompt, /用时与用量（研发阶段，全部尝试）/);
+  assert.match(reportPrompt, /用时与用量（测试验证阶段，全部尝试）/);
+});
+
+test("分阶段：spec 中的执行方式生效；在闸口单独的 --resume 也开始测试验证；--phase verify 在研发未完成时被拒绝", () => {
+  const env = setup();
+  const spec = path.join(env.repo, FEATURE, "spec.md");
+  fs.writeFileSync(spec, fs.readFileSync(spec, "utf8").replace("- 需求提出人", "- 执行方式：分阶段\n- 需求提出人"));
+  const early = runMain(env, { steps: { implement: { error: "boom" } } });
+  assert.equal(early.code, 1, early.out);
+  assert.equal(state(env).phases.mode, "gated");
+  const tooSoon = runMain(env, {}, ["--phase", "verify"]);
+  assert.equal(tooSoon.code, 2, tooSoon.out);
+  assert.match(tooSoon.out, /研发阶段还没有完成/);
+
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.equal(state(env).status, "phase_done");
+  const before = events(env).length;
+  const verify = runMain(env, {}, ["--resume"]);
+  assert.equal(verify.code, 0, verify.out);
+  assert.deepEqual(starts(env, before), ["verify", "report"]);
+});
+
+test("分阶段：测试验证开始前需求说明改过，回到研发阶段的方案设计", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}, ["--phases", "gated"]).code, 0);
+  const spec = path.join(env.repo, FEATURE, "spec.md");
+  fs.appendFileSync(spec, "- **AC-1.2** 新增的验收标准\n");
+  const before = events(env).length;
+  const again = runMain(env, {}, ["--phase", "verify"]);
+  assert.equal(again.code, 0, again.out);
+  assert.deepEqual(starts(env, before), DEVELOP);
+  const s = state(env);
+  assert.equal(s.status, "phase_done");
+  assert.equal(s.attempt, 2);
+  assert.ok(s.incremental);
+});
+
+test("只做研发：写提测说明和研发报告后结束；之后仍可用 --phase verify 让流水线做测试验证", async () => {
+  const env = setup({ phases: { mode: "develop-only" } });
+  const { code, out } = runMain(env, {});
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), [...DEVELOP, "report"]);
+  const reportPrompt = events(env).find((e) => e.type === "start" && e.key === "report")?.prompt ?? "";
+  assert.match(reportPrompt, /只做研发：本次不做测试验证/);
+  assert.match(reportPrompt, /## 只做研发时/);
+  const done = notifications(env).at(-1)?.text ?? "";
+  assert.match(done, /执行方式：只做研发/);
+  assert.match(done, /提测说明：docs\/features\/20261012-sms-login\/handoff\.md/);
+  assert.equal(state(env).status, "completed");
+  const { describeStatus } = await import("../src/control.js");
+  assert.match(describeStatus(state(env), FEATURE), /状态：研发已完成，待人工测试/);
+
+  const plain = runMain(env, {}, ["--resume"]);
+  assert.equal(plain.code, 2, plain.out);
+  assert.match(plain.out, /只做研发.*--phase verify/);
+
+  const before = events(env).length;
+  const verify = runMain(env, {}, ["--phase", "verify"]);
+  assert.equal(verify.code, 0, verify.out);
+  assert.deepEqual(starts(env, before), ["verify", "report"]);
+  assert.equal(state(env).phase, "verify");
+  assert.doesNotMatch(notifications(env).at(-1)?.text ?? "", /只做研发/);
+});
+
+test("测试验证在已部署的测试环境中进行：需要 test-env.md；不在本地启动服务；附加已部署环境的说明", () => {
+  const env = setup({ phases: { mode: "gated", verify: { environment: "deployed" } } });
+  const scenario: FakeScenario = { steps: { design: { result: { has_runnable_service: true } } }, services: { names: ["web"] } };
+  assert.equal(runMain(env, scenario).code, 0);
+  const refused = runMain(env, scenario, ["--phase", "verify"]);
+  assert.equal(refused.code, 2, refused.out);
+  assert.match(refused.out, /test-env\.md/);
+  assert.equal(state(env).status, "phase_done", "被拒绝时不改运行记录");
+
+  fs.writeFileSync(path.join(env.repo, FEATURE, "test-env.md"), "# 测试环境\n- 地址：https://test.example.internal\n");
+  const before = events(env).length;
+  const ok = runMain(env, scenario, ["--phase", "verify"]);
+  assert.equal(ok.code, 0, ok.out);
+  assert.deepEqual(starts(env, before), ["verify", "report"]);
+  assert.ok(!events(env).slice(before).some((e) => e.type === "startServices"), "不在本地启动服务");
+  const prompt = events(env).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "";
+  assert.match(prompt, /验证环境：已部署的测试环境/);
+  assert.match(prompt, /# 在已部署的测试环境中验证/);
+  assert.match(prompt, /测试验证：已部署的测试环境/);
+});
+
+test("测试验证可以用单独的 agent；--verify-env 和 --defects 在开始测试时临时指定", () => {
+  const env = setup({ phases: { mode: "gated", verify: { agents: { reviewer: { provider: "codex/tester-model", modeId: "full-access" } } } } });
+  assert.equal(runMain(env, {}).code, 0);
+  const before = events(env).length;
+  const ok = runMain(env, { steps: { verify: { result: { result: "defects_found" } } } }, ["--phase", "verify", "--defects", "report"]);
+  assert.equal(ok.code, 0, ok.out);
+  assert.deepEqual(starts(env, before), ["verify", "report"], "只记录缺陷，不修复");
+  const all = events(env).filter((e) => e.type === "start");
+  assert.equal(all.find((e) => e.key === "verify")?.provider, "codex/tester-model");
+  assert.equal(all.find((e) => e.key === "code_review-r1")?.provider, "codex/test-model");
+  assert.equal(all.find((e) => e.key === "report")?.provider, "claude/test-model");
+  assert.equal(state(env).phases.defects, "report");
+});
+
+test("缺陷退回研发：记入 changes.md，从方案设计开始新一轮研发，修完重新提测", () => {
+  const env = setup({ phases: { mode: "continuous", verify: { defects: "handback" } } });
+  const scenario: FakeScenario = { steps: { verify: { resultsByStart: [{ result: "defects_found" }, { result: "pass" }] } } };
+  const { code, out } = runMain(env, scenario);
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), [...DEVELOP, "verify", ...DEVELOP, "verify", "report"]);
+  const s = state(env);
+  assert.equal(s.attempt, 2);
+  assert.equal(s.handbacks, 1);
+  assert.match(s.incremental.reason, /测试验证发现缺陷/);
+  assert.match(fs.readFileSync(path.join(env.repo, FEATURE, "changes.md"), "utf8"), /测试验证退回（第 1 次）[\s\S]*来源：测试验证/);
+  const redesign = events(env).filter((e) => e.type === "start" && e.key === "design")[1]?.prompt ?? "";
+  assert.match(redesign, /增量继续：本次是第 2 次尝试/);
+  assert.match(redesign, /测试验证退回的/);
+  assert.ok(notifications(env).some((n) => /退回研发阶段修复（第 1 次）/.test(n.text ?? "")));
+});
+
+test("缺陷退回研发：分阶段时修完停在闸口重新提测；退回次数用完后写报告", () => {
+  const env = setup({ profiles: { standard: { rounds: { defectFix: 1 } } }, phases: { mode: "gated", verify: { defects: "handback" } } });
+  const scenario: FakeScenario = { steps: { verify: { result: { result: "defects_found" } } } };
+  assert.equal(runMain(env, scenario).code, 0);
+  let before = events(env).length;
+  assert.equal(runMain(env, scenario, ["--phase", "verify"]).code, 0);
+  assert.deepEqual(starts(env, before), ["verify", ...DEVELOP]);
+  assert.equal(state(env).status, "phase_done");
+  assert.match(notifications(env).at(-1)?.text ?? "", /测试退回后第 1 次修复完成/);
+  before = events(env).length;
+  const last = runMain(env, scenario, ["--phase", "verify"]);
+  assert.equal(last.code, 0, last.out);
+  assert.deepEqual(starts(env, before), ["verify", "report"]);
+  assert.match(last.out, /已经退回研发 1 次/);
+});
+
+test("--verify-at：研发完成后预约开始测试验证；时间已过则直接继续", () => {
+  const env = setup();
+  const { code, out } = runMain(env, {}, ["--verify-at", "+3h"]);
+  assert.equal(code, 0, out);
+  const s = state(env);
+  assert.equal(s.phases.mode, "gated", "--verify-at 隐含分阶段");
+  assert.equal(s.status, "phase_done");
+  const scheduled = events(env).filter((e) => e.type === "scheduleMessage");
+  assert.equal(scheduled.length, 1, "预约了测试验证就不再另外提醒");
+  assert.match(scheduled[0].prompt ?? "", /预约的测试验证开始时间/);
+  assert.match(scheduled[0].prompt ?? "", /--phase verify/);
+  assert.equal(s.schedules[0].kind, "verify-start");
+  assert.match(notifications(env).at(-1)?.text ?? "", /已预约在 .* 自动开始测试验证/);
+
+  const env2 = setup({ phases: { mode: "gated" } });
+  const st = runMain(env2, { steps: { handoff: { error: "boom" } } }, ["--verify-at", "+1m"]);
+  assert.equal(st.code, 1, st.out);
+  const file = path.join(env2.repo, FEATURE, ".pipeline", "state.json");
+  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  raw.verifyAt = new Date(Date.now() - 60_000).toISOString();
+  fs.writeFileSync(file, JSON.stringify(raw));
+  const before = events(env2).length;
+  const late = runMain(env2, {}, ["--resume"]);
+  assert.equal(late.code, 0, late.out);
+  assert.deepEqual(starts(env2, before), ["handoff", "verify", "report"]);
+});
+
+test("状态和总览：研发完成，待测试验证；按阶段统计用时", async () => {
+  const env = setup({ phases: { mode: "gated" } });
+  assert.equal(runMain(env, {}).code, 0);
+  const { describeStatus } = await import("../src/control.js");
+  const text = describeStatus(state(env), FEATURE);
+  assert.match(text, /状态：研发完成，待测试验证/);
+  assert.match(text, /执行方式：分阶段（当前阶段：研发）/);
+  assert.match(text, /已预约：.*提醒/);
+  const { listFeatures } = await import("../src/features.js");
+  const { digestText } = await import("../src/digest.js");
+  const features = listFeatures(env.repo);
+  assert.equal(features[0].stage, "研发完成，待测试验证");
+  assert.match(digestText("shop", features), /需要处理：\n- 短信验证码登录（20261012-sms-login）：研发完成，待测试验证/);
+});
+
+test("测试同事接手：自动新建工作区的需求研发完成后，同一仓库另一个工作区的对话可以开始测试验证；研发阶段不行", async () => {
+  const env = setup({ phases: { mode: "gated" } });
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+  git(env.repo, "checkout", "-q", "-b", "main");
+  fs.writeFileSync(path.join(env.repo, "README.md"), "app\n");
+  git(env.repo, "add", "README.md");
+  git(env.repo, "commit", "-q", "-m", "init");
+  const source = fs.realpathSync(env.repo);
+  const tester = path.join(path.dirname(source), `${path.basename(source)}-tester`);
+  git(source, "worktree", "add", "-q", "-b", "qa/tester", tester);
+  const testerDir = fs.realpathSync(tester);
+  const launch = (cwd: string, agent: string, extra: string[], scenario: FakeScenario = {}) =>
+    spawnSync(process.execPath, [NODE_LAUNCHER, "--feature", "sms-login", "--config", env.configPath, ...extra], {
+      encoding: "utf8",
+      env: { ...fakeEnv(env, scenario), PASEO_AGENT_ID: agent, PASEO_AGENT_CWD: cwd },
+    });
+  const waitFor = async (file: string, done: (s: { status: string }) => boolean) => {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline && !(fs.existsSync(file) && done(JSON.parse(fs.readFileSync(file, "utf8"))))) await new Promise((r) => setTimeout(r, 100));
+  };
+
+  const started = launch(source, ORIGIN, ["--worktree"]);
+  assert.equal(started.status, 0, started.stderr);
+  const created = events(env).find((e) => e.type === "createWorktree") as FakeEvent & { directory: string };
+  const worktree = fs.realpathSync(created.directory);
+  const stateFile = path.join(worktree, FEATURE, ".pipeline", "state.json");
+  await waitFor(stateFile, (s) => s.status === "phase_done");
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).status, "phase_done");
+
+  const before = events(env).length;
+  const takeover = launch(testerDir, "tester-chat", ["--phase", "verify"]);
+  assert.equal(takeover.status, 0, takeover.stderr);
+  assert.match(takeover.stdout, /已在后台开始测试验证阶段/);
+  await waitFor(stateFile, (s) => s.status === "completed");
+  const steps = events(env).slice(before).filter((e) => e.type === "start") as Array<FakeEvent & { workspaceId: string }>;
+  assert.deepEqual(steps.map((e) => e.key), ["verify", "report"]);
+  assert.ok(steps.every((e) => e.workspaceId === "fake-wks-1" && e.parentAgentId === "tester-chat" && e.cwd === worktree));
+  assert.equal(events(env).slice(before).find((e) => e.type === "verifyOrigin")?.cwd, testerDir);
+  assert.equal(notifications(env).at(-1)?.agentId, "tester-chat");
+
+  // A requirement still in development stays with the chat it was started from.
+  const s = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  s.status = "failed";
+  s.phase = "develop";
+  fs.writeFileSync(stateFile, JSON.stringify(s));
+  const refused = launch(testerDir, "tester-chat", ["--resume"]);
+  assert.notEqual(refused.status, 0);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).status, "failed");
+});

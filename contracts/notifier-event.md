@@ -33,7 +33,7 @@ export default async function notify(event, options) { /* 发送 */ }
 - 每个事件调用一次，可以返回 Promise。超过 15 秒没有完成按失败处理。
 - 抛出的错误和超时只记入流水线日志（"外部通知失败……不影响流水线"），不会让流水线停下或重试。
 - 模块在一次流水线运行中只加载一次；修改模块后，对之后启动或继续的流水线生效。
-- 测试：`req notify-test [--type blocked|failed|completed|milestone|permission]` 发一条带"【测试】"字样的示例事件，不需要运行流水线。
+- 测试：`req notify-test [--type blocked|failed|completed|milestone|permission|phase_done|digest]` 发一条带"【测试】"字样的示例事件，不需要运行流水线。
 
 ## 事件格式（schema 1）
 
@@ -57,11 +57,12 @@ export default async function notify(event, options) { /* 发送 */ }
 
 | type | 什么时候 | details |
 | --- | --- | --- |
-| `milestone` | 方案确定、开始验证、开始修复缺陷（配置 `notifyMilestones` 为 true 时，每次尝试各一次） | `milestone`：`design-settled`、`code-reviewed`、`fixing-defects` |
+| `milestone` | 方案确定、开始验证、开始修复缺陷（配置 `notifyMilestones` 为 true 时，每次尝试各一次） | `milestone`：`design-settled`、`code-reviewed`、`fixing-defects`、`handback-<n>`（1.7.0 起，测试验证第 n 次把缺陷退回研发） |
 | `blocked` | 方案审核发现需要需求方决定的问题，流水线已暂停 | `questions`（字符串数组）、`resumeCommand` |
 | `permission` | 步骤 agent 在等待权限批准 | `stepTitle`、`agentTitle`、`requests`（字符串数组） |
 | `failed` | 流水线因错误中断（已自动重试过的临时错误除外） | `stepTitle`、`reason`、`logPath`、`resumeCommand` |
-| `completed` | 流水线结束，报告已生成 | `outcome`（`completed`、`completed_with_issues`、`not_completed`）、`summary`、`reportPath` |
+| `completed` | 流水线结束，报告已生成 | `outcome`（`completed`、`completed_with_issues`、`not_completed`）、`summary`、`reportPath`。"只做研发"时另有 `mode`（`develop-only`）和 `handoffPath`，报告是研发报告，需要人工测试 |
+| `phase_done` | 1.7.0 起。分阶段执行时研发阶段已完成（代码已通过评审、提测说明已写好），流水线停在闸口等待测试验证。测试退回后再次修完也会发 | `handoffPath`（提测说明）、`mode`（`gated`）、`verifyCommand`（开始测试验证的命令，在发起的对话中执行）、`verifyAt`（预约的开始时间，ISO 格式，没有为 null）、`handbacks`（已退回的次数） |
 | `digest` | `req digest --notify`（或由 `req digest --schedule` 创建的 Paseo 定时任务）发送项目的需求总览，1.6.0 起。`feature.title` 为"<项目> 需求总览"，`text` 是完整的多行总览 | `features`：每个需求的 `name`、`title`、`stage`、`branch`、`updatedAt`、`usage` |
 
 ## 兼容性

@@ -90,7 +90,13 @@ export function profilesFromDaemonConfig(config: unknown): PaseoProfile[] | null
 
 /** Whether any role or panel member names a Paseo profile. */
 export function usesPaseoProfiles(config: PipelineConfig): boolean {
-  return [config.agents.builder, config.agents.reviewer, ...config.reviewPanel.members, ...config.designProposals.members].some((p) =>
+  return [
+    config.agents.builder,
+    config.agents.reviewer,
+    ...config.reviewPanel.members,
+    ...config.designProposals.members,
+    ...Object.values(config.phases.verify.agents),
+  ].some((p) =>
     Boolean(p.paseoProfile),
   );
 }
@@ -113,6 +119,15 @@ export function resolveConfigProfiles(config: PipelineConfig, available: PaseoPr
         ...m,
         ...resolveAgentProfile(`designProposals.members[${i}]`, m, available),
       })),
+    },
+    phases: {
+      ...config.phases,
+      verify: {
+        ...config.phases.verify,
+        agents: Object.fromEntries(
+          Object.entries(config.phases.verify.agents).map(([role, p]) => [role, resolveAgentProfile(`phases.verify.agents.${role}`, p, available)]),
+        ),
+      },
     },
   };
 }

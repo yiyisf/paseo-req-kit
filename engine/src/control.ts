@@ -2,7 +2,7 @@
 // is it?" or "stop for now". Output is plain language for relaying to the user.
 
 import { describeActivity } from "./activity.js";
-import { PROFILE_LABELS, type PipelineConfig } from "./config.js";
+import { PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig } from "./config.js";
 import type { AgentRuntime, RuntimeFactory } from "./runtime.js";
 import { isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
 import { STEPS } from "./steps.js";
@@ -56,17 +56,24 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
       ? "已中断（后台进程意外退出，可以继续）"
       : state.status === "waiting_for_business"
         ? "已暂停，等待需求方决定"
+        : state.status === "phase_done"
+          ? "研发完成，待测试验证（提测说明见功能目录中的 handoff.md）"
         : state.status === "failed"
           ? "已中断，可以继续"
-          : `已完成（${RESULT_TEXT[state.outcome ?? ""] ?? state.outcome ?? ""}）`;
+          : state.phases?.mode === "develop-only" && state.phase !== "verify"
+            ? `研发已完成，待人工测试（只做研发；研发结论：${RESULT_TEXT[state.outcome ?? ""] ?? state.outcome ?? ""}）`
+            : `已完成（${RESULT_TEXT[state.outcome ?? ""] ?? state.outcome ?? ""}）`;
 
   const lines = [
     `需求：${featureDir}（档位：${PROFILE_LABELS[state.profile ?? "standard"]}）`,
     `状态：${running && state.queuedSince ? `排队中（本机同时运行的流水线已达上限，自 ${new Date(state.queuedSince).toLocaleString("zh-CN", { hour12: false })} 起等待，轮到时自动开始）` : statusText}`,
+    ...(state.phases && state.phases.mode !== "continuous"
+      ? [`执行方式：${PHASE_MODE_LABELS[state.phases.mode]}（当前阶段：${state.phase === "verify" ? "测试验证" : "研发"}${state.handbacks ? `，测试已退回 ${state.handbacks} 次` : ""}）`]
+      : []),
     `开始时间：${new Date(state.startedAt).toLocaleString("zh-CN", { hour12: false })}，距今 ${duration(state.startedAt, now)}`,
   ];
   if (state.stopReason && !running) lines.push(`原因：${state.stopReason}`);
-  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查" } as const;
+  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证" } as const;
   for (const s of state.schedules ?? []) {
     if (s.kind === "watchdog" && !running) continue;
     const when = s.at ? `${new Date(s.at).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} ` : "";
@@ -92,6 +99,12 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
   if (failed && !running) lines.push(`中断在：${stepName(failed)}（${failed.error ?? "原因未知"}）`);
   if (records.length > 0) lines.push(`用时与用量：${describeTotals(totals(records, now))}`);
   if (state.attempt > 1) lines.push(`这个需求的全部 ${state.attempt} 次尝试合计：${describeTotals(totals(state.history, now))}`);
+  if (state.phases && state.phases.mode !== "continuous") {
+    const verify = state.history.filter((h) => h.phase === "verify");
+    if (verify.length > 0) {
+      lines.push(`其中研发阶段：${describeTotals(totals(state.history.filter((h) => (h.phase ?? "develop") === "develop"), now))}；测试验证阶段：${describeTotals(totals(verify, now))}`);
+    }
+  }
   return lines.join("\n");
 }
 

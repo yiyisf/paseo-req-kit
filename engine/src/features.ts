@@ -72,6 +72,8 @@ interface RawState {
   pid?: number;
   outcome?: string | null;
   updatedAt?: string;
+  phases?: { mode?: string } | null;
+  phase?: string;
   history?: Array<{ attempt: number; startedAt: string; endedAt: string | null; usage?: Record<string, number> | null }>;
 }
 
@@ -87,10 +89,13 @@ function stageOf(confirmed: boolean, state: RawState | null, acceptance: string 
       return state.pid && isAlive(state.pid) ? "开发中" : "已中断（可继续）";
     case "waiting_for_business":
       return "等待需求方决定";
+    case "phase_done":
+      return "研发完成，待测试验证";
     case "failed":
       return "已中断（可继续）";
     case "completed":
-      return state.outcome === "not_completed" ? "开发结束，未完成" : "待验收";
+      if (state.outcome === "not_completed") return "开发结束，未完成";
+      return state.phases?.mode === "develop-only" && state.phase !== "verify" ? "待验收（研发完成，需人工测试）" : "待验收";
     default:
       return state.status ?? "未知";
   }
@@ -245,8 +250,12 @@ export function findWorktreeRun(sourceRepo: string, feature: string): WorktreeRu
       try {
         const state = JSON.parse(fs.readFileSync(path.join(root, dir, ".pipeline", "state.json"), "utf8")) as {
           worktree?: { workspaceId?: string; sourceRepo?: string } | null;
+          status?: string;
+          phase?: string;
         };
-        if (state.worktree?.workspaceId && state.worktree.sourceRepo && isSameDir(state.worktree.sourceRepo, sourceRepo)) {
+        // The chat it was started from; or, for testing, any chat of the same repository (ADR 0022).
+        const forTesting = state.status === "phase_done" || state.phase === "verify";
+        if (state.worktree?.workspaceId && state.worktree.sourceRepo && (isSameDir(state.worktree.sourceRepo, sourceRepo) || forTesting)) {
           matches.push({ repo: fs.realpathSync(wt.path), featureDir: `${prefix}/${dir}`, workspaceId: state.worktree.workspaceId });
         }
       } catch {

@@ -1,7 +1,16 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { PROFILE_LABELS, PROFILE_NAMES, type ProfileName } from "./config.js";
+import {
+  type DefectHandling,
+  PHASE_MODE_LABELS,
+  PHASE_MODES,
+  type PhaseMode,
+  PROFILE_LABELS,
+  PROFILE_NAMES,
+  type ProfileName,
+  type VerifyEnvironment,
+} from "./config.js";
 import { gitInfo } from "./git.js";
 import { samePath } from "./paths.js";
 import { currentLockHolder, type PipelineState, readState, statePath } from "./state.js";
@@ -32,6 +41,16 @@ export interface LaunchArgs {
   workspaceId: string | null;
   /** --at: schedule the start for later instead of starting now. */
   at: string | null;
+  /** --phases: execution mode for this run; otherwise the spec's "执行方式" line, then the config. */
+  phases: PhaseMode | null;
+  /** --phase verify: start (or continue) the verify phase. Implies --resume. */
+  phase: "verify" | null;
+  /** --verify-at: once development is done, start the verify phase at this time. */
+  verifyAt: string | null;
+  /** --verify-env: where the verify phase checks the result (overrides phases.verify.environment). */
+  verifyEnv: VerifyEnvironment | null;
+  /** --defects: what the verify phase does with defects (overrides phases.verify.defects). */
+  defects: DefectHandling | null;
 }
 
 export class PreflightError extends Error {
@@ -116,6 +135,25 @@ export interface PreflightResult {
   branch: string | null;
   /** Profile named in the spec, if any. */
   specProfile: ProfileName | null;
+  /** Execution mode named in the spec, if any. */
+  specPhases: PhaseMode | null;
+  /** This start begins the verify phase (the develop phase is done). */
+  entersVerify: boolean;
+}
+
+/** Reads "- 执行方式：分阶段" (连续 / 分阶段 / 只做研发, or the English names) from the spec header. */
+export function specPhases(specText: string): PhaseMode | null {
+  const match = /^\s*-\s*执行方式\s*[:：]\s*(\S+)/m.exec(specText);
+  if (!match) return null;
+  for (const mode of PHASE_MODES) {
+    if (match[1].startsWith(PHASE_MODE_LABELS[mode]) || match[1].toLowerCase().startsWith(mode)) return mode;
+  }
+  return null;
+}
+
+/** Whether a run has finished its develop phase, so the verify phase can start. */
+export function developDone(state: PipelineState): boolean {
+  return state.status === "phase_done" || (state.status === "completed" && state.phases?.mode === "develop-only");
 }
 
 /** Reads "- 档位：快速" / "- 档位：标准" from the spec header. */
@@ -178,14 +216,33 @@ export function preflight(
     mode = { kind: "restart", previous };
   } else if (!args.resume) {
     const hint =
-      previous.status === "completed"
+      previous.status === "phase_done"
+        ? "这个需求的研发阶段已经完成，正在等待测试验证。开始测试验证请加 --resume --phase verify（或只加 --resume）；要从头开始请加 --restart。"
+        : previous.status === "completed"
         ? "这个需求的流水线已经完成。如需重新完整运行，请加 --restart。"
         : `这个需求已有运行记录（状态：${previous.status}）。从中断处继续请加 --resume，从头开始请加 --restart。`;
     throw new PreflightError(hint);
+  } else if (args.phase === "verify" && !developDone(previous) && previous.phase !== "verify") {
+    throw new PreflightError(
+      previous.status === "completed"
+        ? "这个需求已经完整走完了研发和测试验证，没有单独的测试阶段可以开始。要重新验证，请更新需求说明后用 --resume，或用 --restart。"
+        : `这个需求的研发阶段还没有完成（状态：${previous.status}），还不能开始测试验证。请先用 --resume 继续研发。`,
+    );
+  } else if (args.phase === "verify" && developDone(previous) && currentSpecHash(specPath) === previous.specHash) {
+    // Development is done and the requirement has not changed since: the verify phase starts.
+    mode = { kind: "resume-reuse", previous };
+  } else if (previous.status === "phase_done" && currentSpecHash(specPath) === previous.specHash) {
+    // A plain --resume at the gate starts the verify phase too.
+    mode = { kind: "resume-reuse", previous };
   } else if (previous.status === "completed") {
     // A completed requirement is reopened by changing its spec (a requirement change, or
     // problems found during acceptance). Without such a change there is nothing to continue.
     if (currentSpecHash(specPath) === previous.specHash) {
+      if (previous.phases?.mode === "develop-only") {
+        throw new PreflightError(
+          "这个需求按\"只做研发\"完成了研发，没有可继续的步骤。要让流水线做测试验证，请用 --resume --phase verify；要修改需求，请先更新并重新确认 spec.md。",
+        );
+      }
       throw new PreflightError(
         "这个需求的流水线已经完成，没有可继续的步骤。要修改需求或修复验收中发现的问题，请先更新并重新确认 spec.md；要原样重跑一遍，请用 --restart。",
       );
@@ -206,7 +263,7 @@ export function preflight(
       throw new PreflightError("这个需求已经在这里运行过，不能再改为在新工作区中开发。请用 --resume 继续，或去掉 --worktree。");
     }
     if (!git.isRepo) throw new PreflightError("--worktree 需要 git 仓库。");
-    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText) };
+    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), entersVerify: false };
   }
   // The run commits to the branch that is checked out now, and never to the default branch.
   if (git.isRepo && git.detached) {
@@ -225,5 +282,17 @@ export function preflight(
       `这个需求之前在分支 ${mode.previous.branch} 上进行，现在的分支是 ${git.branch ?? "（无）"}。请切回原分支后继续，或用 --restart 在当前分支上从头开始。`,
     );
   }
-  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText) };
+  const entersVerify = mode.kind === "resume-reuse" && developDone(mode.previous);
+  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), entersVerify };
+}
+
+/** Why the verify phase cannot start in this environment, or null. */
+export function verifyPhaseProblem(repo: string, featureDir: string, environment: VerifyEnvironment): string | null {
+  if (environment !== "deployed") return null;
+  if (fs.existsSync(path.join(repo, featureDir, "test-env.md"))) return null;
+  return (
+    `要在已部署的测试环境中验证，但功能目录中还没有 test-env.md（${featureDir}/test-env.md）。` +
+    "请先和用户确认测试环境，写好这个文件（地址、账号从哪里取、可以用的测试数据和账号；只写口令在哪里取，不写口令本身），再开始测试验证；" +
+    "或者用 --verify-env local 在本地验证。"
+  );
 }

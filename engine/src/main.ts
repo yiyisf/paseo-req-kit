@@ -3,16 +3,16 @@
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand } from "./cli-args.js";
+import { LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand } from "./cli-args.js";
 import { dequeuedMessage, queuedMessage, watchdogPrompt } from "./messages.js";
 import { slotHolders, slotsDir, tryAcquireSlot } from "./queue.js";
-import { cronEvery } from "./schedule-time.js";
-import { loadConfig, PROFILE_LABELS } from "./config.js";
+import { cronEvery, parseStartTime } from "./schedule-time.js";
+import { loadConfig, PHASE_MODE_LABELS, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
 import { satisfies } from "./daemon-check.js";
 import { describeAgentProfile, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { runPipeline } from "./pipeline.js";
-import { preflight } from "./preflight.js";
+import { preflight, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import {
   acquireLock,
@@ -20,6 +20,7 @@ import {
   hashFile,
   type PipelineState,
   pipelineDir,
+  type RunPhases,
   STATE_VERSION,
   statePath,
   writeState,
@@ -63,11 +64,32 @@ async function main(): Promise<number> {
   // A resume without --origin-agent keeps reporting to the chat that started the run.
   const originAgentId = args.originAgentId ?? (mode.kind === "fresh" ? null : mode.previous.originAgentId);
 
+  const previousState = mode.kind === "fresh" ? null : mode.previous;
+  const reuse = mode.kind === "resume-reuse";
+  // Execution mode: --phases, else what this run already uses (continuing), else the spec, else the config.
+  let phaseMode =
+    args.phases ?? (reuse ? previousState?.phases?.mode : null) ?? checked.specPhases ?? previousState?.phases?.mode ?? config.phases.mode;
+  // --verify-at only makes sense with a gate; asking for it implies one.
+  if (args.verifyAt && phaseMode === "continuous" && !args.phases) phaseMode = "gated";
+  const phases: RunPhases = {
+    mode: phaseMode,
+    environment: args.verifyEnv ?? previousState?.phases?.environment ?? config.phases.verify.environment,
+    defects: args.defects ?? previousState?.phases?.defects ?? config.phases.verify.defects,
+  };
+  const verifyAtText = args.verifyAt ?? null;
+  const verifyAt = verifyAtText ? (parseStartTime(verifyAtText) ?? (Number.isNaN(Date.parse(verifyAtText)) ? null : new Date(verifyAtText))) : null;
+
   // Checked before the state file is touched, so a refused launch leaves no record behind.
   {
     try {
       // In a worktree created for the requirement, the chat stays in the checkout it was cut from.
       const chatDir = args.sourceRepo ?? (mode.kind === "fresh" ? null : mode.previous.worktree?.sourceRepo) ?? repo;
+      if (verifyAtText && !verifyAt) throw new Error(`看不懂测试验证的开始时间"${verifyAtText}"`);
+      if (verifyAtText && phases.mode === "develop-only") throw new Error("只做研发时没有测试验证阶段，--verify-at 不适用");
+      if (checked.entersVerify) {
+        const problem = verifyPhaseProblem(repo, featureDir, phases.environment);
+        if (problem) throw new Error(problem);
+      }
       if (originAgentId) await runtime.verifyOrigin(originAgentId, chatDir);
       if (usesPaseoProfiles(config)) config = resolveConfigProfiles(config, await runtime.listPaseoProfiles());
     } catch (error) {
@@ -112,8 +134,12 @@ async function main(): Promise<number> {
       milestones: [],
       incremental: null,
       worktree: args.sourceRepo && args.workspaceId ? { workspaceId: args.workspaceId, sourceRepo: args.sourceRepo } : null,
+      phases,
+      phase: "develop",
+      verifyAt: verifyAt?.toISOString() ?? null,
+      handbacks: 0,
     };
-    log(`开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，分支 ${checked.branch ?? "无"}）`);
+    log(`开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，执行方式：${PHASE_MODE_LABELS[phases.mode]}，分支 ${checked.branch ?? "无"}）`);
   } else {
     const startOver = mode.kind !== "resume-reuse";
     const previousImplemented = Object.keys(mode.previous.results).some((k) => k === "implement") ||
@@ -139,7 +165,17 @@ async function main(): Promise<number> {
           : mode.kind === "restart"
             ? null
             : (mode.previous.incremental ?? null),
+      phases,
+      // The verify phase starts when development is done; any other start over goes back to development.
+      phase: checked.entersVerify ? "verify" : startOver ? "develop" : (mode.previous.phase ?? "develop"),
+      verifyAt: checked.entersVerify ? null : (verifyAt?.toISOString() ?? (startOver ? null : (mode.previous.verifyAt ?? null))),
+      handbacks: mode.kind === "restart" ? 0 : (mode.previous.handbacks ?? 0),
     };
+    if (checked.entersVerify) {
+      // A develop-only run that ends with its development report gets a full report after verification.
+      delete state.results.report;
+      log(`开始测试验证阶段（${phases.environment === "deployed" ? "已部署的测试环境" : "本地"}，缺陷处理：${phases.defects}）`);
+    }
     const why = mode.kind === "resume-from-design" ? mode.reason : mode.kind === "restart" ? "按 --restart 从头开始" : "从中断处继续，已完成的步骤沿用结果";
     log(`继续流水线：${featureDir}（第 ${state.attempt} 次尝试，${PROFILE_LABELS[profile]}档）—— ${why}`);
   }
@@ -156,10 +192,12 @@ async function main(): Promise<number> {
     }
   }
 
-  const chatRepo = state.worktree?.sourceRepo ?? repo;
+  // The chat's own directory: a tester's chat may sit in another checkout of the same repository.
+  const chatRepo = args.sourceRepo ?? state.worktree?.sourceRepo ?? repo;
   const commands = {
     resume: resumeCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
     status: statusCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
+    verify: verifyCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
   };
   const notify = async (text: string) => {
     log(`通知：\n${text}`);
@@ -246,11 +284,12 @@ async function main(): Promise<number> {
       // Run from the chat, whose directory is the source checkout when the requirement has its own worktree.
       resumeCommand: commands.resume,
       statusCommand: commands.status,
+      verifyCommand: commands.verify,
       log,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
     log(`流水线结束：${outcome}`);
-    return outcome === "completed" ? 0 : outcome === "waiting_for_business" ? 3 : 1;
+    return outcome === "completed" || outcome === "phase_done" ? 0 : outcome === "waiting_for_business" ? 3 : 1;
   } finally {
     // The run ended by itself: the watchdog has nothing left to watch.
     if (watchdog) {

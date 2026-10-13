@@ -2,11 +2,26 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ProfileName } from "./config.js";
+import type { DefectHandling, PhaseMode, ProfileName, VerifyEnvironment } from "./config.js";
 import type { AgentUsage } from "./usage.js";
 import type { StepId } from "./steps.js";
 
-export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed";
+/**
+ * "phase_done": the develop phase is done and the run stopped at the gate, waiting for
+ * someone to start the verify phase (phases.mode "gated"). Engines before 1.7 treat an
+ * unknown status as an interrupted run, which continues into verification: acceptable.
+ */
+export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed" | "phase_done";
+
+/** Phase names are strings so later phases need no format change. */
+export type PhaseName = "develop" | "verify";
+
+/** Execution mode and verify-phase options a run settled on (absent before 1.7: continuous). */
+export interface RunPhases {
+  mode: PhaseMode;
+  environment: VerifyEnvironment;
+  defects: DefectHandling;
+}
 
 export interface StepRecord {
   key: string;
@@ -22,6 +37,8 @@ export interface StepRecord {
   error: string | null;
   /** Latest usage the agent reported for this step; absent in older state files. */
   usage?: AgentUsage | null;
+  /** Phase the step ran in; absent before 1.7 (develop or verify by step). */
+  phase?: PhaseName;
 }
 
 export interface PipelineState {
@@ -60,11 +77,19 @@ export interface PipelineState {
    */
   worktree?: { workspaceId: string; sourceRepo: string } | null;
   /** Paseo schedules this run created (reminders, automatic continuation, watchdog); cancelled by the next run. */
-  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog"; at: string | null }>;
+  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog" | "verify-start"; at: string | null }>;
   /** Automatic continuations used in this attempt. */
   autoResumes?: { attempt: number; count: number } | null;
   /** Set while waiting for a free slot (maxConcurrentPipelines). */
   queuedSince?: string | null;
+  /** Execution mode of this run; absent in older state files (continuous). */
+  phases?: RunPhases | null;
+  /** Current phase; absent in older state files. */
+  phase?: PhaseName;
+  /** --verify-at: when the verify phase should start once development is done (ISO time). */
+  verifyAt?: string | null;
+  /** How many times the verify phase handed defects back to development (defects "handback"). */
+  handbacks?: number;
 }
 
 export interface IncrementalInfo {

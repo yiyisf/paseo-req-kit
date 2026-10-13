@@ -28,6 +28,7 @@ metadata:
 | 提一个新需求 | "我想加一个……""帮我把这个需求理一下" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/new.md` |
 | 一个范围很小的改动 | "把这个按钮的文字改成……""加一个配置项" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/small.md` |
 | 查看进度、暂停、继续 | "做到哪了""先停一下""继续开发" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/status.md` |
+| 研发完成后开始测试验证（提测） | "可以提测了""开始测试""我是测试，来测这个需求" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/verify.md` |
 | 修改已经确认的需求 | "刚才那个需求我想改一下""再加一条规则" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/change.md` |
 | 验收 | "做完了，我来验收""帮我对一下验收标准" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/accept.md` |
 | 上线后发现问题 | "线上发现……不对""用户反馈……" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/incident.md` |
@@ -67,6 +68,9 @@ metadata:
 | 启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录>` |
 | 启动（自动新建工作区） | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --worktree` |
 | 预约启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --at <时间>`（时间写 `22:00`、`明天 8:30`、`2026-10-14 08:30` 或 `+2h`；可以和 `--worktree` 一起用） |
+| 指定执行方式 | 在启动命令后加 `--phases gated`（分阶段：研发完成后停下等待测试验证）或 `--phases develop-only`（只做研发）；通常写在需求说明的"执行方式"一行，不用加 |
+| 预约测试验证 | 在启动或继续命令后加 `--verify-at <时间>`：研发完成后到这个时间自动开始测试验证（隐含分阶段） |
+| 开始测试验证 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --phase verify`（可以加 `--verify-env local\|deployed`、`--defects fix\|handback\|report`、`--at <时间>`） |
 | 查看进度 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --status` |
 | 暂停 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --stop` |
 | 继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --resume` |
@@ -88,6 +92,8 @@ metadata:
    - **等待权限批准**：告诉用户打开通知中提到的 agent 处理批准。
    - **流水线中断**：说明发生了什么、日志在哪里。用户能处理的（例如环境没启动）告诉他怎么做；问题解决后执行通知中给出的继续命令。涉及配置或代码的，请开发同事处理。
    - **需求说明审阅完成**：按通知中的做法核对问题、逐个问用户，再请用户确认需求说明。
+   - **研发完成，待测试验证**（分阶段执行时）：告诉用户研发已完成、可以提测，用两三句话讲 `handoff.md` 中"这次改了什么"和"建议重点测试"；然后按 `verify.md` 手册处理（用户想现在开始、预约，或交给测试同事在他们自己的对话里开始）。通知里说已经预约了测试验证的，告诉用户时间即可。
    - **排队 / 排队结束**：一句话转告。
    - **预约的提醒、自动继续、定时检查、预约的开始时间**（由 Paseo 定时任务发来，开头写着"预约的""定时检查"）：严格按消息中的步骤执行命令；消息说"不要打扰用户"的情况就不要回复用户。
+   - **研发完成（只做研发）**：转告研发结论和摘要，说明流水线没有做测试验证，需要人工测试；问是否现在按 `accept.md` 开始人工测试（以 `handoff.md` 为线索）。
    - **流水线结束**：转告结论和摘要，读功能目录中的 `report.md`，告诉用户"需要你做的事"和"需要你确认的决定"有几条，并问是否现在开始验收（`accept.md`）。用户追问细节时，以 `report.md` 和功能目录中的其他文件为准回答。

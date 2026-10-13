@@ -30,6 +30,10 @@ export function sampleEvent(type: NotifierEventType, repo: string): NotifierEven
       text: "【req-kit 需求总览】shop\n共 3 个需求：需要处理 1，待验收 1，开发中 1。",
       details: { features: [{ name: "20261012-sms-login", title: "短信验证码登录", stage: "待验收" }] },
     },
+    phase_done: {
+      text: `研发已完成，可以提测：提测说明在 ${featureDir}/handoff.md。`,
+      details: { handoffPath: `${featureDir}/handoff.md`, mode: "gated", verifyCommand: `${resume} --phase verify`, verifyAt: null, handbacks: 0 },
+    },
     completed: {
       text: "开发流水线已结束：已完成，可以验收。",
       details: { outcome: "completed", summary: "6 条验收标准全部通过。", reportPath: `${featureDir}/report.md` },

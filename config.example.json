@@ -88,5 +88,14 @@
   "waitingReminderHours": 24,
   "autoResumeMinutes": 30,
   "autoResumeMax": 2,
-  "watchdogMinutes": 0
+  "watchdogMinutes": 0,
+  "phases": {
+    "mode": "continuous",
+    "verify": {
+      "environment": "local",
+      "agents": {},
+      "defects": "fix",
+      "serviceStart": null
+    }
+  }
 }

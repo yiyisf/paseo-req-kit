@@ -9,7 +9,7 @@
 | `version` | number | 格式版本。没有这个字段的文件按 1 处理 |
 | `repo` | string | 仓库目录（绝对路径） |
 | `featureDir` | string | 功能目录（相对路径，`/` 分隔） |
-| `status` | `running` \| `waiting_for_business` \| `failed` \| `completed` | 当前状态。`waiting_for_business` 表示等待需求方决定 |
+| `status` | `running` \| `waiting_for_business` \| `failed` \| `completed` \| `phase_done` | 当前状态。`waiting_for_business` 表示等待需求方决定；`phase_done`（1.7.0 起）表示研发阶段已完成、停在闸口等待测试验证。1.7 之前的引擎把 `phase_done` 当作可以继续的中断，继续时沿用研发结果、直接做验证 |
 | `attempt` | number | 第几次从方案设计开始 |
 | `specHash` | string | 启动时 spec.md 的 sha256 |
 | `originAgentId` | string \| null | 发起对话的 agent，通知发往这里 |
@@ -26,6 +26,12 @@
 | `schedules` | array | 可选，1.6.0 起。这次运行创建的 Paseo 定时任务：`id`、`kind`（`reminder` 提醒 / `auto-resume` 自动继续 / `watchdog` 定时检查）、`at`。下一次运行或暂停命令会取消它们 |
 | `autoResumes` | object \| null | 可选，1.6.0 起。`attempt`、`count`：这次尝试已经预约过几次自动继续 |
 | `queuedSince` | string \| null | 可选，1.6.0 起。正在排队（`maxConcurrentPipelines`）时为开始排队的时间 |
+| `phases` | object \| null | 可选，1.7.0 起。这次运行的执行方式：`mode`（`continuous` / `gated` / `develop-only`）、`environment`（`local` / `deployed`）、`defects`（`fix` / `handback` / `report`）。没有时按 `continuous`、`local`、`fix` 处理 |
+| `phase` | `develop` \| `verify` | 可选，1.7.0 起。当前阶段。用字符串而不是编号，以后增加阶段不用改格式 |
+| `verifyAt` | string \| null | 可选，1.7.0 起。`--verify-at`：研发完成后在这个时间开始测试验证 |
+| `handbacks` | number | 可选，1.7.0 起。测试验证把缺陷退回研发阶段的次数（`defects` 为 `handback`），上限为档位的 `defectFix` 轮数 |
+
+`schedules[].kind` 在 1.7.0 起还可能是 `verify-start`（`--verify-at` 预约的测试验证开始）。`history` 中每条步骤记录在 1.7.0 起有可选的 `phase`（`develop` / `verify`），用于按阶段统计用时与用量；没有时按研发阶段统计。
 
 ## 迁移
 

@@ -1,12 +1,16 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { type AgentProfile, PROFILE_LABELS, type PipelineConfig, type ReviewPanelMember } from "./config.js";
+import { type AgentProfile, PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig, type ReviewPanelMember } from "./config.js";
 import {
   autoResumePrompt,
   blockedMessage,
   waitingReminderMessage,
   completedMessage,
   failedMessage,
+  phaseDoneMessage,
+  phaseWaitingReminderMessage,
+  verifyStartPrompt,
   milestoneMessage,
   permissionMessage,
   resultFollowUp,
@@ -16,8 +20,8 @@ import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
-import { type PipelineState, type StepRecord, writeState } from "./state.js";
-import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult } from "./steps.js";
+import { type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
+import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult, VERIFY_PHASE_STEPS } from "./steps.js";
 
 export interface PipelineContext {
   repo: string;
@@ -31,6 +35,8 @@ export interface PipelineContext {
   resumeCommand: string;
   /** Command to see progress; used in prompts that Paseo schedules send to the chat. */
   statusCommand?: string;
+  /** Command that starts the verify phase (gated runs). */
+  verifyCommand?: string;
   log: (message: string) => void;
   sleep: (ms: number) => Promise<void>;
   /** Paseo-managed services of this run (filled in by the pipeline). */
@@ -39,7 +45,32 @@ export interface PipelineContext {
   capabilities?: { paseoTools: boolean; browser: boolean } | null;
 }
 
-export type PipelineOutcome = "completed" | "waiting_for_business" | "failed";
+export type PipelineOutcome = "completed" | "waiting_for_business" | "failed" | "phase_done";
+
+/** The develop phase is done and the run stops at the gate (phases.mode "gated"). */
+class PhaseGate extends Error {
+  constructor() {
+    super("研发完成，待测试验证");
+    this.name = "PhaseGate";
+  }
+}
+
+const DEFAULT_PHASES: RunPhases = { mode: "continuous", environment: "local", defects: "fix" };
+
+export function runPhases(state: Pick<PipelineState, "phases">): RunPhases {
+  return state.phases ?? DEFAULT_PHASES;
+}
+
+const ENVIRONMENT_TEXT = { local: "本地启动服务验证", deployed: "已部署的测试环境（见 test-env.md）" } as const;
+const DEFECTS_TEXT = { fix: "当场修复并复验", handback: "只记录，退回研发阶段修复后再提测", report: "只记录，不修复" } as const;
+
+function phaseOf(ctx: PipelineContext): PhaseName {
+  return ctx.state.phase ?? "develop";
+}
+
+function verifyCommandOf(ctx: PipelineContext): string {
+  return ctx.verifyCommand ?? `${ctx.resumeCommand} --phase verify`;
+}
 
 /** Ends the run early; the message is what the user-facing notification explains. */
 class StepFailure extends Error {
@@ -128,6 +159,16 @@ function buildPrompt(
     `本步骤：${def.title}（流水线第 ${def.number} 步）`,
   ];
   if (round !== null && maxRounds !== null) lines.push(`轮次：第 ${round} 轮，最多 ${maxRounds} 轮`);
+  const phases = runPhases(ctx.state);
+  if (ctx.state.phases && phases.mode !== "continuous") {
+    lines.push(`执行方式：${PHASE_MODE_LABELS[phases.mode]}（当前阶段：${phaseOf(ctx) === "verify" ? "测试验证" : "研发"}）`);
+  }
+  if (VERIFY_PHASE_STEPS.includes(def.id) || def.id === "report") {
+    if (phases.environment !== "local" || phases.defects !== "fix") {
+      lines.push(`测试验证：${ENVIRONMENT_TEXT[phases.environment]}；发现缺陷时${DEFECTS_TEXT[phases.defects]}`);
+    }
+    lines.push(`提测说明：${ctx.featureDir}/handoff.md（研发阶段写的，先读它）`);
+  }
   const inc = ctx.state.incremental;
   if (inc) {
     lines.push(
@@ -328,7 +369,7 @@ async function runStepOnce(
   const resultAbs = path.join(ctx.repo, resultRel);
   fs.rmSync(resultAbs, { force: true });
 
-  const managed = mergeExtras(await serviceExtras(ctx, id), await browserExtras(ctx, id));
+  const managed = mergeExtras(mergeExtras(await serviceExtras(ctx, id), await browserExtras(ctx, id)), deployedExtras(ctx, id));
   if (managed) {
     extras = {
       ...extras,
@@ -352,6 +393,7 @@ async function runStepOnce(
     followUps: 0,
     result: null,
     error: null,
+    phase: phaseOf(ctx),
   };
   ctx.log(`开始 ${key}（${def.title}）`);
 
@@ -367,7 +409,7 @@ async function runStepOnce(
       },
       parentAgentId: ctx.config.attachToOriginChat ? ctx.state.originAgentId : null,
       // Always passed: the run's config has Paseo profile names resolved; the runtime's may not.
-      profile: extras.profile ?? ctx.config.agents[def.role],
+      profile: extras.profile ?? phaseAgent(ctx, id) ?? ctx.config.agents[def.role],
       workspaceId: ctx.state.worktree?.workspaceId ?? null,
     });
     record.agentId = agent.id;
@@ -408,6 +450,25 @@ async function runStepOnce(
     if (error instanceof StepFailure) throw error;
     throw new StepFailure(def.title, (error as Error).message);
   }
+}
+
+/** phases.verify.agents applies to the verify-phase steps. */
+function phaseAgent(ctx: PipelineContext, id: StepId): AgentProfile | undefined {
+  if (!VERIFY_PHASE_STEPS.includes(id)) return undefined;
+  return ctx.config.phases.verify.agents[STEPS[id].role];
+}
+
+function deployed(ctx: PipelineContext): boolean {
+  return runPhases(ctx.state).environment === "deployed";
+}
+
+/** Verification against an environment deployed for testing, described in test-env.md. */
+function deployedExtras(ctx: PipelineContext, id: StepId): { contextLines: string[]; sections: string[] } | null {
+  if (!deployed(ctx) || !["verify", "defect_fix", "reverify"].includes(id)) return null;
+  return {
+    contextLines: [`验证环境：已部署的测试环境，地址、账号从哪里取、可以用的测试数据见 ${ctx.featureDir}/test-env.md`],
+    sections: [readToolPrompt({ ...ctx.prompts, repo: ctx.repo }, "verify-deployed.md")],
+  };
 }
 
 function mergeExtras(
@@ -471,7 +532,7 @@ function describeService(s: ManagedService, logFile: string | null): string {
 
 /** Starts the services (fresh, with the current code) before a step that needs them. */
 async function serviceExtras(ctx: PipelineContext, id: StepId): Promise<{ contextLines: string[]; sections: string[] } | null> {
-  if (!SERVICE_STEPS.includes(id)) return null;
+  if (!SERVICE_STEPS.includes(id) || deployed(ctx)) return null;
   const names = await serviceNames(ctx);
   const target = serviceTarget(ctx);
   if (!names || !target) return null;
@@ -511,7 +572,7 @@ async function stopManagedServices(ctx: PipelineContext): Promise<void> {
 }
 
 /** A Paseo schedule that reminds the chat about unanswered questions; returns the hours, or null. */
-async function scheduleReminder(ctx: PipelineContext, questions: string[]): Promise<number | null> {
+async function scheduleReminder(ctx: PipelineContext, questions: string[] | null): Promise<number | null> {
   const hours = ctx.config.waitingReminderHours;
   const origin = ctx.state.originAgentId;
   if (hours <= 0 || !origin) return null;
@@ -520,8 +581,15 @@ async function scheduleReminder(ctx: PipelineContext, questions: string[]): Prom
     const id = await ctx.runtime.scheduleMessage({
       agentId: origin,
       at,
-      name: `req-kit 提醒：${featureName(ctx.featureDir)} 等待回答`,
-      prompt: waitingReminderMessage({ featureDir: shownFeatureDir(ctx), hours, questions, resumeCommand: ctx.resumeCommand }),
+      name: `req-kit 提醒：${featureName(ctx.featureDir)} ${questions ? "等待回答" : "待测试验证"}`,
+      prompt: questions
+        ? waitingReminderMessage({ featureDir: shownFeatureDir(ctx), hours, questions, resumeCommand: ctx.resumeCommand })
+        : phaseWaitingReminderMessage({
+            featureDir: shownFeatureDir(ctx),
+            hours,
+            handoffPath: `${shownFeatureDir(ctx)}/handoff.md`,
+            verifyCommand: verifyCommandOf(ctx),
+          }),
     });
     if (!id) return null;
     ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "reminder", at: at.toISOString() }];
@@ -530,6 +598,38 @@ async function scheduleReminder(ctx: PipelineContext, questions: string[]): Prom
     return hours;
   } catch (error) {
     ctx.log(`预约提醒失败：${(error as Error).message}`);
+    return null;
+  }
+}
+
+function shortTime(at: Date): string {
+  return at.toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** --verify-at: a Paseo schedule that has the chat start the verify phase; returns the time as text, or null. */
+async function scheduleVerifyStart(ctx: PipelineContext): Promise<string | null> {
+  const origin = ctx.state.originAgentId;
+  if (!ctx.state.verifyAt || !origin) return null;
+  const at = new Date(ctx.state.verifyAt);
+  try {
+    const id = await ctx.runtime.scheduleMessage({
+      agentId: origin,
+      at,
+      name: `req-kit 测试验证：${featureName(ctx.featureDir)}`,
+      prompt: verifyStartPrompt({
+        featureDir: shownFeatureDir(ctx),
+        statusCommand: ctx.statusCommand ?? ctx.resumeCommand.replace(/ --resume$/, " --status"),
+        verifyCommand: verifyCommandOf(ctx),
+        environment: runPhases(ctx.state).environment,
+      }),
+    });
+    if (!id) return null;
+    ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "verify-start", at: at.toISOString() }];
+    save(ctx);
+    ctx.log(`已预约在 ${shortTime(at)} 开始测试验证（Paseo 定时任务 ${id}）`);
+    return shortTime(at);
+  } catch (error) {
+    ctx.log(`预约测试验证失败：${(error as Error).message}`);
     return null;
   }
 }
@@ -750,10 +850,9 @@ export async function runSingleStep(ctx: PipelineContext, id: StepId, extras: St
   }
 }
 
-/** Steps 3–11. Loop rounds and optional steps come from the run's profile. */
-async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
-  const settings = ctx.config.profiles[ctx.state.profile];
-  const rounds = settings.rounds;
+/** Develop phase: design → design review ⇄ revise → implement → code review ⇄ fix → handoff. Returns the design result. */
+async function developPhase(ctx: PipelineContext): Promise<Record<string, unknown>> {
+  const rounds = ctx.config.profiles[ctx.state.profile].rounds;
 
   let designExtras: StepExtras = {};
   if (proposalsApply(ctx) && !ctx.state.results.design) {
@@ -786,10 +885,24 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
     if (review.verdict === "pass") break;
     await runStep(ctx, "review_fix", r, rounds.codeReview);
   }
-  await milestone(ctx, "code-reviewed", "代码已经写完并通过检查，开始按验收标准逐条验证功能。");
+  await runStep(ctx, "handoff");
+  return design;
+}
 
-  if (design.has_runnable_service === true && settings.serviceStart) {
+/**
+ * Verify phase: service start → verification → defects as configured.
+ * Returns true when the defects go back to development (defects "handback").
+ */
+async function verifyPhase(ctx: PipelineContext, design: Record<string, unknown>): Promise<boolean> {
+  const settings = ctx.config.profiles[ctx.state.profile];
+  const rounds = settings.rounds;
+  const phases = runPhases(ctx.state);
+  const serviceStart = phases.environment === "deployed" ? false : (ctx.config.phases.verify.serviceStart ?? settings.serviceStart);
+
+  if (design.has_runnable_service === true && serviceStart) {
     await runStep(ctx, "service_start");
+  } else if (design.has_runnable_service === true && phases.environment === "deployed") {
+    ctx.log("在已部署的测试环境中验证，不在本地做服务启动验证。");
   } else if (design.has_runnable_service === true) {
     ctx.log(`${PROFILE_LABELS[ctx.state.profile]}档不执行服务启动验证，由功能验证一并处理。`);
   } else {
@@ -797,25 +910,111 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
   }
 
   const verification = await runStep(ctx, "verify");
-  if (verification.result === "defects_found") {
-    await milestone(
-      ctx,
-      "fixing-defects",
-      `验证中发现了一些问题，正在修复并重新验证（最多 ${rounds.defectFix} 轮）。`,
-    );
-    for (let r = 1; r <= rounds.defectFix; r++) {
-      await runStep(ctx, "defect_fix", r, rounds.defectFix);
-      const recheck = await runStep(ctx, "reverify", r, rounds.defectFix);
-      if (recheck.result === "pass") break;
+  if (verification.result !== "defects_found") return false;
+  if (phases.defects === "report") {
+    ctx.log("验证发现了问题，按设置只记录、不修复，直接写报告。");
+    return false;
+  }
+  if (phases.defects === "handback") {
+    const used = ctx.state.handbacks ?? 0;
+    if (used < rounds.defectFix) return true;
+    ctx.log(`已经退回研发 ${used} 次（上限 ${rounds.defectFix}），不再退回，问题写进报告。`);
+    return false;
+  }
+  await milestone(ctx, "fixing-defects", `验证中发现了一些问题，正在修复并重新验证（最多 ${rounds.defectFix} 轮）。`);
+  for (let r = 1; r <= rounds.defectFix; r++) {
+    await runStep(ctx, "defect_fix", r, rounds.defectFix);
+    const recheck = await runStep(ctx, "reverify", r, rounds.defectFix);
+    if (recheck.result === "pass") break;
+  }
+  return false;
+}
+
+function headCommit(repo: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Defects found in the verify phase go back to development: recorded in changes.md (source
+ * "测试验证"), then a new attempt starts from design and only handles them (incremental).
+ */
+async function handBack(ctx: PipelineContext): Promise<void> {
+  const n = (ctx.state.handbacks ?? 0) + 1;
+  const changes = path.join(ctx.repo, ctx.featureDir, "changes.md");
+  const today = new Date().toISOString().slice(0, 10);
+  const section = [
+    "",
+    `## ${today} 测试验证退回（第 ${n} 次）`,
+    "",
+    "- 来源：测试验证",
+    `- 内容：第 ${ctx.state.attempt} 次尝试的功能验证发现了缺陷，缺陷清单见 verification.md 最后一轮的“缺陷”一节`,
+    "- 处理：回到研发阶段，从方案设计开始只处理这些缺陷，修复经过代码评审后重新写提测说明、再提测",
+    "",
+  ].join("\n");
+  fs.appendFileSync(changes, fs.existsSync(changes) ? section : `# 变更记录\n${section}`);
+  ctx.state.handbacks = n;
+  ctx.state.incremental = {
+    fromAttempt: ctx.state.attempt,
+    reason: `测试验证发现缺陷，第 ${n} 次退回研发阶段修复（见 changes.md 和 verification.md）`,
+    baseCommit: headCommit(ctx.repo),
+    hadImplementation: true,
+  };
+  ctx.state.attempt += 1;
+  ctx.state.results = {};
+  ctx.state.milestones = [];
+  ctx.state.phase = "develop";
+  save(ctx);
+  ctx.log(`测试验证发现缺陷，第 ${n} 次退回研发阶段（第 ${ctx.state.attempt} 次尝试）`);
+  const text = `测试验证发现了缺陷，按设置退回研发阶段修复（第 ${n} 次）：从方案设计开始只处理这些缺陷，修完经过代码评审后${runPhases(ctx.state).mode === "gated" ? "重新提测" : "再次验证"}。`;
+  await notifyOrigin(ctx, milestoneMessage(text));
+  await notifyExternal(ctx, "milestone", text, { milestone: `handback-${n}` });
+}
+
+function usageLines(ctx: PipelineContext): string[] {
+  const thisAttempt = ctx.state.history.filter((h) => h.attempt === ctx.state.attempt);
+  const lines = [`用时与用量（本次尝试，截至报告前）：${describeTotals(totals(thisAttempt))}`];
+  if (ctx.state.attempt > 1) lines.push(`用时与用量（这个需求的全部尝试）：${describeTotals(totals(ctx.state.history))}`);
+  if (ctx.state.phases && runPhases(ctx.state).mode !== "continuous") {
+    for (const [phase, label] of [["develop", "研发阶段"], ["verify", "测试验证阶段"]] as const) {
+      const records = ctx.state.history.filter((h) => (h.phase ?? "develop") === phase);
+      if (records.length > 0) lines.push(`用时与用量（${label}，全部尝试）：${describeTotals(totals(records))}`);
     }
   }
+  return lines;
+}
 
-  const thisAttempt = ctx.state.history.filter((h) => h.attempt === ctx.state.attempt);
-  const allAttempts = ctx.state.history;
-  const usageLines = [`用时与用量（本次尝试，截至报告前）：${describeTotals(totals(thisAttempt))}`];
-  if (ctx.state.attempt > 1) usageLines.push(`用时与用量（这个需求的全部尝试）：${describeTotals(totals(allAttempts))}`);
+/** Steps 3–11. Loop rounds and optional steps come from the run's profile; the gate from the execution mode. */
+async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
+  for (;;) {
+    const design = await developPhase(ctx);
+    const phases = runPhases(ctx.state);
+    if (phaseOf(ctx) !== "verify") {
+      if (phases.mode === "develop-only") {
+        await stopManagedServices(ctx);
+        return runStep(ctx, "report", null, null, {
+          contextLines: [...usageLines(ctx), "只做研发：本次不做测试验证，完成报告按本步骤说明中“只做研发时”一节写成研发报告"],
+        });
+      }
+      if (phases.mode === "gated") {
+        const at = ctx.state.verifyAt ? new Date(ctx.state.verifyAt) : null;
+        if (!at || at.getTime() > Date.now()) throw new PhaseGate();
+        ctx.log("研发完成时已经过了预约的测试验证时间，直接开始测试验证");
+        ctx.state.verifyAt = null;
+      } else {
+        await milestone(ctx, "code-reviewed", "代码已经写完并通过检查，开始按验收标准逐条验证功能。");
+      }
+      ctx.state.phase = "verify";
+      save(ctx);
+    }
+    if (!(await verifyPhase(ctx, design))) break;
+    await handBack(ctx);
+  }
   await stopManagedServices(ctx);
-  return runStep(ctx, "report", null, null, { contextLines: usageLines });
+  return runStep(ctx, "report", null, null, { contextLines: usageLines(ctx) });
 }
 
 export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome> {
@@ -828,6 +1027,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     ctx.state.status = "completed";
     ctx.state.outcome = report.outcome as string;
     save(ctx);
+    const developOnly = runPhases(ctx.state).mode === "develop-only" && phaseOf(ctx) !== "verify";
     await notifyOrigin(
       ctx,
       completedMessage({
@@ -835,6 +1035,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         outcome: report.outcome as string,
         summary: report.summary as string,
         reportPath: `${shownFeatureDir(ctx)}/report.md`,
+        handoffPath: developOnly ? `${shownFeatureDir(ctx)}/handoff.md` : null,
       }),
     );
     const outcomeText: Record<string, string> = {
@@ -842,13 +1043,45 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       completed_with_issues: "已完成，但有遗留问题",
       not_completed: "未完成",
     };
-    await notifyExternal(ctx, "completed", `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`, {
+    const text = developOnly
+      ? `研发已完成（只做研发）：${outcomeText[report.outcome as string] ?? report.outcome}，请按提测说明人工测试。`
+      : `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`;
+    await notifyExternal(ctx, "completed", text, {
       outcome: report.outcome,
       summary: report.summary,
       reportPath: `${ctx.featureDir}/report.md`,
+      ...(developOnly ? { mode: "develop-only", handoffPath: `${ctx.featureDir}/handoff.md` } : {}),
     });
     return "completed";
   } catch (error) {
+    if (error instanceof PhaseGate) {
+      ctx.state.status = "phase_done";
+      ctx.state.stopReason = null;
+      save(ctx);
+      await stopManagedServices(ctx);
+      const verifyAt = await scheduleVerifyStart(ctx);
+      const reminderHours = verifyAt ? null : await scheduleReminder(ctx, null);
+      await notifyOrigin(
+        ctx,
+        phaseDoneMessage({
+          featureDir: shownFeatureDir(ctx),
+          handoffPath: `${shownFeatureDir(ctx)}/handoff.md`,
+          verifyCommand: verifyCommandOf(ctx),
+          environment: runPhases(ctx.state).environment,
+          verifyAt,
+          reminderHours,
+          handbacks: ctx.state.handbacks ?? 0,
+        }),
+      );
+      await notifyExternal(ctx, "phase_done", `研发已完成，可以提测：提测说明在 ${ctx.featureDir}/handoff.md。${verifyAt ? `已预约在 ${verifyAt} 开始测试验证。` : ""}`, {
+        handoffPath: `${ctx.featureDir}/handoff.md`,
+        mode: runPhases(ctx.state).mode,
+        verifyCommand: verifyCommandOf(ctx),
+        verifyAt: ctx.state.verifyAt ?? null,
+        handbacks: ctx.state.handbacks ?? 0,
+      });
+      return "phase_done";
+    }
     if (error instanceof BusinessDecisionNeeded) {
       ctx.state.status = "waiting_for_business";
       ctx.state.stopReason = `方案审核需要需求方决定：${error.questions.join("；")}`;

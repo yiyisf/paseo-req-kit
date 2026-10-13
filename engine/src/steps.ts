@@ -12,6 +12,8 @@ export type StepId =
   | "defect_fix"
   | "reverify"
   | "report"
+  /** Handoff note for testing (提测说明), the last step of the develop phase. */
+  | "handoff"
   /** One member of the optional review panel; runs before design_review / code_review consolidates. */
   | "panel_review"
   /** Independent review of a draft spec before the requester confirms it (run from the chat, not the pipeline). */
@@ -135,6 +137,14 @@ export const STEPS: Record<StepId, StepDef> = {
     promptFile: "07-review-fix.md",
     result: done,
   },
+  handoff: {
+    id: "handoff",
+    number: 7,
+    title: "提测说明",
+    role: "builder",
+    promptFile: "07b-handoff.md",
+    result: done,
+  },
   service_start: {
     id: "service_start",
     number: 8,
@@ -223,6 +233,9 @@ export function validateResult(spec: ResultSpec, raw: unknown): ValidationResult
   if (crossError) return { ok: false, error: crossError };
   return { ok: true, value };
 }
+
+/** Steps of the verify phase; they may use phases.verify.agents. */
+export const VERIFY_PHASE_STEPS: readonly StepId[] = ["service_start", "verify", "defect_fix", "reverify"];
 
 export function stepKey(id: StepId, round: number | null): string {
   return round === null ? id : `${id}-r${round}`;

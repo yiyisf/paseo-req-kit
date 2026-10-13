@@ -9,7 +9,7 @@ const ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 test("评估用例：参考实现能通过隐藏验收（用例和隐藏测试本身是对的）", () => {
   const cases = loadCases();
-  assert.deepEqual(cases.map((c) => c.name), ["text-utils-tb", "todo-cli-due"]);
+  assert.deepEqual(cases.map((c) => c.name), ["text-utils-tb", "text-utils-tb-gated", "todo-cli-due"]);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-eval-test-"));
   for (const c of cases) {
     const result = evaluateCase(c, { base, configPath: null, reference: true, timeoutMs: 60_000 });
@@ -48,6 +48,33 @@ test("评估运行器：跑完整的流水线，并发现报告夸大（模拟 a
     const summary = summarize([result]);
     assert.match(summary, /\| text-utils-tb \| 流水线 \| completed \| 可以验收 \| 未通过（\d+\/\d+） \| 夸大 \|/);
     assert.match(summary, /如实率（报告没有夸大）：0%/);
+  } finally {
+    if (previous === undefined) delete process.env.REQ_PIPELINE_FAKE_RUNTIME;
+    else process.env.REQ_PIPELINE_FAKE_RUNTIME = previous;
+  }
+});
+
+test("评估运行器：分阶段用例先跑研发阶段，检查停在闸口并写了提测说明，再跑测试验证", () => {
+  const configPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-eval-config-")), "config.json");
+  const example = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      ...example,
+      agents: { builder: { provider: "claude/m", modeId: "bypassPermissions" }, reviewer: { provider: "codex/m", modeId: "full-access" } },
+      waitChunkSeconds: 0.05,
+      notifyMilestones: false,
+    }),
+  );
+  const previous = process.env.REQ_PIPELINE_FAKE_RUNTIME;
+  process.env.REQ_PIPELINE_FAKE_RUNTIME = path.join(ROOT, "engine", "test", "fake-runtime.ts");
+  try {
+    const [c] = loadCases(["text-utils-tb-gated"]);
+    const result = evaluateCase(c, { base: fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-eval-test-")), configPath, reference: false, timeoutMs: 120_000 });
+    assert.equal(result.error, null, result.error ?? "");
+    assert.equal(result.phaseGate, "ok");
+    assert.equal(result.status, "completed");
+    assert.match(summarize([result]), /text-utils-tb-gated：研发完成后停在闸口，提测说明已写/);
   } finally {
     if (previous === undefined) delete process.env.REQ_PIPELINE_FAKE_RUNTIME;
     else process.env.REQ_PIPELINE_FAKE_RUNTIME = previous;

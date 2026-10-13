@@ -49,7 +49,7 @@ test("/req 的每本手册都有\"步骤\"一节，且都在入口的路由表�
   const dir = path.join(SKILLS, "req", "playbooks");
   const entry = fs.readFileSync(path.join(SKILLS, "req", "SKILL.md"), "utf8");
   const playbooks = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
-  assert.equal(playbooks.length, 7);
+  assert.equal(playbooks.length, 8);
   for (const file of playbooks) {
     const text = fs.readFileSync(path.join(dir, file), "utf8");
     assert.match(text, /^## 步骤\n\n1\. /m, `${file} 缺少"步骤"一节`);

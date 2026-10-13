@@ -21,7 +21,9 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req status [需求]            查看进度；只有一个需求运行过时可以不写
   req stop <需求>              停止流水线（之后可以继续）
   req resume <需求>            从上次中断处继续；需求改过时只处理变化的部分
-  req start <需求> [--profile quick|standard] [--at 22:00]
+  req verify <需求> [--verify-env local|deployed] [--defects fix|handback|report]
+                               研发完成后开始测试验证（分阶段执行时）
+  req start <需求> [--profile quick|standard] [--phases gated] [--at 22:00]
                                启动流水线（通常由 /req 在对话中启动，这里用于终端中手工启动）
   req digest [--notify]        项目的需求总览；--notify 同时发到外部通知（如企业 IM）
   req digest --schedule "0 9 * * 1"
@@ -120,6 +122,9 @@ switch (command) {
     break;
   case "resume":
     code = node([launcher, "--resume", ...feature(rest, true)]);
+    break;
+  case "verify":
+    code = node([launcher, "--phase", "verify", ...feature(rest, true)]);
     break;
   case "start":
     code = node([launcher, ...feature(rest, true)]);
