@@ -4,7 +4,10 @@
   "description": "req-kit: a requirement-development workflow for Paseo. /req aligns a requirement in chat; the engine runs design, implementation, review and verification as Paseo agents.",
   "type": "module",
   "license": "MIT",
-  "repository": "github:yiyisf/paseo-req-kit",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yiyisf/paseo-req-kit.git"
+  },
   "homepage": "https://github.com/yiyisf/paseo-req-kit#readme",
   "bugs": "https://github.com/yiyisf/paseo-req-kit/issues",
   "keywords": [

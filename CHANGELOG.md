@@ -26,7 +26,7 @@
 - 外部通知模块：新事件类型 `phase_done`；只订阅了部分事件（`events`）的不受影响。`notifiers/im-template.mjs` 已加上它的标题。
 - 自定义了 `prompts.local/` 的：新增提示词 `07b-handoff.md`、`verify-deployed.md`；`09-verify.md`、`11-report.md`、`incremental.md` 有增补，覆盖过它们的请对照合并。
 - 评估：新增用例 `text-utils-tb-gated`，检查研发完成后停在闸口并写了提测说明。设计决定见 ADR 0022。
-- 发布：1.7.0-beta.1 的发布工作流因类型检查失败没有发布到 npm（新建工作区时传了 Paseo 0.11.2 还不认识的 `background` 选项，已去掉；之前不会影响运行），1.7.0-beta.2 包含它的全部内容。新增 `ci.yml` 在推送到 main 时先跑一遍检查；第一次发布到 npm 需要仓库 Secrets 中的 `NPM_TOKEN`（见维护者指南）。
+- 发布：1.7.0-beta.1 的发布工作流因类型检查失败没有发布到 npm（新建工作区时传了 Paseo 0.11.2 还不认识的 `background` 选项，已去掉；之前不会影响运行），1.7.0-beta.2 包含它的全部内容。新增 `ci.yml` 在推送到 main 时先跑一遍检查；第一次发布到 npm 在本机手工进行，之后用可信发布（见维护者指南）。
 
 ## 1.7.0-beta.1
 
