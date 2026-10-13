@@ -108,6 +108,16 @@ export interface PipelineConfig {
   serviceReadySeconds: number;
   /** Warn before a run when a provider's subscription window is at least this full (percent); 0 turns it off. */
   quotaWarnPercent: number;
+  /**
+   * Parallel design proposals: before the design step, several agents (different models
+   * work best) each propose an approach; the design step compares them and decides.
+   * Members default to the builder and the reviewer. Off by default (it costs extra runs).
+   */
+  designProposals: { enabled: boolean; profiles: ProfileName[]; members: ReviewPanelMember[] };
+  /** "auto": tell verification steps to use Paseo's browser tools for web pages when they are on. */
+  browserVerify: "auto" | "off";
+  /** When /req offers the independent spec review before confirmation: "standard" (standard profile only), "always", "off". */
+  specReview: "standard" | "always" | "off";
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -135,6 +145,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     reverify: 90,
     report: 30,
     panel_review: 45,
+    spec_review: 20,
+    design_proposal: 45,
   },
   notifyMilestones: true,
   waitChunkSeconds: 600,
@@ -150,6 +162,9 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   paseoServices: "auto",
   serviceReadySeconds: 120,
   quotaWarnPercent: 85,
+  designProposals: { enabled: false, profiles: ["standard"], members: [] },
+  browserVerify: "auto",
+  specReview: "standard",
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -208,6 +223,10 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
   merged.profiles = profiles;
   merged.retry = { ...base.retry, ...(isRecord(raw.retry) ? (raw.retry as Partial<PipelineConfig["retry"]>) : {}) };
   merged.reviewPanel = { ...base.reviewPanel, ...(isRecord(raw.reviewPanel) ? (raw.reviewPanel as Partial<ReviewPanelSettings>) : {}) };
+  merged.designProposals = {
+    ...base.designProposals,
+    ...(isRecord(raw.designProposals) ? (raw.designProposals as Partial<PipelineConfig["designProposals"]>) : {}),
+  };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
 }
@@ -282,6 +301,15 @@ function validate(config: PipelineConfig): void {
     throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
   }
   if (config.paseoServices !== "auto" && config.paseoServices !== "off") throw new ConfigError('paseoServices 只能是 "auto" 或 "off"');
+  if (config.browserVerify !== "auto" && config.browserVerify !== "off") throw new ConfigError('browserVerify 只能是 "auto" 或 "off"');
+  if (!["standard", "always", "off"].includes(config.specReview)) throw new ConfigError('specReview 只能是 "standard"、"always" 或 "off"');
+  const proposals = config.designProposals;
+  if (typeof proposals.enabled !== "boolean") throw new ConfigError("designProposals.enabled 必须是 true 或 false");
+  if (!Array.isArray(proposals.profiles) || !proposals.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('designProposals.profiles 只能包含 "quick" 和 "standard"');
+  }
+  if (!Array.isArray(proposals.members)) throw new ConfigError("designProposals.members 必须是数组");
+  proposals.members.forEach((member, i) => validateProvider(`designProposals.members[${i}]`, member));
   if (typeof config.quotaWarnPercent !== "number" || config.quotaWarnPercent < 0 || config.quotaWarnPercent > 100) {
     throw new ConfigError("quotaWarnPercent 必须是 0 到 100 之间的数（0 表示不提醒）");
   }

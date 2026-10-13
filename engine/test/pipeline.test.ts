@@ -83,6 +83,7 @@ interface FakeEvent {
   role?: string;
   provider?: string | null;
   modeId?: string | null;
+  cwd?: string;
   names?: string[];
   providers?: string[];
   title?: string;
@@ -1140,6 +1141,139 @@ test("进度查询：运行中时附上当前步骤 agent 最近在做什么（�
   assert.match(live, /「功能验证」的 agent 最近在做：\n  刚刚：运行命令：npm test/);
   assert.ok(events(env).some((e) => e.type === "recentActivity" && e.agentId === "agent-live"));
   assert.doesNotMatch(status({ activity: null }), /最近在做/);
+});
+
+async function waitForEvent(env: Env, match: (e: FakeEvent) => boolean, timeoutMs = 30_000): Promise<FakeEvent | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = events(env).find(match);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+test("需求说明审阅：草稿阶段由 reviewer 在后台独立审阅，只写审阅文件，结果发回对话，不碰流水线状态", async () => {
+  const env = setup({}, "草稿");
+  const launched = launch(env, ["--spec-review"]);
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.match(launched.stdout, /已开始需求说明的独立审阅/);
+  const note = await waitForEvent(env, (e) => e.type === "notify");
+  assert.ok(note, "应在审阅结束后通知对话");
+  assert.match(note.text ?? "", /发现 1 个建议在确认前澄清的问题/);
+  assert.match(note.text ?? "", /AC-1\.1 没有说明验证码过期后怎么提示/);
+  const start = events(env).find((e) => e.type === "start")!;
+  assert.equal(start.key, "spec_review");
+  assert.equal(start.role, "reviewer");
+  assert.equal(start.parentAgentId, ORIGIN);
+  assert.match(start.prompt ?? "", /# 本步骤任务：需求说明审阅/);
+  assert.match(start.prompt ?? "", /工作分支：（本步骤不提交）/);
+  assert.match(start.prompt ?? "", /需求说明的写法清单：.*spec-writing/);
+  assert.ok(fs.existsSync(path.join(env.repo, FEATURE, "spec-review.md")));
+  assert.ok(!fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "state.json")), "审阅不是流水线运行");
+
+  fs.writeFileSync(path.join(env.repo, FEATURE, "spec.md"), "# 改文案\n\n- 状态：草稿\n- 档位：快速\n");
+  assert.match(launch(env, ["--spec-review"]).stdout, /跳过：快速档的需求不做独立审阅/);
+  const off = setup({ specReview: "off" }, "草稿");
+  assert.match(launch(off, ["--spec-review"]).stdout, /跳过：配置中关闭了需求说明审阅/);
+});
+
+test("方案提案：开启后标准档先由 builder 和 reviewer 各提一份方案，方案设计比较后决定；快速档和增量继续不做", () => {
+  const env = setup({ designProposals: { enabled: true, profiles: ["standard"], members: [] } });
+  assert.equal(runMain(env, {}).code, 0);
+  assert.deepEqual(starts(env).slice(0, 3), ["design_proposal-p1", "design_proposal-p2", "design"]);
+  const all = events(env).filter((e) => e.type === "start");
+  assert.equal(all[0].provider, "claude/test-model");
+  assert.equal(all[1].provider, "codex/test-model");
+  assert.match(all[0].prompt ?? "", /你的提案文件：docs\/features\/20261012-sms-login\/design-proposals\/design_proposal-p1\.md/);
+  const design = all.find((e) => e.key === "design")?.prompt ?? "";
+  assert.match(design, /# 方案提案[\s\S]*design_proposal-p1\.md[\s\S]*design_proposal-p2\.md[\s\S]*方案比较/);
+
+  const quick = setup({ designProposals: { enabled: true, profiles: ["standard"], members: [] } });
+  assert.equal(runMain(quick, {}, ["--profile", "quick"]).code, 0);
+  assert.ok(!starts(quick).some((k) => k.startsWith("design_proposal")));
+
+  // A continuation after a spec change only handles the change: no proposals.
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n- **AC-1.2** 新增\n");
+  const before = events(env).length;
+  assert.equal(runMain(env, {}, ["--resume"]).code, 0);
+  assert.ok(!starts(env, before).some((k) => k.startsWith("design_proposal")));
+});
+
+test("浏览器验证：步骤 agent 有 Paseo 浏览器工具时，验证类步骤附上浏览器验证的做法", () => {
+  const env = setup();
+  assert.equal(runMain(env, { capabilities: { paseoTools: true, browser: true } }).code, 0);
+  const prompt = (key: string) => events(env).find((e) => e.type === "start" && e.key === key)?.prompt ?? "";
+  assert.match(prompt("verify"), /浏览器：可以用 Paseo 内置浏览器/);
+  assert.match(prompt("verify"), /# 用浏览器验证网页界面/);
+  assert.doesNotMatch(prompt("design"), /用浏览器验证/);
+
+  const off = setup({ browserVerify: "off" });
+  assert.equal(runMain(off, { capabilities: { paseoTools: true, browser: true } }).code, 0);
+  assert.doesNotMatch(events(off).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "", /用浏览器验证/);
+  const none = setup();
+  assert.equal(runMain(none, { capabilities: { paseoTools: true, browser: false } }).code, 0);
+  assert.doesNotMatch(events(none).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "", /用浏览器验证/);
+});
+
+test("自动新建工作区：在主分支上用 --worktree 启动，需求移到新 worktree 提交，步骤放进那里但仍挂在对话下；之后从原对话查看和继续", async () => {
+  const env = setup();
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: env.repo, encoding: "utf8" });
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  git("checkout", "-q", "-b", "main");
+  fs.writeFileSync(path.join(env.repo, "README.md"), "app\n");
+  git("add", "README.md");
+  git("commit", "-q", "-m", "init");
+  const source = fs.realpathSync(env.repo);
+  const chatEnv = (scenario: FakeScenario) => ({ ...fakeEnv(env, scenario), PASEO_AGENT_ID: ORIGIN, PASEO_AGENT_CWD: source });
+  const run = (extra: string[], feature = FEATURE) =>
+    spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", source, "--feature", feature, "--config", env.configPath, "--origin-agent", ORIGIN, ...extra], {
+      encoding: "utf8",
+      env: chatEnv({}),
+    });
+
+  const onMain = run([]);
+  assert.equal(onMain.status, 2);
+  assert.match(onMain.stderr, /可以加 --worktree/);
+
+  const started = run(["--worktree"]);
+  assert.equal(started.status, 0, started.stderr);
+  assert.match(started.stdout, /已为这个需求新建工作区：.*（分支 feature\/20261012-sms-login/);
+  const created = events(env).find((e) => e.type === "createWorktree") as FakeEvent & { directory: string; baseRef: string; branchName: string };
+  assert.equal(created.baseRef, "main");
+  const worktree = fs.realpathSync(created.directory);
+  assert.ok(!fs.existsSync(path.join(source, FEATURE)), "原目录中未提交的需求文件已移走");
+  assert.equal(execFileSync("git", ["log", "-1", "--format=%s"], { cwd: worktree, encoding: "utf8" }).trim(), "docs(req): 短信验证码登录 需求说明");
+
+  const stateFile = path.join(worktree, FEATURE, ".pipeline", "state.json");
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline && !(fs.existsSync(stateFile) && JSON.parse(fs.readFileSync(stateFile, "utf8")).status === "completed")) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const finished = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  assert.equal(finished.status, "completed");
+  assert.deepEqual(finished.worktree, { workspaceId: "fake-wks-1", sourceRepo: source });
+  assert.equal(finished.branch, "feature/20261012-sms-login");
+  const steps = events(env).filter((e) => e.type === "start") as Array<FakeEvent & { workspaceId: string; cwd: string }>;
+  assert.ok(steps.length > 0 && steps.every((e) => e.workspaceId === "fake-wks-1" && e.cwd === worktree && e.parentAgentId === ORIGIN));
+  assert.equal(events(env).find((e) => e.type === "verifyOrigin")?.cwd, source, "对话仍在原目录");
+  assert.ok(events(env).some((e) => e.type === "waitForWorkspaceSetup"));
+  assert.ok((notifications(env).at(-1)?.text ?? "").includes(`完整报告：${worktree.split(path.sep).join("/")}/${FEATURE}/report.md`), "对话不在新工作区，给出完整路径");
+
+  const status = run(["--status"], "sms-login");
+  assert.match(status.stdout, /已完成/);
+  assert.match(status.stdout, /位置：为这个需求新建的工作区/);
+
+  fs.appendFileSync(path.join(worktree, FEATURE, "spec.md"), "\n- **AC-1.2** 新增\n");
+  const before = events(env).length;
+  const resumed = run(["--resume"], "sms-login");
+  assert.equal(resumed.status, 0, resumed.stderr);
+  const deadline2 = Date.now() + 30_000;
+  while (Date.now() < deadline2 && JSON.parse(fs.readFileSync(stateFile, "utf8")).attempt !== 2) await new Promise((r) => setTimeout(r, 100));
+  while (Date.now() < deadline2 && JSON.parse(fs.readFileSync(stateFile, "utf8")).status !== "completed") await new Promise((r) => setTimeout(r, 100));
+  const again = events(env).slice(before).filter((e) => e.type === "start") as Array<FakeEvent & { workspaceId: string }>;
+  assert.ok(again.length > 0 && again.every((e) => e.workspaceId === "fake-wks-1"));
 });
 
 test("prompts.local：同名文件替换随工具发布的提示词", () => {

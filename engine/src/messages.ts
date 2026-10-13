@@ -107,3 +107,38 @@ export function milestoneMessage(text: string): string {
     text,
   ].join("\n");
 }
+
+export function specReviewMessage(input: { featureDir: string; verdict: string; issues: string[]; reviewPath: string }): string {
+  if (input.verdict === "ready") {
+    return [
+      HEADER,
+      "",
+      `功能目录：${input.featureDir}`,
+      `需求说明的独立审阅已完成：没有发现需要澄清的问题（详见 ${input.reviewPath}）。`,
+      "请告诉用户这一点，然后继续请用户确认需求说明。",
+    ].join("\n");
+  }
+  return [
+    HEADER,
+    "",
+    `功能目录：${input.featureDir}`,
+    `需求说明的独立审阅已完成：另一个模型发现 ${input.issues.length} 个建议在确认前澄清的问题，详见 ${input.reviewPath}（其中每个问题都写成了带选项和推荐的选择题）：`,
+    "",
+    ...input.issues.map((q, i) => `${i + 1}. ${q}`),
+    "",
+    "请这样处理：",
+    "1. 先读审阅文件，自己核对一遍：不成立的问题直接略过，并在最后告诉用户略过了哪些、为什么。",
+    "2. 成立的问题，按需求对齐时的方式一次一个地问用户（用审阅文件中的选项和推荐）。",
+    "3. 把答案记入 alignment.md，更新 spec.md，再请用户确认需求说明。",
+  ].join("\n");
+}
+
+export function specReviewFailedMessage(input: { featureDir: string; reason: string }): string {
+  return [
+    HEADER,
+    "",
+    `功能目录：${input.featureDir}`,
+    `需求说明的独立审阅没有完成：${input.reason}`,
+    "这不影响继续：请告诉用户审阅没能完成，然后照常请用户确认需求说明。",
+  ].join("\n");
+}

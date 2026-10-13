@@ -115,6 +115,10 @@ function configuration(configPath: string, repo: string | null): PipelineConfig 
       report("ok", `评审小组：${panel.members.length} 位成员，用于 ${panel.steps.join("、")}（${panel.profiles.join("、")}档，首轮）`);
       if (panel.members.length === 1) report("warn", "评审小组只有 1 位成员，效果接近单人评审", "建议配置 2–3 位，使用不同厂商的模型");
     }
+    const proposals = loaded.config.designProposals;
+    if (proposals.enabled) {
+      report("ok", `方案提案：${proposals.members.length || "builder 和 reviewer 各"} ${proposals.members.length ? "位成员" : "一份"}，用于 ${proposals.profiles.join("、")}档`);
+    }
     const required = loaded.config.requiredVersion;
     if (required) {
       if (satisfies(kitVersion(), required)) report("ok", `版本要求 ${required}：当前 ${kitVersion()} 满足`);
@@ -202,6 +206,11 @@ async function daemon(config: PipelineConfig | null, configPath: string): Promis
       if (config.reviewPanel.enabled) {
         for (const [i, member] of config.reviewPanel.members.entries()) {
           await checkProfile(client, `评审小组·${member.name ?? `成员 ${i + 1}`}`, member, report);
+        }
+      }
+      if (config.designProposals.enabled) {
+        for (const [i, member] of config.designProposals.members.entries()) {
+          await checkProfile(client, `方案提案·${member.name ?? `成员 ${i + 1}`}`, member, report);
         }
       }
     } else {

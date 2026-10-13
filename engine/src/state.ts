@@ -54,6 +54,11 @@ export interface PipelineState {
    * instead of starting over. Absent in older state files.
    */
   incremental?: IncrementalInfo | null;
+  /**
+   * Set when the requirement is developed in a worktree created for it (--worktree):
+   * the Paseo workspace and the checkout the chat works in. `repo` is the worktree.
+   */
+  worktree?: { workspaceId: string; sourceRepo: string } | null;
 }
 
 export interface IncrementalInfo {

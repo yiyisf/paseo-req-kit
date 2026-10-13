@@ -37,6 +37,22 @@ export interface StartAgentInput {
   parentAgentId: string | null;
   /** Agent settings to launch with (the role's, or a review panel member's), Paseo profiles resolved. */
   profile?: import("./config.js").AgentProfile;
+  /** Place the agent in this Paseo workspace (a worktree created for the requirement); still a subagent of parentAgentId. */
+  workspaceId?: string | null;
+}
+
+/** Where Paseo-managed services live: the chat's workspace, or the requirement's own worktree. */
+export type ServiceTarget = { agentId: string } | { workspaceId: string };
+
+export interface WorktreeRequest {
+  /** Checkout to cut the worktree from (the chat's directory). */
+  sourceRepo: string;
+  /** Branch or commit the new branch starts from. */
+  baseRef: string;
+  branchName: string;
+  title: string;
+  /** The chat; Paseo shows the workspace as created from it. */
+  callerAgentId: string | null;
 }
 
 /** A paseo.json service the pipeline runs through Paseo (supervised, own port per worktree). */
@@ -86,14 +102,20 @@ export interface AgentRuntime {
    * Names of the service scripts (paseo.json) of the workspace the chat works in. Null when
    * Paseo cannot run them for us: no chat, an older daemon, or no services configured.
    */
-  listServices(originAgentId: string): Promise<string[] | null>;
+  listServices(target: ServiceTarget): Promise<string[] | null>;
   /** (Re)starts the services so they run the current code, and waits until they are ready or failed. */
-  startServices(originAgentId: string, names: string[], readyTimeoutMs: number): Promise<ManagedService[]>;
-  stopServices(originAgentId: string, names: string[]): Promise<void>;
+  startServices(target: ServiceTarget, names: string[], readyTimeoutMs: number): Promise<ManagedService[]>;
+  stopServices(target: ServiceTarget, names: string[]): Promise<void>;
+  /** Creates a Paseo worktree workspace (paseo.json setup runs in the background). */
+  createWorktree(request: WorktreeRequest): Promise<{ workspaceId: string; directory: string }>;
+  /** Waits for the workspace's paseo.json setup; "none" when there is nothing to wait for or it cannot be read. */
+  waitForWorkspaceSetup(workspaceId: string, timeoutMs: number): Promise<{ status: "completed" | "failed" | "none" | "timeout"; error: string | null }>;
   /** Subscription windows of the given providers; null when Paseo has no usage data. */
   providerQuota(providers: string[]): Promise<ProviderQuota[] | null>;
   /** The agent's latest actions, oldest first; null when they cannot be read. */
   recentActivity(agentId: string, limit: number): Promise<ActivityItem[] | null>;
+  /** Which Paseo tools step agents get (Settings → Agents); null when unknown. */
+  capabilities(): Promise<{ paseoTools: boolean; browser: boolean } | null>;
   close(): Promise<void>;
 }
 

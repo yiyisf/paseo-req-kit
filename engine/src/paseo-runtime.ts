@@ -3,7 +3,7 @@ import { summarizeActivity } from "./activity.js";
 import { type AgentProfile, isResolved, type PipelineConfig } from "./config.js";
 import { profilesFromDaemonConfig } from "./paseo-profiles.js";
 import { samePath } from "./paths.js";
-import type { AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, StepAgent, WaitOutcome } from "./runtime.js";
+import type { AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, ServiceTarget, StepAgent, WaitOutcome } from "./runtime.js";
 
 // Checked against @getpaseo/client 0.11.2 (packages/client/src/index.ts) and the
 // daemon (packages/server/src/server/session.ts, agent/create-agent/intent.ts):
@@ -23,7 +23,8 @@ import type { AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, StepA
 //   through the exported internal DaemonClient (listWorkspaceScripts, startWorkspaceScriptWithStatus,
 //   stopWorkspaceScript). See WorkspaceScripts below; every use degrades to "not available".
 
-export type SdkClient = Pick<PaseoClient, "agents" | "close"> & Partial<Pick<PaseoClient, "config" | "providers" | "terminals">>;
+export type SdkClient = Pick<PaseoClient, "agents" | "close"> &
+  Partial<Pick<PaseoClient, "config" | "providers" | "terminals" | "workspaces">>;
 
 /** paseo.json scripts as the daemon reports them (protocol WorkspaceScriptPayloadSchema). */
 export interface ScriptInfo {
@@ -42,6 +43,8 @@ export interface WorkspaceScripts {
   list(workspaceId: string): Promise<ScriptInfo[]>;
   start(workspaceId: string, name: string): Promise<void>;
   stop(workspaceId: string, name: string): Promise<void>;
+  /** paseo.json setup of a new worktree; null when the daemon does not report one. */
+  setupStatus(workspaceId: string): Promise<{ status: "running" | "completed" | "failed" | "blocked"; error: string | null } | null>;
   close(): Promise<void>;
 }
 
@@ -107,8 +110,9 @@ export function createRuntimeWithClient(
     });
     return scripts;
   };
-  const workspaceOf = async (agentId: string): Promise<string | null> => {
-    const fetched = await client.agents.ref(agentId).refresh().catch(() => null);
+  const workspaceOf = async (target: ServiceTarget): Promise<string | null> => {
+    if ("workspaceId" in target) return target.workspaceId;
+    const fetched = await client.agents.ref(target.agentId).refresh().catch(() => null);
     return fetched?.agent.workspaceId ?? null;
   };
   const tail = async (terminalId: string | null | undefined): Promise<string | null> => {
@@ -156,9 +160,20 @@ export function createRuntimeWithClient(
         labels: input.labels,
         prompt: input.prompt,
       };
-      const handle = input.parentAgentId
-        ? await client.agents.create({ ...base, parent: input.parentAgentId })
-        : await client.agents.create(base);
+      let handle: PaseoAgentHandle;
+      if (input.workspaceId) {
+        // The requirement's own worktree: placed there, still a subagent of the chat.
+        if (!client.workspaces) throw new Error("这个 Paseo 版本不支持把 agent 放进指定的工作区");
+        const { cwd: _cwd, ...placed } = base;
+        handle = await client.workspaces.ref(input.workspaceId).agents.create({
+          ...placed,
+          ...(input.parentAgentId ? { parent: input.parentAgentId } : {}),
+        });
+      } else {
+        handle = input.parentAgentId
+          ? await client.agents.create({ ...base, parent: input.parentAgentId })
+          : await client.agents.create(base);
+      }
 
       // Guard against the daemon placing the agent anywhere but the repository.
       const actual = await agentCwd(handle).catch(() => null);
@@ -183,9 +198,9 @@ export function createRuntimeWithClient(
         return null;
       }
     },
-    async listServices(originAgentId) {
+    async listServices(target) {
       const api = await getScripts();
-      const workspaceId = api ? await workspaceOf(originAgentId) : null;
+      const workspaceId = api ? await workspaceOf(target) : null;
       if (!api || !workspaceId) return null;
       try {
         const services = (await api.list(workspaceId)).filter((s) => (s.type ?? "service") === "service").map((s) => s.scriptName);
@@ -195,9 +210,9 @@ export function createRuntimeWithClient(
         return null;
       }
     },
-    async startServices(originAgentId, names, readyTimeoutMs) {
+    async startServices(target, names, readyTimeoutMs) {
       const api = await getScripts();
-      const workspaceId = await workspaceOf(originAgentId);
+      const workspaceId = await workspaceOf(target);
       if (!api || !workspaceId) throw new Error("无法使用 Paseo 的工作区脚本");
       const current = await api.list(workspaceId);
       for (const name of names) {
@@ -216,9 +231,9 @@ export function createRuntimeWithClient(
       }
       return Promise.all(latest.filter((s) => names.includes(s.scriptName)).map(toService));
     },
-    async stopServices(originAgentId, names) {
+    async stopServices(target, names) {
       const api = await getScripts();
-      const workspaceId = await workspaceOf(originAgentId);
+      const workspaceId = await workspaceOf(target);
       if (!api || !workspaceId) return;
       const current = await api.list(workspaceId).catch(() => []);
       for (const name of names) {
@@ -253,6 +268,41 @@ export function createRuntimeWithClient(
       try {
         const page = await client.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: Math.max(limit * 4, 20) });
         return summarizeActivity(page.entries, limit);
+      } catch {
+        return null;
+      }
+    },
+    async createWorktree(request) {
+      if (!client.workspaces) throw new Error("这个 Paseo 版本不支持新建工作区");
+      const workspace = await client.workspaces.create({
+        source: { kind: "worktree", cwd: request.sourceRepo, action: "branch-off", refName: request.baseRef, branchName: request.branchName },
+        title: request.title,
+        background: false,
+        ...(request.callerAgentId ? { callerAgentId: request.callerAgentId } : {}),
+      });
+      const directory = workspace.directory ?? (await workspace.refresh())?.workspaceDirectory ?? null;
+      if (!directory) throw new Error("Paseo 没有返回新工作区的目录");
+      return { workspaceId: workspace.id, directory };
+    },
+    async waitForWorkspaceSetup(workspaceId, timeoutMs) {
+      const api = await getScripts();
+      if (!api) return { status: "none", error: null };
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const snapshot = await api.setupStatus(workspaceId).catch(() => null);
+        if (!snapshot) return { status: "none", error: null };
+        if (snapshot.status === "completed") return { status: "completed", error: null };
+        if (snapshot.status === "failed" || snapshot.status === "blocked") return { status: "failed", error: snapshot.error ?? snapshot.status };
+        if (Date.now() >= deadline) return { status: "timeout", error: null };
+        await sleep(3000);
+      }
+    },
+    async capabilities() {
+      if (!client.config) return null;
+      try {
+        const daemonConfig = (await client.config.get()).config as { mcp?: { injectIntoAgents?: boolean }; browserTools?: { enabled?: boolean } };
+        const paseoTools = daemonConfig.mcp?.injectIntoAgents === true;
+        return { paseoTools, browser: paseoTools && daemonConfig.browserTools?.enabled === true };
       } catch {
         return null;
       }
@@ -308,6 +358,11 @@ async function connectScripts(config: PipelineConfig): Promise<WorkspaceScripts 
     async stop(workspaceId, name) {
       check(await daemon.stopWorkspaceScript(workspaceId, name));
     },
+    async setupStatus(workspaceId) {
+      if (typeof daemon.fetchWorkspaceSetupStatus !== "function") return null;
+      const payload = await daemon.fetchWorkspaceSetupStatus(workspaceId);
+      return payload.snapshot ? { status: payload.snapshot.status, error: payload.snapshot.error } : null;
+    },
     async close() {
       await daemon.close();
     },
@@ -320,4 +375,7 @@ interface InternalDaemonClient {
   listWorkspaceScripts(workspaceId: string): Promise<{ scripts?: unknown[]; error: string | null }>;
   startWorkspaceScriptWithStatus(workspaceId: string, name: string): Promise<{ error: string | null }>;
   stopWorkspaceScript(workspaceId: string, name: string): Promise<{ error: string | null }>;
+  fetchWorkspaceSetupStatus?(
+    workspaceId: string,
+  ): Promise<{ snapshot: { status: "running" | "completed" | "failed" | "blocked"; error: string | null } | null }>;
 }

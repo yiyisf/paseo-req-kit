@@ -45,7 +45,9 @@
     "defect_fix": 120,
     "reverify": 90,
     "report": 30,
-    "panel_review": 45
+    "panel_review": 45,
+    "spec_review": 20,
+    "design_proposal": 45
   },
   "waitChunkSeconds": 600,
   "permissionPollSeconds": 30,
@@ -62,6 +64,15 @@
   "paseoServices": "auto",
   "serviceReadySeconds": 120,
   "quotaWarnPercent": 85,
+  "specReview": "standard",
+  "designProposals": {
+    "enabled": false,
+    "profiles": [
+      "standard"
+    ],
+    "members": []
+  },
+  "browserVerify": "auto",
   "reviewPanel": {
     "enabled": false,
     "steps": [

@@ -90,7 +90,9 @@ export function profilesFromDaemonConfig(config: unknown): PaseoProfile[] | null
 
 /** Whether any role or panel member names a Paseo profile. */
 export function usesPaseoProfiles(config: PipelineConfig): boolean {
-  return [config.agents.builder, config.agents.reviewer, ...config.reviewPanel.members].some((p) => Boolean(p.paseoProfile));
+  return [config.agents.builder, config.agents.reviewer, ...config.reviewPanel.members, ...config.designProposals.members].some((p) =>
+    Boolean(p.paseoProfile),
+  );
 }
 
 /** The config with every Paseo profile name replaced by its settings. Throws ProfileResolutionError. */
@@ -104,6 +106,13 @@ export function resolveConfigProfiles(config: PipelineConfig, available: PaseoPr
     reviewPanel: {
       ...config.reviewPanel,
       members: config.reviewPanel.members.map((m, i) => ({ ...m, ...resolveAgentProfile(`reviewPanel.members[${i}]`, m, available) })),
+    },
+    designProposals: {
+      ...config.designProposals,
+      members: config.designProposals.members.map((m, i) => ({
+        ...m,
+        ...resolveAgentProfile(`designProposals.members[${i}]`, m, available),
+      })),
     },
   };
 }

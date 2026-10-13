@@ -8,14 +8,15 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { parseLaunchArgs } from "./cli-args.js";
-import { loadConfig, PROFILE_LABELS } from "./config.js";
+import { launchArgv, parseLaunchArgs } from "./cli-args.js";
+import { moveToOwnWorktree, type OwnWorktree } from "./worktree.js";
+import { loadConfig, type PipelineConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeLiveActivity, describeStatus, stopPipeline } from "./control.js";
-import { describeFeatures, featuresWithRuns, listFeatures, resolveFeatureArg } from "./features.js";
-import { normalizeFeatureDir, preflight } from "./preflight.js";
+import { describeFeatures, featuresWithRuns, findWorktreeRun, listFeatures, resolveFeatureArg } from "./features.js";
+import { checkChatCwd, normalizeFeatureDir, preflight, type PreflightResult, specProfile } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
-import { ensurePipelineDir, hashFile, pipelineDir, readState, statePath } from "./state.js";
+import { ensurePipelineDir, hashFile, isAlive, pipelineDir, readState, statePath } from "./state.js";
 
 function fail(message: string): never {
   console.error(`未启动：${message}`);
@@ -34,6 +35,26 @@ const configPath = args.configPath ?? defaultConfigPath();
 if (args.list) {
   console.log(describeFeatures(listFeatures(args.repo), args.repo));
   process.exit(0);
+}
+
+// A requirement started here with --worktree lives in the worktree created for it; the
+// chat stays here, so status, stop and resume from this chat are redirected there.
+if (args.featureDir && fs.existsSync(args.repo) && !args.sourceRepo && !args.worktree && !args.specReview) {
+  const here = (() => {
+    try {
+      return resolveFeatureArg(args.repo, args.featureDir);
+    } catch {
+      return null;
+    }
+  })();
+  const hasRunHere = here !== null && fs.existsSync(statePath(args.repo, here));
+  const away = hasRunHere ? null : findWorktreeRun(args.repo, here ?? args.featureDir);
+  if (away) {
+    args.sourceRepo = fs.realpathSync(args.repo);
+    args.repo = away.repo;
+    args.featureDir = away.featureDir;
+    args.workspaceId = away.workspaceId;
+  }
 }
 
 // Short names: "sms-login" for docs/features/20261012-sms-login.
@@ -74,6 +95,7 @@ if (args.status || args.stop) {
   if (args.status) {
     const state = readState(file);
     console.log(describeStatus(state, featureDir));
+    if (args.sourceRepo) console.log(`位置：为这个需求新建的工作区 ${repo}（需求文件在 ${path.join(repo, featureDir)}）`);
     // Live detail from Paseo, best effort: the plain status above never depends on the daemon.
     if (state?.status === "running") {
       const fetchLive = async (): Promise<string[]> => {
@@ -85,7 +107,7 @@ if (args.status || args.stop) {
         }
       };
       // Daemon unreachable or config unreadable: the status above is still correct.
-      const live = await Promise.race([fetchLive().catch(() => []), new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 10_000))]);
+      const live = await Promise.race([fetchLive().catch(() => []), new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 10_000).unref())]);
       if (live.length > 0) console.log(`\n${live.join("\n")}`);
     }
     process.exit(0);
@@ -109,7 +131,55 @@ if (args.status || args.stop) {
   process.exit(result.stopped ? 0 : 1);
 }
 
-let checked;
+if (args.specReview) {
+  let repo: string;
+  let featureDir: string;
+  let reviewConfig: PipelineConfig;
+  try {
+    repo = fs.realpathSync(args.repo);
+    checkChatCwd(args, repo);
+    featureDir = normalizeFeatureDir(repo, args.featureDir);
+    reviewConfig = loadConfig(configPath, repo).config;
+  } catch (error) {
+    fail((error as Error).message);
+  }
+  const specFile = path.join(repo, featureDir, "spec.md");
+  if (!fs.existsSync(specFile)) fail(`功能目录中没有 spec.md：${featureDir}`);
+  const reviewProfile = specProfile(fs.readFileSync(specFile, "utf8")) ?? reviewConfig.defaultProfile;
+  if (reviewConfig.specReview === "off" || (reviewConfig.specReview === "standard" && reviewProfile === "quick")) {
+    console.log(
+      reviewConfig.specReview === "off"
+        ? "跳过：配置中关闭了需求说明审阅（specReview）。直接请用户确认需求说明即可。"
+        : "跳过：快速档的需求不做独立审阅。直接请用户确认需求说明即可。",
+    );
+    process.exit(0);
+  }
+  const current = readState(statePath(repo, featureDir));
+  if (current?.status === "running" && isAlive(current.pid)) fail("这个需求的开发流水线正在运行，不需要再审阅需求说明");
+  ensurePipelineDir(repo, featureDir);
+  const reviewLog = path.join(pipelineDir(repo, featureDir), "spec-review.log");
+  const reviewOut = fs.openSync(reviewLog, "a");
+  const reviewer = spawn(process.execPath, [...process.execArgv, path.join(ENGINE_DIR, "src", "spec-review.ts"), ...launchArgv({ ...args, featureDir })], {
+    cwd: repo,
+    detached: true,
+    windowsHide: true,
+    stdio: ["ignore", reviewOut, reviewOut],
+    env: process.env,
+  });
+  reviewer.unref();
+  console.log(
+    [
+      "已开始需求说明的独立审阅（后台进行，通常需要几分钟）。",
+      `功能目录：${featureDir}`,
+      `审阅结果会写到 ${featureDir}/spec-review.md，完成后会作为一条消息发回这个对话。`,
+      `日志：${reviewLog}`,
+      "等待期间可以继续和用户确认其他细节，但先不要把需求说明标为已确认。",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
+
+let checked: PreflightResult;
 try {
   checked = preflight(args, hashFile);
 } catch (error) {
@@ -123,12 +193,44 @@ try {
   fail((error as Error).message);
 }
 
+let ownWorktree: OwnWorktree | null = null;
+if (args.worktree) {
+  // Create the requirement's own worktree now, so the pipeline starts there.
+  const spec = fs.readFileSync(checked.specPath, "utf8");
+  const title = (/^#\s+(.+)$/m.exec(spec)?.[1] ?? path.basename(checked.featureDir)).trim();
+  const create = async () => {
+    const runtime = await (await loadRuntimeFactory())({ config: loaded.config, log: () => undefined });
+    try {
+      return await moveToOwnWorktree({ runtime, sourceRepo: checked.repo, featureDir: checked.featureDir, originAgentId: args.originAgentId, title });
+    } finally {
+      await runtime.close().catch(() => undefined);
+    }
+  };
+  try {
+    ownWorktree = await Promise.race([
+      create(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("连接 Paseo 新建工作区超过 2 分钟没有完成")), 120_000).unref()),
+    ]);
+  } catch (error) {
+    fail(`没能为这个需求新建工作区：${(error as Error).message}`);
+  }
+  args.sourceRepo = checked.repo;
+  args.repo = ownWorktree.repo;
+  args.workspaceId = ownWorktree.workspaceId;
+  args.worktree = false;
+  try {
+    checked = preflight(args, hashFile);
+  } catch (error) {
+    fail(`新工作区 ${ownWorktree.repo} 已建好，但无法在那里启动：${(error as Error).message}`);
+  }
+}
+
 ensurePipelineDir(checked.repo, checked.featureDir);
 const logPath = path.join(pipelineDir(checked.repo, checked.featureDir), "pipeline.log");
 const out = fs.openSync(logPath, "a");
 
 // Re-use this process's loader flags (tsx registers itself through execArgv).
-const child = spawn(process.execPath, [...process.execArgv, path.join(ENGINE_DIR, "src", "main.ts"), ...argv], {
+const child = spawn(process.execPath, [...process.execArgv, path.join(ENGINE_DIR, "src", "main.ts"), ...launchArgv(args)], {
   cwd: checked.repo,
   detached: true,
   windowsHide: true,
@@ -152,6 +254,12 @@ const profile =
 console.log(
   [
     `已在后台启动（${modeText[checked.mode.kind]}，${PROFILE_LABELS[profile]}档），进程 ${child.pid}。`,
+    ownWorktree
+      ? `已为这个需求新建工作区：${ownWorktree.repo}（分支 ${ownWorktree.branch}，在 Paseo 侧边栏中可以看到）。开发在那里进行，步骤仍挂在这个对话下；这个对话的工作目录不变。` +
+        `需求文件已移到 ${path.join(ownWorktree.repo, checked.featureDir)}${ownWorktree.removedSource ? "" : "（这里原有的已提交版本保留不动）"}，之后读写需求文件请用这个路径。`
+      : args.sourceRepo
+        ? `这个需求在为它新建的工作区中开发：${checked.repo}`
+        : null,
     `功能目录：${checked.featureDir}`,
     checked.branch ? `工作分支：${checked.branch}` : "不是 git 仓库：步骤不会提交代码。",
     loaded.sources.length > 1 ? `使用了项目配置：${loaded.sources[1]}` : null,

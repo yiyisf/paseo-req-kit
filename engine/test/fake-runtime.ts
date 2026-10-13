@@ -3,7 +3,9 @@
 // the step's artifact and result file the way a real agent would, and records
 // what the pipeline asked of it in FAKE_EVENTS (one JSON object per line).
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { PaseoProfile } from "../src/paseo-profiles.js";
 import type { ActivityItem, AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, StepAgent, WaitOutcome } from "../src/runtime.js";
@@ -40,6 +42,8 @@ export interface FakeScenario {
   services?: { names: string[]; failing?: string[]; output?: string };
   quota?: ProviderQuota[] | null;
   activity?: ActivityItem[] | null;
+  capabilities?: { paseoTools: boolean; browser: boolean } | null;
+  setup?: { status: "completed" | "failed" | "none" | "timeout"; error: string | null };
 }
 
 const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
@@ -55,6 +59,8 @@ const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
   reverify: { result: "pass" },
   report: { outcome: "completed", summary: "短信登录已经做好，可以验收。" },
   panel_review: { status: "done" },
+  design_proposal: { status: "done" },
+  spec_review: { verdict: "issues", issues: ["AC-1.1 没有说明验证码过期后怎么提示"] },
 };
 
 const ARTIFACTS: Record<string, string> = {
@@ -69,6 +75,7 @@ const ARTIFACTS: Record<string, string> = {
   defect_fix: "verification.md",
   reverify: "verification.md",
   report: "report.md",
+  spec_review: "spec-review.md",
 };
 
 function record(event: Record<string, unknown>): void {
@@ -102,8 +109,9 @@ export const createRuntime: RuntimeFactory = async () => {
       const resultRel = contextValue(input.prompt, "结果文件");
       const featureDir = contextValue(input.prompt, "功能目录");
       const key = path.basename(resultRel, ".json");
-      const isPanel = /-p\d+$/.test(key);
-      const stepId = isPanel ? "panel_review" : key.replace(/-r\d+$/, "");
+      const isProposal = key.startsWith("design_proposal-");
+      const isPanel = !isProposal && /-p\d+$/.test(key);
+      const stepId = isProposal ? "design_proposal" : isPanel ? "panel_review" : key.replace(/-r\d+$/, "");
       const behavior: FakeBehavior = scenario.steps?.[key] ?? scenario.steps?.[stepId] ?? {};
       const result = behavior.result ?? DEFAULT_RESULTS[stepId];
       const resultAbs = path.join(input.cwd, resultRel);
@@ -120,6 +128,8 @@ export const createRuntime: RuntimeFactory = async () => {
         modeId: input.profile?.modeId ?? null,
         title: input.title,
         parentAgentId: input.parentAgentId,
+        workspaceId: input.workspaceId ?? null,
+        cwd: input.cwd,
         labels: input.labels,
         hasSharedContext: input.prompt.includes("# 背景：你在一条需求开发流水线中"),
         hasStepTask: input.prompt.includes("# 本步骤任务"),
@@ -131,7 +141,11 @@ export const createRuntime: RuntimeFactory = async () => {
       let permissionWaits = 0;
 
       const finishTurn = () => {
-        if (isPanel) {
+        if (isProposal) {
+          const proposal = path.join(input.cwd, contextValue(input.prompt, "你的提案文件"));
+          fs.mkdirSync(path.dirname(proposal), { recursive: true });
+          fs.writeFileSync(proposal, `## ${key} 的方案提案（模拟）\n`);
+        } else if (isPanel) {
           const findings = path.join(input.cwd, contextValue(input.prompt, "你的意见文件"));
           fs.mkdirSync(path.dirname(findings), { recursive: true });
           fs.appendFileSync(findings, `## ${key} 的意见（模拟评审者）\n`);
@@ -201,12 +215,12 @@ export const createRuntime: RuntimeFactory = async () => {
     async listPaseoProfiles() {
       return scenario.paseoProfiles === undefined ? [] : scenario.paseoProfiles;
     },
-    async listServices(originAgentId) {
-      record({ type: "listServices", originAgentId });
+    async listServices(target) {
+      record({ type: "listServices", target });
       return scenario.services?.names ?? null;
     },
-    async startServices(originAgentId, names, readyTimeoutMs) {
-      record({ type: "startServices", originAgentId, names, readyTimeoutMs });
+    async startServices(target, names, readyTimeoutMs) {
+      record({ type: "startServices", target, names, readyTimeoutMs });
       return names.map((name, i): ManagedService => {
         const failing = scenario.services?.failing?.includes(name) ?? false;
         return {
@@ -220,8 +234,20 @@ export const createRuntime: RuntimeFactory = async () => {
         };
       });
     },
-    async stopServices(originAgentId, names) {
-      record({ type: "stopServices", originAgentId, names });
+    async stopServices(target, names) {
+      record({ type: "stopServices", target, names });
+    },
+    async createWorktree(request) {
+      // Like Paseo: a git worktree on a new branch, outside the source checkout.
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-wt-"));
+      fs.rmSync(directory, { recursive: true });
+      execFileSync("git", ["worktree", "add", "-q", "-b", request.branchName, directory, request.baseRef], { cwd: request.sourceRepo, stdio: "pipe" });
+      record({ type: "createWorktree", ...request, directory });
+      return { workspaceId: "fake-wks-1", directory: fs.realpathSync(directory) };
+    },
+    async waitForWorkspaceSetup(workspaceId, timeoutMs) {
+      record({ type: "waitForWorkspaceSetup", workspaceId, timeoutMs });
+      return scenario.setup ?? { status: "completed", error: null };
     },
     async providerQuota(providers) {
       record({ type: "providerQuota", providers });
@@ -230,6 +256,9 @@ export const createRuntime: RuntimeFactory = async () => {
     async recentActivity(agentId, limit) {
       record({ type: "recentActivity", agentId, limit });
       return scenario.activity ?? null;
+    },
+    async capabilities() {
+      return scenario.capabilities ?? null;
     },
     async close() {
       record({ type: "close" });

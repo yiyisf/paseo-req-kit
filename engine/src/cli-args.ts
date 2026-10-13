@@ -11,6 +11,8 @@ export const USAGE = `用法：
   start-pipeline [--feature <功能目录>] --status   查看进度（不写 --feature 时：工作区里只有一个需求运行过就看它）
   start-pipeline --feature <功能目录> --stop       停止（之后可用 --resume 继续）
   start-pipeline --list                           列出这个项目所有工作区中的需求
+  start-pipeline --feature <功能目录> --spec-review  确认前请另一个模型独立审阅需求说明草稿（后台进行，结果发回对话）
+  start-pipeline --feature <功能目录> --worktree     为这个需求新建 Paseo worktree 工作区并在那里开发（对话目录不变）
 
   其他选项：[--repo <仓库目录>] [--origin-agent <agent ID>] [--config <配置文件>]
 
@@ -39,6 +41,10 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       status: { type: "boolean", default: false },
       stop: { type: "boolean", default: false },
       list: { type: "boolean", default: false },
+      "spec-review": { type: "boolean", default: false },
+      worktree: { type: "boolean", default: false },
+      "source-repo": { type: "string" },
+      "workspace-id": { type: "string" },
       help: { type: "boolean", default: false },
     },
     strict: true,
@@ -54,8 +60,11 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
   if (profile !== undefined && profile !== "quick" && profile !== "standard") {
     throw new Error(`--profile 只能是 quick 或 standard，收到 "${values.profile}"`);
   }
-  if ([values.status, values.stop, values.resume, values.restart].filter(Boolean).length > 1) {
-    throw new Error("--status、--stop、--resume、--restart 一次只能用一个");
+  if ([values.status, values.stop, values.resume, values.restart, values["spec-review"]].filter(Boolean).length > 1) {
+    throw new Error("--status、--stop、--resume、--restart、--spec-review 一次只能用一个");
+  }
+  if (values.worktree && (values.status || values.stop || values["spec-review"] || values.resume)) {
+    throw new Error("--worktree 只用于第一次启动（或 --restart）");
   }
   // In a Paseo chat, the chat itself is the origin unless told otherwise.
   const origin = (values["origin-agent"] ?? process.env.PASEO_AGENT_ID)?.trim();
@@ -71,6 +80,10 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     status: values.status ?? false,
     stop: values.stop ?? false,
     list: values.list ?? false,
+    specReview: values["spec-review"] ?? false,
+    worktree: values.worktree ?? false,
+    sourceRepo: values["source-repo"] ? path.resolve(values["source-repo"]) : null,
+    workspaceId: values["workspace-id"] ?? null,
   };
 }
 
@@ -89,4 +102,21 @@ export function resumeCommand(args: { repo: string; featureDir: string; configPa
   if (args.configPath) parts.push("--config", args.configPath);
   parts.push("--resume");
   return parts.map(quote).join(" ");
+}
+
+/**
+ * Arguments for the pipeline process, rebuilt from what the launcher resolved (short
+ * feature names, a requirement's own worktree), so both processes see the same thing.
+ */
+export function launchArgv(args: LaunchArgs): string[] {
+  const out = ["--repo", args.repo, "--feature", args.featureDir];
+  if (args.originAgentId) out.push("--origin-agent", args.originAgentId);
+  if (args.configPath) out.push("--config", args.configPath);
+  if (args.profile) out.push("--profile", args.profile);
+  if (args.resume) out.push("--resume");
+  if (args.restart) out.push("--restart");
+  if (args.sourceRepo) out.push("--source-repo", args.sourceRepo);
+  if (args.workspaceId) out.push("--workspace-id", args.workspaceId);
+  if (args.specReview) out.push("--spec-review");
+  return out;
 }

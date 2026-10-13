@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { PROFILE_LABELS, PROFILE_NAMES, type ProfileName } from "./config.js";
@@ -18,12 +19,69 @@ export interface LaunchArgs {
   stop: boolean;
   /** --list: print every requirement in this repository's worktrees. */
   list: boolean;
+  /** --spec-review: independent review of the draft spec, before confirmation. */
+  specReview: boolean;
+  /** --worktree: create a Paseo worktree workspace for this requirement and develop there. */
+  worktree: boolean;
+  /**
+   * The checkout the chat works in, when the pipeline runs in a worktree created for it
+   * (repo is then that worktree). Set by the launcher; the chat's cwd must be this.
+   */
+  sourceRepo: string | null;
+  /** Paseo workspace of that worktree. */
+  workspaceId: string | null;
 }
 
 export class PreflightError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PreflightError";
+  }
+}
+
+function gitCommonDir(dir: string): string | null {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+      cwd: dir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out ? fs.realpathSync(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `worktree` is a git worktree of the same repository as `source`. */
+export function sameRepository(worktree: string, source: string): boolean {
+  const a = gitCommonDir(worktree);
+  const b = gitCommonDir(source);
+  return a !== null && b !== null && samePath(a, b);
+}
+
+/**
+ * Step agents run under the launching chat. Normally they work in the chat's own
+ * directory, so the repository must be it. A requirement developed in a worktree
+ * created for it (--worktree) runs in that worktree instead; the chat must then be
+ * in the checkout the worktree was created from.
+ */
+export function checkChatCwd(args: Pick<LaunchArgs, "originAgentId" | "sourceRepo">, repo: string, env: NodeJS.ProcessEnv = process.env): void {
+  const chatCwd = env.PASEO_AGENT_CWD?.trim();
+  if (!args.originAgentId || !chatCwd || env.PASEO_AGENT_ID?.trim() !== args.originAgentId) return;
+  const chat = fs.existsSync(chatCwd) ? fs.realpathSync(chatCwd) : chatCwd;
+  if (args.sourceRepo) {
+    const source = fs.existsSync(args.sourceRepo) ? fs.realpathSync(args.sourceRepo) : args.sourceRepo;
+    if (samePath(chat, source) && sameRepository(repo, source)) return;
+    throw new PreflightError(
+      `这个需求在为它新建的工作区 ${repo} 中开发，只能从 ${source} 的对话中操作，当前对话的工作目录是 ${chatCwd}。`,
+    );
+  }
+  if (!samePath(chat, repo)) {
+    throw new PreflightError(
+      `仓库目录 ${repo} 与当前对话的工作目录 ${chatCwd} 不一致。` +
+        "流水线的步骤会挂在这个对话下、在对话的工作目录中进行，所以只能为对话所在的项目启动。" +
+        "请在该仓库对应的项目中打开对话后再启动；对话过程中不要切换工作目录。",
+    );
   }
 }
 
@@ -82,16 +140,7 @@ export function preflight(
     throw new PreflightError(`仓库目录不存在：${args.repo}`);
   }
   const repo = fs.realpathSync(args.repo);
-  // Step agents run under the launching chat and inherit its working directory.
-  // When launched from that chat's shell, the daemon tells us what that directory is.
-  const chatCwd = env.PASEO_AGENT_CWD?.trim();
-  if (args.originAgentId && chatCwd && env.PASEO_AGENT_ID?.trim() === args.originAgentId && !samePath(fs.existsSync(chatCwd) ? fs.realpathSync(chatCwd) : chatCwd, repo)) {
-    throw new PreflightError(
-      `仓库目录 ${repo} 与当前对话的工作目录 ${chatCwd} 不一致。` +
-        "流水线的步骤会挂在这个对话下、在对话的工作目录中进行，所以只能为对话所在的项目启动。" +
-        "请在该仓库对应的项目中打开对话后再启动；对话过程中不要切换工作目录。",
-    );
-  }
+  checkChatCwd(args, repo, env);
   const featureDir = normalizeFeatureDir(repo, args.featureDir);
   const featureAbs = path.join(repo, featureDir);
   if (!fs.existsSync(featureAbs) || !fs.statSync(featureAbs).isDirectory()) {
@@ -148,15 +197,24 @@ export function preflight(
     // "failed", or "running" left behind by a process that died without cleanup.
     mode = { kind: "resume-reuse", previous };
   }
-  // The run commits to the branch that is checked out now, and never to the default branch.
   const git = gitInfo(repo);
+  if (args.worktree) {
+    // The run will happen in a new worktree on its own branch, cut from what is checked out here.
+    if (mode.kind !== "fresh") {
+      throw new PreflightError("这个需求已经在这里运行过，不能再改为在新工作区中开发。请用 --resume 继续，或去掉 --worktree。");
+    }
+    if (!git.isRepo) throw new PreflightError("--worktree 需要 git 仓库。");
+    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText) };
+  }
+  // The run commits to the branch that is checked out now, and never to the default branch.
   if (git.isRepo && git.detached) {
     throw new PreflightError("当前没有处在任何分支上（detached HEAD）。请切换到这个需求的工作分支后再启动。");
   }
   if (git.branch && git.protectedBranches.includes(git.branch)) {
     throw new PreflightError(
       `当前在默认分支 ${git.branch} 上，流水线不会在默认分支上提交代码。` +
-        "建议在 Paseo 中为这个需求新建一个 worktree 工作区（New workspace → Isolation 选 New worktree），在那里的对话中重新开始；" +
+        "可以加 --worktree，让流水线为这个需求新建一个 worktree 工作区并在那里开发（这个对话不用动）；" +
+        "或者在 Paseo 中自己新建一个 worktree 工作区（New workspace → Isolation 选 New worktree），在那里的对话中重新开始；" +
         "或者先切换到这个需求的功能分支。",
     );
   }

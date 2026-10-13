@@ -63,7 +63,9 @@ async function main(): Promise<number> {
   // Checked before the state file is touched, so a refused launch leaves no record behind.
   {
     try {
-      if (originAgentId) await runtime.verifyOrigin(originAgentId, repo);
+      // In a worktree created for the requirement, the chat stays in the checkout it was cut from.
+      const chatDir = args.sourceRepo ?? (mode.kind === "fresh" ? null : mode.previous.worktree?.sourceRepo) ?? repo;
+      if (originAgentId) await runtime.verifyOrigin(originAgentId, chatDir);
       if (usesPaseoProfiles(config)) config = resolveConfigProfiles(config, await runtime.listPaseoProfiles());
     } catch (error) {
       const reason = (error as Error).message;
@@ -106,6 +108,7 @@ async function main(): Promise<number> {
       branch: checked.branch,
       milestones: [],
       incremental: null,
+      worktree: args.sourceRepo && args.workspaceId ? { workspaceId: args.workspaceId, sourceRepo: args.sourceRepo } : null,
     };
     log(`开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，分支 ${checked.branch ?? "无"}）`);
   } else {
@@ -138,6 +141,17 @@ async function main(): Promise<number> {
     log(`继续流水线：${featureDir}（第 ${state.attempt} 次尝试，${PROFILE_LABELS[profile]}档）—— ${why}`);
   }
   writeState(stateFile, state);
+  if (state.worktree) log(`在为这个需求新建的工作区中开发：${repo}（Paseo 工作区 ${state.worktree.workspaceId}，对话所在目录 ${state.worktree.sourceRepo}）`);
+
+  if (state.worktree && mode.kind === "fresh") {
+    // paseo.json's worktree.setup (installing dependencies, copying .env) runs in the background.
+    const setup = await runtime.waitForWorkspaceSetup(state.worktree.workspaceId, 30 * 60_000).catch(() => ({ status: "none" as const, error: null }));
+    if (setup.status === "completed") log("新工作区的环境准备（paseo.json）已完成");
+    else if (setup.status === "failed" || setup.status === "timeout") {
+      const why = setup.status === "timeout" ? "30 分钟内没有完成" : `失败：${setup.error ?? "原因未知"}`;
+      log(`新工作区的环境准备（paseo.json）${why}。流水线继续，步骤会按验证方法自行准备环境。`);
+    }
+  }
 
   const shutdown = (signal: string) => {
     log(`收到 ${signal}，流水线停止`);
@@ -160,7 +174,8 @@ async function main(): Promise<number> {
       statePath: stateFile,
       prompts: { promptsDir: PROMPTS_DIR, localPromptsDir: localPromptsDir(), principlesFile: PRINCIPLES_INDEX },
       logPath: path.join(pipelineDir(repo, featureDir), "pipeline.log"),
-      resumeCommand: resumeCommand({ repo, featureDir, configPath: args.configPath }),
+      // Run from the chat, whose directory is the source checkout when the requirement has its own worktree.
+      resumeCommand: resumeCommand({ repo: state.worktree?.sourceRepo ?? repo, featureDir, configPath: args.configPath }),
       log,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });

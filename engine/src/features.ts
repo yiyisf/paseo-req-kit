@@ -219,3 +219,41 @@ export function featuresWithRuns(repo: string): string[] {
     .filter((n) => fs.existsSync(path.join(root, n, ".pipeline", "state.json")))
     .map((n) => `${prefix}/${n}`);
 }
+
+/** A requirement developed in a worktree that the pipeline created for it, from `sourceRepo`. */
+export interface WorktreeRun {
+  repo: string;
+  featureDir: string;
+  workspaceId: string;
+}
+
+/**
+ * Finds the worktree run of a requirement started from this checkout (--worktree), by
+ * feature directory or by (part of) its name. Null when there is none.
+ */
+export function findWorktreeRun(sourceRepo: string, feature: string): WorktreeRun | null {
+  const wanted = feature.trim().replace(/[\\/]+$/, "");
+  const name = wanted.split(/[\\/]/).pop() ?? wanted;
+  const prefix = FEATURES_DIR.split(path.sep).join("/");
+  const matches: WorktreeRun[] = [];
+  for (const wt of worktrees(sourceRepo)) {
+    if (isSameDir(wt.path, sourceRepo)) continue;
+    const root = path.join(wt.path, FEATURES_DIR);
+    if (!fs.existsSync(root)) continue;
+    for (const dir of fs.readdirSync(root)) {
+      if (!(dir === name || dir.toLowerCase().includes(name.toLowerCase()))) continue;
+      try {
+        const state = JSON.parse(fs.readFileSync(path.join(root, dir, ".pipeline", "state.json"), "utf8")) as {
+          worktree?: { workspaceId?: string; sourceRepo?: string } | null;
+        };
+        if (state.worktree?.workspaceId && state.worktree.sourceRepo && isSameDir(state.worktree.sourceRepo, sourceRepo)) {
+          matches.push({ repo: fs.realpathSync(wt.path), featureDir: `${prefix}/${dir}`, workspaceId: state.worktree.workspaceId });
+        }
+      } catch {
+        // No run there.
+      }
+    }
+  }
+  const exact = matches.filter((m) => m.featureDir.endsWith(`/${name}`));
+  return (exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null) ?? null;
+}

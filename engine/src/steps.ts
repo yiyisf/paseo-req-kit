@@ -13,7 +13,11 @@ export type StepId =
   | "reverify"
   | "report"
   /** One member of the optional review panel; runs before design_review / code_review consolidates. */
-  | "panel_review";
+  | "panel_review"
+  /** Independent review of a draft spec before the requester confirms it (run from the chat, not the pipeline). */
+  | "spec_review"
+  /** One of the parallel design proposals that the design step compares (optional). */
+  | "design_proposal";
 
 type FieldSpec =
   | { kind: "boolean" }
@@ -45,6 +49,29 @@ export const PANEL_STEPS = ["design_review", "code_review"] as const;
 export type PanelStep = (typeof PANEL_STEPS)[number];
 
 export const STEPS: Record<StepId, StepDef> = {
+  spec_review: {
+    id: "spec_review",
+    number: 2,
+    title: "需求说明审阅",
+    role: "reviewer",
+    promptFile: "02-spec-review.md",
+    result: {
+      required: { verdict: { kind: "enum", values: ["ready", "issues"] } },
+      optional: { issues: { kind: "string[]" } },
+      check: (value) =>
+        value.verdict === "issues" && (!Array.isArray(value.issues) || value.issues.length === 0)
+          ? "verdict 为 issues 时，issues 必须是非空的字符串数组（每条一句话）"
+          : null,
+    },
+  },
+  design_proposal: {
+    id: "design_proposal",
+    number: 3,
+    title: "方案提案",
+    role: "builder",
+    promptFile: "03a-design-proposal.md",
+    result: done,
+  },
   panel_review: {
     id: "panel_review",
     number: 0,

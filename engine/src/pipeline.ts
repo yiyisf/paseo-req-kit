@@ -13,7 +13,7 @@ import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
-import type { AgentRuntime, ManagedService, StepAgent } from "./runtime.js";
+import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
 import { type PipelineState, type StepRecord, writeState } from "./state.js";
 import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult } from "./steps.js";
 
@@ -31,6 +31,8 @@ export interface PipelineContext {
   sleep: (ms: number) => Promise<void>;
   /** Paseo-managed services of this run (filled in by the pipeline). */
   services?: { names: string[] | null | undefined; started: Set<string> };
+  /** Paseo tools the step agents get; looked up once (undefined: not yet). */
+  capabilities?: { paseoTools: boolean; browser: boolean } | null;
 }
 
 export type PipelineOutcome = "completed" | "waiting_for_business" | "failed";
@@ -117,7 +119,7 @@ function buildPrompt(
     "<pipeline-context>",
     `仓库目录：${ctx.repo}`,
     `功能目录：${ctx.featureDir}`,
-    `工作分支：${ctx.state.branch ?? "（不是 git 仓库，不需要提交）"}`,
+    def.id === "spec_review" ? "工作分支：（本步骤不提交）" : `工作分支：${ctx.state.branch ?? "（不是 git 仓库，不需要提交）"}`,
     `档位：${PROFILE_LABELS[profile]}${profile === "quick" ? "（小改动：各产物只写必要内容，保持简短）" : ""}`,
     `本步骤：${def.title}（流水线第 ${def.number} 步）`,
   ];
@@ -153,6 +155,14 @@ function buildPrompt(
   if (extra) parts.push(extra);
   parts.push(lines.join("\n"));
   return `${parts.join("\n\n")}\n`;
+}
+
+/**
+ * The feature directory as the chat should see it: relative to its own directory normally,
+ * absolute when the requirement is developed in a worktree created for it.
+ */
+function shownFeatureDir(ctx: PipelineContext): string {
+  return ctx.state.worktree ? path.join(ctx.repo, ctx.featureDir).split(path.sep).join("/") : ctx.featureDir;
 }
 
 function specTitle(ctx: PipelineContext): string {
@@ -314,7 +324,7 @@ async function runStepOnce(
   const resultAbs = path.join(ctx.repo, resultRel);
   fs.rmSync(resultAbs, { force: true });
 
-  const managed = await serviceExtras(ctx, id);
+  const managed = mergeExtras(await serviceExtras(ctx, id), await browserExtras(ctx, id));
   if (managed) {
     extras = {
       ...extras,
@@ -354,6 +364,7 @@ async function runStepOnce(
       parentAgentId: ctx.config.attachToOriginChat ? ctx.state.originAgentId : null,
       // Always passed: the run's config has Paseo profile names resolved; the runtime's may not.
       profile: extras.profile ?? ctx.config.agents[def.role],
+      workspaceId: ctx.state.worktree?.workspaceId ?? null,
     });
     record.agentId = agent.id;
     ctx.state.history.push(record);
@@ -395,6 +406,28 @@ async function runStepOnce(
   }
 }
 
+function mergeExtras(
+  a: { contextLines: string[]; sections: string[] } | null,
+  b: { contextLines: string[]; sections: string[] } | null,
+): { contextLines: string[]; sections: string[] } | null {
+  if (!a && !b) return null;
+  return { contextLines: [...(a?.contextLines ?? []), ...(b?.contextLines ?? [])], sections: [...(a?.sections ?? []), ...(b?.sections ?? [])] };
+}
+
+/** Steps that check the result the way a user would. */
+const BROWSER_STEPS: readonly StepId[] = ["verify", "defect_fix", "reverify"];
+
+/** Points verification at Paseo's built-in browser when the step agents have it. */
+async function browserExtras(ctx: PipelineContext, id: StepId): Promise<{ contextLines: string[]; sections: string[] } | null> {
+  if (!BROWSER_STEPS.includes(id) || ctx.config.browserVerify === "off") return null;
+  if (ctx.capabilities === undefined) ctx.capabilities = await ctx.runtime.capabilities().catch(() => null);
+  if (!ctx.capabilities?.browser) return null;
+  return {
+    contextLines: ["浏览器：可以用 Paseo 内置浏览器（browser_* 工具）验证网页界面"],
+    sections: [readToolPrompt({ ...ctx.prompts, repo: ctx.repo }, "browser-verify.md")],
+  };
+}
+
 /** Steps that need the project's services running. */
 const SERVICE_STEPS: readonly StepId[] = ["service_start", "verify", "defect_fix", "reverify"];
 
@@ -403,16 +436,23 @@ function serviceState(ctx: PipelineContext): NonNullable<PipelineContext["servic
   return ctx.services;
 }
 
+/** The workspace whose paseo.json services the steps use: the requirement's own worktree, or the chat's. */
+function serviceTarget(ctx: PipelineContext): ServiceTarget | null {
+  if (ctx.state.worktree) return { workspaceId: ctx.state.worktree.workspaceId };
+  const origin = ctx.state.originAgentId;
+  return origin && ctx.config.attachToOriginChat ? { agentId: origin } : null;
+}
+
 /** Service scripts from paseo.json that Paseo can run for this pipeline; null when not used. */
 async function serviceNames(ctx: PipelineContext): Promise<string[] | null> {
   const state = serviceState(ctx);
   if (state.names !== undefined) return state.names;
-  const origin = ctx.state.originAgentId;
-  if (ctx.config.paseoServices === "off" || !origin || !ctx.config.attachToOriginChat) {
+  const target = serviceTarget(ctx);
+  if (ctx.config.paseoServices === "off" || !target) {
     state.names = null;
     return null;
   }
-  state.names = await ctx.runtime.listServices(origin).catch(() => null);
+  state.names = await ctx.runtime.listServices(target).catch(() => null);
   if (state.names) ctx.log(`项目在 paseo.json 中定义了服务（${state.names.join("、")}），服务启动和验证相关的步骤由流水线通过 Paseo 启动它们`);
   return state.names;
 }
@@ -429,12 +469,12 @@ function describeService(s: ManagedService, logFile: string | null): string {
 async function serviceExtras(ctx: PipelineContext, id: StepId): Promise<{ contextLines: string[]; sections: string[] } | null> {
   if (!SERVICE_STEPS.includes(id)) return null;
   const names = await serviceNames(ctx);
-  const origin = ctx.state.originAgentId;
-  if (!names || !origin) return null;
+  const target = serviceTarget(ctx);
+  if (!names || !target) return null;
   const sections = [readToolPrompt({ ...ctx.prompts, repo: ctx.repo }, "paseo-services.md")];
   let services: ManagedService[];
   try {
-    services = await ctx.runtime.startServices(origin, names, ctx.config.serviceReadySeconds * 1000);
+    services = await ctx.runtime.startServices(target, names, ctx.config.serviceReadySeconds * 1000);
   } catch (error) {
     ctx.log(`通过 Paseo 启动服务失败：${(error as Error).message}`);
     return {
@@ -459,9 +499,9 @@ async function serviceExtras(ctx: PipelineContext, id: StepId): Promise<{ contex
 
 async function stopManagedServices(ctx: PipelineContext): Promise<void> {
   const started = [...(ctx.services?.started ?? [])];
-  const origin = ctx.state.originAgentId;
-  if (started.length === 0 || !origin) return;
-  await ctx.runtime.stopServices(origin, started).catch((error: Error) => ctx.log(`停止服务失败：${error.message}`));
+  const target = serviceTarget(ctx);
+  if (started.length === 0 || !target) return;
+  await ctx.runtime.stopServices(target, started).catch((error: Error) => ctx.log(`停止服务失败：${error.message}`));
   ctx.services?.started.clear();
   ctx.log(`已停止 Paseo 管理的服务：${started.join("、")}`);
 }
@@ -565,6 +605,70 @@ function consolidationSection(step: PanelStep, findings: string[], total: number
   ].join("\n");
 }
 
+function proposalsApply(ctx: PipelineContext): boolean {
+  const p = ctx.config.designProposals;
+  // A continuation after a change only touches what changed; one designer is enough.
+  return p.enabled && p.profiles.includes(ctx.state.profile) && !ctx.state.incremental;
+}
+
+function proposalMembers(ctx: PipelineContext): ReviewPanelMember[] {
+  const members = ctx.config.designProposals.members;
+  if (members.length > 0) return members;
+  return [
+    { ...ctx.config.agents.builder, name: "builder" },
+    { ...ctx.config.agents.reviewer, name: "reviewer" },
+  ];
+}
+
+/**
+ * Several agents propose a design in parallel (no code changes, no commits); returns the
+ * proposal files of those that finished. The design step then compares and decides.
+ */
+async function runProposals(ctx: PipelineContext): Promise<string[]> {
+  const members = proposalMembers(ctx);
+  const runs = members.map((member, i) => {
+    const key = `design_proposal-p${i + 1}`;
+    const file = `${ctx.featureDir}/design-proposals/${key}.md`;
+    const name = memberName(member, i);
+    const contextLines = [
+      `方案提案：${name}（共 ${members.length} 份，各自独立完成）`,
+      `你的提案文件：${file}`,
+      `你的提案文件绝对路径：${path.join(ctx.repo, file)}`,
+    ];
+    if (member.focus) contextLines.push(`你的关注重点：${member.focus}`);
+    return runStep(ctx, "design_proposal", null, null, {
+      key,
+      title: `3-方案提案·${name}`,
+      profile: member,
+      contextLines,
+      additionsFor: "design",
+    }).then(() => file);
+  });
+  const settled = await Promise.allSettled(runs);
+  const done: string[] = [];
+  settled.forEach((outcome, i) => {
+    if (outcome.status === "fulfilled") done.push(outcome.value);
+    else ctx.log(`方案提案·${memberName(members[i], i)}没有完成，方案设计时不包含它：${(outcome.reason as Error).message}`);
+  });
+  return done;
+}
+
+function proposalsSection(files: string[], total: number): string {
+  return [
+    "# 方案提案",
+    "",
+    `这一次先由 ${total} 个 agent 各自独立提出了方案${files.length < total ? `（其中 ${total - files.length} 份没有完成，只有下面 ${files.length} 份）` : ""}：`,
+    "",
+    ...files.map((f) => `- \`${f}\``),
+    "",
+    "你负责比较并做出决定，再按上文的要求写 `design.md`：",
+    "1. 逐份读完，对照 spec 和代码核实其中的判断，不要只看结论。",
+    "2. 选择一份为基础，或者把各份中更好的部分合并起来。不要为了合并而合并，取舍要有理由。",
+    "3. 在 `design.md` 中增加\"方案比较\"一节：一张表列出各提案的思路、优点、风险、改动范围，写明最后的选择和理由，以及放弃了什么。",
+    "4. 会影响需求方能看到的行为、成本或时间的取舍，在 `decisions.tsv` 中记一行，`needs_human` 为 `yes`。",
+  ].join("\n");
+}
+
 /** One review round; with a panel in the first round, members review first and this step consolidates. */
 async function runReview(ctx: PipelineContext, step: PanelStep, round: number, maxRounds: number): Promise<Record<string, unknown>> {
   if (!panelApplies(ctx, step, round)) return runStep(ctx, step, round, maxRounds);
@@ -574,12 +678,27 @@ async function runReview(ctx: PipelineContext, step: PanelStep, round: number, m
   });
 }
 
+/** Runs one step outside the pipeline's flow (the spec review started from the chat). */
+export async function runSingleStep(ctx: PipelineContext, id: StepId, extras: StepExtras = {}): Promise<Record<string, unknown>> {
+  try {
+    return await runStep(ctx, id, null, null, extras);
+  } catch (error) {
+    throw new Error((error as Error).message);
+  }
+}
+
 /** Steps 3–11. Loop rounds and optional steps come from the run's profile. */
 async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
   const settings = ctx.config.profiles[ctx.state.profile];
   const rounds = settings.rounds;
 
-  const design = await runStep(ctx, "design");
+  let designExtras: StepExtras = {};
+  if (proposalsApply(ctx) && !ctx.state.results.design) {
+    const files = await runProposals(ctx);
+    if (files.length > 0) designExtras = { sections: [proposalsSection(files, proposalMembers(ctx).length)] };
+    else ctx.log("方案提案都没有完成，按原来的方式由一个 agent 做方案设计");
+  }
+  const design = await runStep(ctx, "design", null, null, designExtras);
 
   let designRounds = 0;
   for (let r = 1; r <= rounds.designReview; r++) {
@@ -649,10 +768,10 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     await notifyOrigin(
       ctx,
       completedMessage({
-        featureDir: ctx.featureDir,
+        featureDir: shownFeatureDir(ctx),
         outcome: report.outcome as string,
         summary: report.summary as string,
-        reportPath: `${ctx.featureDir}/report.md`,
+        reportPath: `${shownFeatureDir(ctx)}/report.md`,
       }),
     );
     const outcomeText: Record<string, string> = {
@@ -673,7 +792,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       save(ctx);
       await notifyOrigin(
         ctx,
-        blockedMessage({ featureDir: ctx.featureDir, questions: error.questions, resumeCommand: ctx.resumeCommand }),
+        blockedMessage({ featureDir: shownFeatureDir(ctx), questions: error.questions, resumeCommand: ctx.resumeCommand }),
       );
       await notifyExternal(ctx, "blocked", `方案审核发现 ${error.questions.length} 个需要需求方决定的问题，流水线已暂停，请到发起的对话中回答。`, {
         questions: error.questions,
