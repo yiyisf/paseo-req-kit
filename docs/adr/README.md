@@ -11,3 +11,5 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0007 自带需求访谈 skill，不依赖外部 skill 包](0007-own-interview-skill.md)
 - [0008 入口 skill 之间不互相调用](0008-entries-do-not-call-entries.md)
 - [0009 程序与本机配置分开存放，按版本目录并存](0009-versioned-install-layout.md)
+- [0010 需求总览现场生成，不维护 INDEX.md](0010-generated-feature-overview.md)
+- [0011 完成后修改 spec 可以继续开发](0011-resume-after-completion.md)

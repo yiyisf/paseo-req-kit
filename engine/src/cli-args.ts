@@ -10,6 +10,7 @@ export const USAGE = `用法：
   start-pipeline --feature <功能目录> [--profile quick|standard] [--resume | --restart]
   start-pipeline --feature <功能目录> --status     查看进度
   start-pipeline --feature <功能目录> --stop       停止（之后可用 --resume 继续）
+  start-pipeline --list                           列出这个项目所有工作区中的需求
 
   其他选项：[--repo <仓库目录>] [--origin-agent <agent ID>] [--config <配置文件>]
 
@@ -36,6 +37,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       profile: { type: "string" },
       status: { type: "boolean", default: false },
       stop: { type: "boolean", default: false },
+      list: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
     strict: true,
@@ -44,7 +46,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     console.log(USAGE);
     process.exit(0);
   }
-  if (!values.feature) {
+  if (!values.feature && !values.list) {
     throw new Error(`缺少 --feature\n\n${USAGE}`);
   }
   const profile = values.profile?.trim().toLowerCase();
@@ -59,7 +61,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
   return {
     // In a Paseo chat, the chat's working directory is the repository.
     repo: path.resolve(values.repo ?? process.env.PASEO_AGENT_CWD ?? process.cwd()),
-    featureDir: values.feature,
+    featureDir: values.feature ?? "",
     originAgentId: origin ? origin : null,
     resume: values.resume ?? false,
     restart: values.restart ?? false,
@@ -67,6 +69,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     profile: (profile as ProfileName | undefined) ?? null,
     status: values.status ?? false,
     stop: values.stop ?? false,
+    list: values.list ?? false,
   };
 }
 

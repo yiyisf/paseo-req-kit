@@ -6,14 +6,14 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 - 确认后，引擎在后台按固定顺序驱动一组 Paseo agent：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 →（有常驻服务时）服务启动验证 → 功能验证 →（发现缺陷时）缺陷修复 ⇄ 复验 → 完成报告。
 - 进展、需要决定的问题和最终结论都发回同一个对话；每个步骤以子 agent 的形式挂在对话下。只做本地提交，合并上线由人决定。
 
-当前版本：**1.0.0-beta.1**（第一阶段：骨架）。变化见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**1.1.0-beta.1**（第二阶段：生命周期）。变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 体系结构
 
 | 层 | 内容 | 位置 |
 | --- | --- | --- |
-| 入口 | `/req`（使用者入口，含新需求、小改动、进度/暂停/继续三本手册）；`/req-doctor`（体检） | `skills/req/`、`skills/req-doctor/` |
-| 方法 | 需求访谈、需求说明、验收标准 | `skills/requirement-interview/`、`skills/spec-writing/`、`skills/acceptance-criteria/` |
+| 入口 | `/req`（使用者入口，七本手册：新需求、小改动、进度/暂停/继续、修改需求、验收、上线后问题、接手）；`/req-setup`（项目接入）；`/req-doctor`（体检） | `skills/req/`、`skills/req-setup/`、`skills/req-doctor/` |
+| 方法 | 需求访谈、需求说明、验收标准、结果说明 | `skills/requirement-interview/`、`skills/spec-writing/`、`skills/acceptance-criteria/`、`skills/result-report/` |
 | 原则 | 七条工作原则，聊天和引擎共用一份索引 | `principles/INDEX.md`、`skills/principle-*/` |
 | 引擎 | 第 3–11 步的流水线程序和步骤提示词 | `engine/` |
 
@@ -24,8 +24,8 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
 
 ```bash
-git clone --branch v1.0.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.0.0-beta.1
-cd ~/tools/req-kit/versions/1.0.0-beta.1
+git clone --branch 1.1.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.1.0-beta.1
+cd ~/tools/req-kit/versions/1.1.0-beta.1
 npm install
 node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/requirement-pipeline
 ```
@@ -41,7 +41,7 @@ node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/
 
 再运行一次 `node install.mjs`，然后 `node bin/req-doctor.mjs --no-project` 检查 daemon 和 agent，并按指南做冒烟测试。
 
-之后在任意项目的 Paseo 对话中输入 `/req 我想……`（Pi 中为 `/skill:req`）。
+每个项目建议先在项目根目录的对话中运行一次 `/req-setup`。之后在任意项目的 Paseo 对话中输入 `/req 我想……`（Pi 中为 `/skill:req`）。
 
 ## 文档
 

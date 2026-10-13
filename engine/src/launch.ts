@@ -3,6 +3,7 @@
 //             so the pipeline outlives the agent's shell and turn; returns in a second or two.
 //   --status: prints progress in plain language.
 //   --stop:   stops the pipeline and its current step agent; --resume continues later.
+//   --list:   lists every requirement in this repository's worktrees.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -11,6 +12,7 @@ import { parseLaunchArgs } from "./cli-args.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeStatus, stopPipeline } from "./control.js";
+import { describeFeatures, listFeatures } from "./features.js";
 import { normalizeFeatureDir, preflight } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import { ensurePipelineDir, hashFile, pipelineDir, readState, statePath } from "./state.js";
@@ -28,6 +30,11 @@ try {
   fail((error as Error).message);
 }
 const configPath = args.configPath ?? defaultConfigPath();
+
+if (args.list) {
+  console.log(describeFeatures(listFeatures(args.repo), args.repo));
+  process.exit(0);
+}
 
 if (args.status || args.stop) {
   let repo: string;

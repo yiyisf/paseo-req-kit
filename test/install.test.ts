@@ -207,3 +207,39 @@ test("体检（离线）：报告配置、项目分支和卡住或格式更新�
   assert.match(out, /结论：\d+ 项必须处理/);
   assert.equal(result.status, 1);
 });
+
+test("体检：验证方法缺失、未提交、可能过时、正常四种情况", () => {
+  const home = tempHome();
+  run(ROOT, home);
+  fillConfig(home);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-doctor-verify-"));
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  git("init", "-q", "-b", "feature/x");
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.REQ_KIT_HOME;
+  delete env.PASEO_AGENT_CWD;
+  const doctor = () =>
+    spawnSync(process.execPath, [path.join(ROOT, "bin", "req-doctor.mjs"), "--offline", "--repo", repo], { encoding: "utf8", env }).stdout;
+
+  assert.match(doctor(), /⚠ 没有验证方法说明[\s\S]*运行 \/req-setup/);
+
+  fs.mkdirSync(path.join(repo, ".requirement-pipeline"));
+  fs.writeFileSync(path.join(repo, ".requirement-pipeline", "verify.md"), "# 验证方法\n");
+  assert.match(doctor(), /⚠ 验证方法 \.requirement-pipeline\/verify\.md 还没有提交/);
+
+  fs.writeFileSync(path.join(repo, "package.json"), "{}");
+  git("add", "-A");
+  git("commit", "-q", "-m", "setup", "--date", "2026-10-01T10:00:00");
+  const committed = doctor();
+  assert.match(committed, /✓ 验证方法：\.requirement-pipeline\/verify\.md/);
+
+  fs.writeFileSync(path.join(repo, "package.json"), '{"scripts":{"test":"vitest"}}');
+  git("commit", "-q", "-am", "change scripts");
+  // Commit dates are second-resolution; make sure the build change is strictly later.
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "--no-edit", "--date", "2030-01-01T00:00:00"], {
+    cwd: repo,
+    env: { ...process.env, GIT_COMMITTER_DATE: "2030-01-01T00:00:00" },
+  });
+  assert.match(doctor(), /⚠ 验证方法可能过时：构建文件在 .* 改过/);
+});

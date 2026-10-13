@@ -16,6 +16,8 @@ export interface LaunchArgs {
   profile: ProfileName | null;
   status: boolean;
   stop: boolean;
+  /** --list: print every requirement in this repository's worktrees. */
+  list: boolean;
 }
 
 export class PreflightError extends Error {
@@ -130,7 +132,14 @@ export function preflight(
         : `这个需求已有运行记录（状态：${previous.status}）。从中断处继续请加 --resume，从头开始请加 --restart。`;
     throw new PreflightError(hint);
   } else if (previous.status === "completed") {
-    throw new PreflightError("这个需求的流水线已经完成，没有可继续的步骤。如需重新运行，请用 --restart。");
+    // A completed requirement is reopened by changing its spec (a requirement change, or
+    // problems found during acceptance). Without such a change there is nothing to continue.
+    if (currentSpecHash(specPath) === previous.specHash) {
+      throw new PreflightError(
+        "这个需求的流水线已经完成，没有可继续的步骤。要修改需求或修复验收中发现的问题，请先更新并重新确认 spec.md；要原样重跑一遍，请用 --restart。",
+      );
+    }
+    mode = { kind: "resume-from-design", previous, reason: "流水线完成后 spec.md 被修改过（需求变更或验收发现的问题），从方案设计重新开始" };
   } else if (previous.status === "waiting_for_business") {
     mode = { kind: "resume-from-design", previous, reason: "上次因等待需求方决定而停止，需求可能已更新，从方案设计重新开始" };
   } else if (currentSpecHash(specPath) !== previous.specHash) {

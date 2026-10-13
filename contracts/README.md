@@ -7,6 +7,8 @@
 | `docs/features/<目录>/spec.md` | [spec.md](spec.md) | `req-kit/spec@1` |
 | `docs/features/<目录>/.pipeline/state.json` | [state.md](state.md) | `version: 1` |
 | `docs/features/<目录>/.pipeline/results/<步骤>.json` | [result-file.md](result-file.md) | 按步骤固定字段 |
+| `decisions.tsv`、`changes.md`、`acceptance.md` 与需求总览 | [feature-files.md](feature-files.md) | 见各文件说明 |
+| `.requirement-pipeline/verify.md` | [verify.md](verify.md) | 自由格式，建议结构见文件 |
 
 格式版本的规则：
 

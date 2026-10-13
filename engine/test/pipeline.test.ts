@@ -290,6 +290,23 @@ test("失败后修改了 spec：--resume 改为从方案设计重新开始", () 
   assert.match(resumed.out, /spec\.md 在上次运行后被修改过/);
 });
 
+test("完成后修改需求或验收发现问题：spec 改过才能 --resume，并从方案设计重新开始", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  const unchanged = runMain(env, {}, ["--resume"]);
+  assert.equal(unchanged.code, 2);
+  assert.match(unchanged.out, /已经完成，没有可继续的步骤。要修改需求或修复验收中发现的问题，请先更新并重新确认 spec\.md/);
+
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n- **AC-1.2** 验收发现：验证码过期后应提示重新获取。\n");
+  const before = events(env).length;
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.equal(starts(env, before)[0], "design");
+  assert.match(resumed.out, /流水线完成后 spec\.md 被修改过/);
+  assert.equal(state(env).attempt, 2);
+  assert.equal(state(env).status, "completed");
+});
+
 test("结果文件缺失或格式错误时提醒 agent 补写；一直不写则判定失败", () => {
   const env = setup();
   const ok = runMain(env, {
@@ -745,6 +762,64 @@ test("工作原则：每个步骤的提示词都带上原则索引，位于通�
     // The index's own title is replaced by the section heading.
     assert.doesNotMatch(prompt, /# req-kit 工作原则索引/);
   }
+});
+
+test("验证方法 verify.md：只追加到构建、启动、测试相关的步骤", () => {
+  const env = setup({}, "已确认（2026-10-12）");
+  const dir = path.join(env.repo, ".requirement-pipeline");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "verify.md"), "单元测试：pnpm test\n启动：pnpm dev，等待 http://localhost:3000/health 返回 200");
+  const scenario = { steps: { "code_review-r1": { result: { verdict: "changes_required" } }, verify: { result: { result: "defects_found" } } } };
+  assert.equal(runMain(env, scenario).code, 0);
+  const prompts: Record<string, string> = Object.fromEntries(
+    events(env)
+      .filter((e) => e.type === "start")
+      .map((e): [string, string] => [e.key ?? "", e.prompt ?? ""]),
+  );
+  for (const key of ["implement", "review_fix-r1", "verify", "defect_fix-r1", "reverify-r1"]) {
+    assert.match(prompts[key] ?? "", /## 本项目的验证方法[\s\S]*pnpm dev，等待/, `${key} 缺少验证方法`);
+  }
+  for (const key of ["design", "design_review-r1", "code_review-r1", "report"]) {
+    assert.doesNotMatch(prompts[key] ?? "", /本项目的验证方法/, `${key} 不应包含验证方法`);
+  }
+});
+
+test("决策记录：每个步骤的提示词都说明 decisions.tsv 的写法；报告汇总需要人确认的决定", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  const starts = events(env).filter((e) => e.type === "start");
+  for (const e of starts) assert.match(e.prompt ?? "", /decisions\.tsv[\s\S]*time\tstep\tref\tdecision\talternatives\treason\tkind\tneeds_human/);
+  const report = starts.find((e) => e.key === "report")?.prompt ?? "";
+  assert.match(report, /需要你确认的决定[\s\S]*needs_human` 为 `yes`/);
+});
+
+test("--list：列出所有工作区中的需求及其阶段，同一需求取最近更新的一份", () => {
+  const env = setup();
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: env.repo });
+  const other = `${env.repo}-wt`;
+  execFileSync("git", ["worktree", "add", "-q", "-b", "feature/20261013-export", other], { cwd: env.repo });
+  const add = (root: string, name: string, spec: string, state?: object, acceptance?: string) => {
+    const dir = path.join(root, "docs", "features", name);
+    fs.mkdirSync(path.join(dir, ".pipeline"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "spec.md"), spec);
+    if (state) fs.writeFileSync(path.join(dir, ".pipeline", "state.json"), JSON.stringify(state));
+    if (acceptance) fs.writeFileSync(path.join(dir, "acceptance.md"), acceptance);
+  };
+  add(other, "20261013-export", "# 订单导出\n\n- 状态：已确认（2026-10-13）\n- 档位：快速\n- 类型：小改动\n- 版本：2\n", { status: "completed", outcome: "completed" });
+  add(other, "20261014-draft", "# 草稿需求\n\n- 状态：草稿\n");
+  add(env.repo, "20261011-old", "# 旧需求\n\n- 状态：已确认（2026-10-11）\n", { status: "completed", outcome: "completed" }, "# 验收记录\n\n- 验收结论：通过（2026-10-12）\n");
+  add(env.repo, "20261010-stuck", "# 卡住的需求\n\n- 状态：已确认（2026-10-10）\n", { status: "running", pid: 2 ** 22 + 4321 });
+
+  const result = spawnSync(process.execPath, [NODE_LAUNCHER, "--list", "--repo", env.repo], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const out = result.stdout;
+  assert.match(out, /共 5 个需求/);
+  assert.match(out, /订单导出（docs\/features\/20261013-export）\n   待验收；小改动；快速档；需求第 2 版/);
+  assert.match(out, /草稿需求[\s\S]*?对齐中/);
+  assert.match(out, /旧需求[\s\S]*?已验收/);
+  assert.match(out, /卡住的需求[\s\S]*?已中断（可继续）/);
+  assert.match(out, /短信验证码登录[\s\S]*?已确认，未开始开发[\s\S]*?位置：当前工作区，分支 feature\/20261012-sms-login/);
+  assert.match(out, new RegExp(`位置：工作区 ${other.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}，分支 feature/20261013-export`));
 });
 
 test("prompts.local：同名文件替换随工具发布的提示词", () => {

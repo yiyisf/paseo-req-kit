@@ -5,7 +5,7 @@
 // Sections: installation (delegated to install.mjs --check), configuration,
 // Paseo daemon, and the current project with its pipelines.
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -123,6 +123,59 @@ async function daemon(config: PipelineConfig | null, configPath: string): Promis
   }
 }
 
+/** Files whose change usually means the build, test or start commands changed. */
+const BUILD_FILES = [
+  "package.json",
+  "pnpm-workspace.yaml",
+  "Makefile",
+  "justfile",
+  "docker-compose.yml",
+  "compose.yaml",
+  "pyproject.toml",
+  "go.mod",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "Cargo.toml",
+];
+
+function lastCommitTime(repo: string, files: string[]): number | null {
+  try {
+    const out = execFileSync("git", ["log", "-1", "--format=%ct", "--", ...files], {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out ? Number(out) * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function verifyInstructions(repo: string, isRepo: boolean): void {
+  const rel = `${PROJECT_DIR}/verify.md`;
+  const file = path.join(repo, PROJECT_DIR, "verify.md");
+  if (!fs.existsSync(file)) {
+    report("warn", "没有验证方法说明，服务启动和功能验证步骤需要自己摸索，耗时更长、结果更不稳定", "在项目根目录的对话中运行 /req-setup");
+    return;
+  }
+  if (!isRepo) {
+    report("ok", `验证方法：${rel}`);
+    return;
+  }
+  const verifyTime = lastCommitTime(repo, [path.join(PROJECT_DIR, "verify.md")]);
+  const buildFiles = BUILD_FILES.filter((f) => fs.existsSync(path.join(repo, f)));
+  const buildTime = buildFiles.length > 0 ? lastCommitTime(repo, buildFiles) : null;
+  if (verifyTime === null) {
+    report("warn", `验证方法 ${rel} 还没有提交，其他工作区看不到它`, "确认内容后提交，并合并到主分支");
+  } else if (buildTime !== null && buildTime > verifyTime) {
+    const day = (ms: number) => new Date(ms).toLocaleDateString("zh-CN");
+    report("warn", `验证方法可能过时：构建文件在 ${day(buildTime)} 改过，验证方法最后更新于 ${day(verifyTime)}`, "运行 /req-setup 更新，或确认内容仍然准确");
+  } else {
+    report("ok", `验证方法：${rel}`);
+  }
+}
+
 interface RawState {
   version?: number;
   status?: string;
@@ -146,7 +199,8 @@ function project(repo: string): void {
   if (fs.existsSync(projectConfig)) report("ok", `项目配置：${PROJECT_CONFIG_FILE}`);
   const notes = path.join(repo, PROJECT_DIR, "project-notes.md");
   if (fs.existsSync(notes)) report("ok", `项目说明：${PROJECT_DIR}/project-notes.md`);
-  else report("warn", "没有项目说明（包管理工具、测试命令、不能改的目录等），步骤 agent 需要自己摸索", `在 ${PROJECT_DIR}/project-notes.md 中写明本项目的约定`);
+  else report("warn", "没有项目说明（包管理工具、不能改的目录、提交格式等），步骤 agent 需要自己摸索", "在项目根目录的对话中运行 /req-setup");
+  verifyInstructions(repo, git.isRepo);
   if (!fs.existsSync(path.join(repo, "GLOSSARY.md")) && fs.existsSync(path.join(repo, "CONTEXT.md"))) {
     report("ok", "术语表为旧名 CONTEXT.md：会继续读取，新术语写入 GLOSSARY.md");
   }

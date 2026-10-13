@@ -44,3 +44,15 @@ test("原则索引中的七条原则都有对应的 skill", () => {
   assert.equal(names.length, 7);
   for (const name of names) assert.ok(fs.existsSync(path.join(SKILLS, name, "SKILL.md")), `缺少 ${name}`);
 });
+
+test("/req 的每本手册都有\"步骤\"一节，且都在入口的路由表中", () => {
+  const dir = path.join(SKILLS, "req", "playbooks");
+  const entry = fs.readFileSync(path.join(SKILLS, "req", "SKILL.md"), "utf8");
+  const playbooks = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
+  assert.equal(playbooks.length, 7);
+  for (const file of playbooks) {
+    const text = fs.readFileSync(path.join(dir, file), "utf8");
+    assert.match(text, /^## 步骤\n\n1\. /m, `${file} 缺少"步骤"一节`);
+    assert.ok(entry.includes(`skills/req/playbooks/${file}`), `${file} 不在 /req 的路由表中`);
+  }
+});
