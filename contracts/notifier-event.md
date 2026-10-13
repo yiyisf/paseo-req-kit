@@ -19,7 +19,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | `module` | 通知模块的路径。相对路径相对于声明它的配置文件；`~/` 表示用户目录。 |
-| `events` | 要接收的事件类型，省略时接收全部。 |
+| `events` | 要接收的事件类型，省略时接收全部（包括以后新增的类型）。 |
 | `options` | 原样传给模块的第二个参数。密钥不要直接写在这里，写环境变量的名字，由模块读取。 |
 
 ## 模块
@@ -62,6 +62,7 @@ export default async function notify(event, options) { /* 发送 */ }
 | `permission` | 步骤 agent 在等待权限批准 | `stepTitle`、`agentTitle`、`requests`（字符串数组） |
 | `failed` | 流水线因错误中断（已自动重试过的临时错误除外） | `stepTitle`、`reason`、`logPath`、`resumeCommand` |
 | `completed` | 流水线结束，报告已生成 | `outcome`（`completed`、`completed_with_issues`、`not_completed`）、`summary`、`reportPath` |
+| `digest` | `req digest --notify`（或由 `req digest --schedule` 创建的 Paseo 定时任务）发送项目的需求总览，1.6.0 起。`feature.title` 为"<项目> 需求总览"，`text` 是完整的多行总览 | `features`：每个需求的 `name`、`title`、`stage`、`branch`、`updatedAt`、`usage` |
 
 ## 兼容性
 

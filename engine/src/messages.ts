@@ -10,6 +10,8 @@ export function blockedMessage(input: {
   featureDir: string;
   questions: string[];
   resumeCommand: string;
+  /** A reminder is scheduled after this many hours without an answer. */
+  reminderHours?: number | null;
 }): string {
   const list = input.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
   return [
@@ -28,6 +30,7 @@ export function blockedMessage(input: {
     "4. 用户确认后执行下面的命令，流水线会从方案设计开始，在已有方案的基础上处理这些回答：",
     "",
     input.resumeCommand,
+    ...(input.reminderHours ? ["", `（如果 ${input.reminderHours} 小时内还没有回答，会在这个对话里提醒一次。）`] : []),
   ].join("\n");
 }
 
@@ -52,6 +55,8 @@ export function failedMessage(input: {
   reason: string;
   logPath: string;
   resumeCommand: string;
+  /** An automatic continuation is scheduled at this time (text). */
+  autoResumeAt?: string | null;
 }): string {
   return [
     HEADER,
@@ -61,7 +66,12 @@ export function failedMessage(input: {
     "",
     "已完成的步骤会保留。请告诉用户开发暂时中断，并说明原因。用户可以先看日志判断原因；涉及环境、配置或代码的问题请开发同事处理。",
     `日志：${input.logPath}`,
-    "问题解决后，执行下面的命令可以从中断的步骤继续：",
+    ...(input.autoResumeAt
+      ? [
+          `这是临时错误（例如限流或网络中断），已预约在 ${input.autoResumeAt} 自动继续（Paseo 定时任务，到时会在这个对话里执行继续命令）。请告诉用户这一点；用户不想自动继续时，执行暂停命令即可取消。`,
+          "也可以现在就执行下面的命令继续：",
+        ]
+      : ["问题解决后，执行下面的命令可以从中断的步骤继续："]),
     "",
     input.resumeCommand,
   ].join("\n");
@@ -140,5 +150,74 @@ export function specReviewFailedMessage(input: { featureDir: string; reason: str
     `功能目录：${input.featureDir}`,
     `需求说明的独立审阅没有完成：${input.reason}`,
     "这不影响继续：请告诉用户审阅没能完成，然后照常请用户确认需求说明。",
+  ].join("\n");
+}
+
+/** Sent by a Paseo schedule into the chat when a decision has been waited for a long time. */
+export function waitingReminderMessage(input: { featureDir: string; hours: number; questions: string[]; resumeCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的提醒，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `这个需求在等需求方回答方案审核提出的问题，已经超过 ${input.hours} 小时，开发一直暂停着：`,
+    ...input.questions.map((q, i) => `${i + 1}. ${q}`),
+    "",
+    "请先执行查看进度的命令确认：仍然是\"等待需求方决定\"时，在用户下次说话时提醒他这几个问题，并按之前的方式逐个询问；用户已经回答、开发已经继续或停止时，忽略这条提醒，不要打扰用户。",
+    `回答完、更新需求说明后，继续的命令是：${input.resumeCommand}`,
+  ].join("\n");
+}
+
+/** Sent by a Paseo schedule into the chat to continue after a transient error. */
+export function autoResumePrompt(input: { featureDir: string; reason: string; statusCommand: string; resumeCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的自动继续，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `开发流水线之前因为临时错误中断：${input.reason}`,
+    "",
+    "请这样处理：",
+    `1. 先执行查看进度的命令：${input.statusCommand}`,
+    "2. 仍然是\"已中断，可以继续\"时，执行下面的继续命令，然后用一句话告诉用户已经自动继续：",
+    `   ${input.resumeCommand}`,
+    "3. 其他情况（已经在运行、已完成、用户已经手动处理过）：什么也不做，也不要回复用户。",
+  ].join("\n");
+}
+
+/** Sent by a Paseo schedule into the chat while a pipeline runs (watchdogMinutes). */
+export function watchdogPrompt(input: { featureDir: string; statusCommand: string; resumeCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条定时检查，不是用户发的。",
+    "",
+    `请执行查看进度的命令：${input.statusCommand}`,
+    `- 输出中的状态是"已中断（后台进程意外退出，可以继续）"：执行继续命令 ${input.resumeCommand}，然后用一句话告诉用户开发在意外中断后已经自动继续。`,
+    "- 其他任何情况：什么也不做，不要回复用户，不要打扰用户。",
+    `（功能目录：${input.featureDir}。这个检查在流水线结束后会自动取消。）`,
+  ].join("\n");
+}
+
+export function queuedMessage(input: { featureDir: string; max: number; holders: Array<{ featureDir: string; repo: string }> }): string {
+  return [
+    HEADER,
+    "",
+    `功能目录：${input.featureDir}`,
+    `这台机器同时最多运行 ${input.max} 条开发流水线，现在已经满了，这个需求在排队，轮到时会自动开始并通知这个对话：`,
+    ...input.holders.map((h) => `- 正在运行：${h.featureDir}（${h.repo}）`),
+    "",
+    "请把这一点告诉用户。不想等的话，可以执行暂停命令取消排队。",
+  ].join("\n");
+}
+
+export function dequeuedMessage(input: { featureDir: string; waitedMinutes: number }): string {
+  return [HEADER, "", `功能目录：${input.featureDir}`, `排队结束（等了约 ${Math.max(1, Math.round(input.waitedMinutes))} 分钟），开发已经开始。请用一句话告诉用户。`].join("\n");
+}
+
+export function scheduledStartPrompt(input: { featureDir: string; command: string }): string {
+  return [
+    "【需求开发流水线通知】这是用户之前预约的开发开始时间，不是用户现在发的消息。",
+    "",
+    `功能目录：${input.featureDir}`,
+    "请执行下面的启动命令，然后用一句话告诉用户预约的开发已经开始（输出\"未启动\"时，按 /req 中的说明处理并告诉用户原因）：",
+    "",
+    input.command,
   ].join("\n");
 }

@@ -44,6 +44,8 @@ export interface FakeScenario {
   activity?: ActivityItem[] | null;
   capabilities?: { paseoTools: boolean; browser: boolean } | null;
   setup?: { status: "completed" | "failed" | "none" | "timeout"; error: string | null };
+  /** Paseo cannot schedule (older daemon). */
+  noSchedules?: boolean;
 }
 
 const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
@@ -93,6 +95,7 @@ export const createRuntime: RuntimeFactory = async () => {
   const scenarioFile = process.env.FAKE_SCENARIO;
   const scenario: FakeScenario = scenarioFile ? JSON.parse(fs.readFileSync(scenarioFile, "utf8")) : {};
   let counter = 0;
+  let scheduleCounter = 0;
   const startsByKey = new Map<string, number>();
 
   const runtime: AgentRuntime = {
@@ -259,6 +262,22 @@ export const createRuntime: RuntimeFactory = async () => {
     },
     async capabilities() {
       return scenario.capabilities ?? null;
+    },
+    async scheduleMessage(input) {
+      if (scenario.noSchedules) return null;
+      scheduleCounter += 1;
+      const id = `fake-schedule-${process.pid}-${scheduleCounter}`;
+      record({ type: "scheduleMessage", id, agentId: input.agentId, name: input.name, prompt: input.prompt, runAt: input.at?.toISOString() ?? null, cron: input.cron ?? null });
+      return id;
+    },
+    async scheduleNewAgent(input) {
+      scheduleCounter += 1;
+      const id = `fake-schedule-${process.pid}-${scheduleCounter}`;
+      record({ type: "scheduleNewAgent", id, name: input.name, prompt: input.prompt, cron: input.cron, cwd: input.cwd, provider: input.profile.provider ?? null });
+      return id;
+    },
+    async cancelSchedule(id) {
+      record({ type: "cancelSchedule", id });
     },
     async close() {
       record({ type: "close" });

@@ -62,10 +62,16 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
 
   const lines = [
     `需求：${featureDir}（档位：${PROFILE_LABELS[state.profile ?? "standard"]}）`,
-    `状态：${statusText}`,
+    `状态：${running && state.queuedSince ? `排队中（本机同时运行的流水线已达上限，自 ${new Date(state.queuedSince).toLocaleString("zh-CN", { hour12: false })} 起等待，轮到时自动开始）` : statusText}`,
     `开始时间：${new Date(state.startedAt).toLocaleString("zh-CN", { hour12: false })}，距今 ${duration(state.startedAt, now)}`,
   ];
   if (state.stopReason && !running) lines.push(`原因：${state.stopReason}`);
+  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查" } as const;
+  for (const s of state.schedules ?? []) {
+    if (s.kind === "watchdog" && !running) continue;
+    const when = s.at ? `${new Date(s.at).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} ` : "";
+    lines.push(`已预约：${when}${KIND_TEXT[s.kind]}（Paseo 定时任务，执行暂停命令可以取消）`);
+  }
 
   const records = state.history.filter((h) => h.attempt === state.attempt);
   const current = records.find((h) => h.outcome === "running");
@@ -99,11 +105,34 @@ export interface StopInput {
 }
 
 /** Stops a running pipeline and its current step agent. Returns the message for the user. */
+/** Cancels the Paseo schedules a run left (reminder, automatic continuation, watchdog). */
+async function cancelSchedules(input: StopInput, state: PipelineState): Promise<number> {
+  const schedules = state.schedules ?? [];
+  if (schedules.length === 0) return 0;
+  try {
+    const runtime = await input.createRuntime({ config: input.config, log: input.log });
+    for (const s of schedules) await runtime.cancelSchedule(s.id).catch((error: Error) => input.log(`无法取消定时任务 ${s.id}：${error.message}`));
+    await runtime.close().catch(() => undefined);
+  } catch (error) {
+    input.log(`无法连接 Paseo 取消定时任务：${(error as Error).message}`);
+    return 0;
+  }
+  const latest = readState(input.statePath) ?? state;
+  latest.schedules = [];
+  writeState(input.statePath, latest);
+  return schedules.length;
+}
+
 export async function stopPipeline(input: StopInput): Promise<{ stopped: boolean; message: string }> {
   const state = readState(input.statePath);
   if (!state) return { stopped: false, message: `需求 ${input.featureDir} 还没有启动过开发流水线。` };
+  const cancelled = await cancelSchedules(input, state);
+  const cancelledText = cancelled > 0 ? `已取消预约的提醒或自动继续（${cancelled} 个）。` : "";
   if (state.status !== "running") {
-    return { stopped: false, message: `流水线当前没有在运行（${describeStatus(state, input.featureDir).split("\n")[1]}）。` };
+    return {
+      stopped: cancelled > 0,
+      message: `${cancelledText}流水线当前没有在运行（${describeStatus(state, input.featureDir).split("\n")[1]}）。`,
+    };
   }
 
   const wasAlive = isAlive(state.pid);

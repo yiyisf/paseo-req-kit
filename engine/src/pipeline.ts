@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AgentProfile, PROFILE_LABELS, type PipelineConfig, type ReviewPanelMember } from "./config.js";
 import {
+  autoResumePrompt,
   blockedMessage,
+  waitingReminderMessage,
   completedMessage,
   failedMessage,
   milestoneMessage,
@@ -27,6 +29,8 @@ export interface PipelineContext {
   prompts: PromptLocations;
   logPath: string;
   resumeCommand: string;
+  /** Command to see progress; used in prompts that Paseo schedules send to the chat. */
+  statusCommand?: string;
   log: (message: string) => void;
   sleep: (ms: number) => Promise<void>;
   /** Paseo-managed services of this run (filled in by the pipeline). */
@@ -506,6 +510,65 @@ async function stopManagedServices(ctx: PipelineContext): Promise<void> {
   ctx.log(`已停止 Paseo 管理的服务：${started.join("、")}`);
 }
 
+/** A Paseo schedule that reminds the chat about unanswered questions; returns the hours, or null. */
+async function scheduleReminder(ctx: PipelineContext, questions: string[]): Promise<number | null> {
+  const hours = ctx.config.waitingReminderHours;
+  const origin = ctx.state.originAgentId;
+  if (hours <= 0 || !origin) return null;
+  const at = new Date(Date.now() + hours * 3600_000);
+  try {
+    const id = await ctx.runtime.scheduleMessage({
+      agentId: origin,
+      at,
+      name: `req-kit 提醒：${featureName(ctx.featureDir)} 等待回答`,
+      prompt: waitingReminderMessage({ featureDir: shownFeatureDir(ctx), hours, questions, resumeCommand: ctx.resumeCommand }),
+    });
+    if (!id) return null;
+    ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "reminder", at: at.toISOString() }];
+    save(ctx);
+    ctx.log(`已预约 ${hours} 小时后的提醒（Paseo 定时任务 ${id}）`);
+    return hours;
+  } catch (error) {
+    ctx.log(`预约提醒失败：${(error as Error).message}`);
+    return null;
+  }
+}
+
+/** A Paseo schedule that has the chat continue the run later; returns the time as text, or null. */
+async function scheduleAutoResume(ctx: PipelineContext, reason: string): Promise<string | null> {
+  const minutes = ctx.config.autoResumeMinutes;
+  const origin = ctx.state.originAgentId;
+  if (minutes <= 0 || !origin) return null;
+  const used = ctx.state.autoResumes?.attempt === ctx.state.attempt ? ctx.state.autoResumes.count : 0;
+  if (used >= ctx.config.autoResumeMax) {
+    ctx.log(`这次尝试已经自动继续过 ${used} 次，不再预约`);
+    return null;
+  }
+  const at = new Date(Date.now() + minutes * 60_000);
+  try {
+    const id = await ctx.runtime.scheduleMessage({
+      agentId: origin,
+      at,
+      name: `req-kit 自动继续：${featureName(ctx.featureDir)}`,
+      prompt: autoResumePrompt({
+        featureDir: shownFeatureDir(ctx),
+        reason: reason.slice(0, 300),
+        statusCommand: ctx.statusCommand ?? ctx.resumeCommand.replace(/ --resume$/, " --status"),
+        resumeCommand: ctx.resumeCommand,
+      }),
+    });
+    if (!id) return null;
+    ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "auto-resume", at: at.toISOString() }];
+    ctx.state.autoResumes = { attempt: ctx.state.attempt, count: used + 1 };
+    save(ctx);
+    ctx.log(`已预约 ${minutes} 分钟后自动继续（Paseo 定时任务 ${id}）`);
+    return at.toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch (error) {
+    ctx.log(`预约自动继续失败：${(error as Error).message}`);
+    return null;
+  }
+}
+
 /** Warns once at the start when a provider's subscription is nearly used up. Never blocks. */
 async function checkQuota(ctx: PipelineContext): Promise<void> {
   const threshold = ctx.config.quotaWarnPercent;
@@ -790,9 +853,10 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       ctx.state.status = "waiting_for_business";
       ctx.state.stopReason = `方案审核需要需求方决定：${error.questions.join("；")}`;
       save(ctx);
+      const reminderHours = await scheduleReminder(ctx, error.questions);
       await notifyOrigin(
         ctx,
-        blockedMessage({ featureDir: shownFeatureDir(ctx), questions: error.questions, resumeCommand: ctx.resumeCommand }),
+        blockedMessage({ featureDir: shownFeatureDir(ctx), questions: error.questions, resumeCommand: ctx.resumeCommand, reminderHours }),
       );
       await notifyExternal(ctx, "blocked", `方案审核发现 ${error.questions.length} 个需要需求方决定的问题，流水线已暂停，请到发起的对话中回答。`, {
         questions: error.questions,
@@ -804,6 +868,8 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     ctx.state.status = "failed";
     ctx.state.stopReason = `${stepTitle}：${(error as Error).message}`;
     save(ctx);
+    const autoResumeAt =
+      error instanceof StepFailure && isTransientError((error as Error).message) ? await scheduleAutoResume(ctx, (error as Error).message) : null;
     await notifyOrigin(
       ctx,
       failedMessage({
@@ -811,6 +877,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         reason: (error as Error).message,
         logPath: ctx.logPath,
         resumeCommand: ctx.resumeCommand,
+        autoResumeAt,
       }),
     );
     await notifyExternal(ctx, "failed", `开发流水线在「${stepTitle}」步骤中断：${(error as Error).message}`, {

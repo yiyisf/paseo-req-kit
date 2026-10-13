@@ -84,6 +84,25 @@ export interface ActivityItem {
   text: string;
 }
 
+export interface ScheduledMessage {
+  agentId: string;
+  name: string;
+  prompt: string;
+  /** One run at this time; or `cron` for a recurring one. */
+  at?: Date;
+  cron?: string;
+  /** Recurring schedules stop by themselves at this time. */
+  expiresAt?: Date;
+}
+
+export interface ScheduledAgent {
+  name: string;
+  prompt: string;
+  cron: string;
+  cwd: string;
+  profile: import("./config.js").AgentProfile;
+}
+
 export interface AgentRuntime {
   /**
    * Checks that the chat which launched the pipeline exists and works in `cwd`.
@@ -116,6 +135,15 @@ export interface AgentRuntime {
   recentActivity(agentId: string, limit: number): Promise<ActivityItem[] | null>;
   /** Which Paseo tools step agents get (Settings → Agents); null when unknown. */
   capabilities(): Promise<{ paseoTools: boolean; browser: boolean } | null>;
+  /**
+   * Paseo schedule that sends `prompt` into an existing agent's conversation (the chat):
+   * once at `at`, or on `cron` (5 fields, local time zone). Returns the schedule ID, or
+   * null when this Paseo cannot schedule.
+   */
+  scheduleMessage(input: ScheduledMessage): Promise<string | null>;
+  /** Paseo schedule that starts a fresh agent on `cron` (e.g. to run a command weekly). */
+  scheduleNewAgent(input: ScheduledAgent): Promise<string | null>;
+  cancelSchedule(id: string): Promise<void>;
   close(): Promise<void>;
 }
 

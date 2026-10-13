@@ -29,13 +29,15 @@ export default async function notify(event, options) {
     permission: "等待批准",
     failed: "开发中断",
     completed: "开发完成",
-  }[event.type];
+    digest: "需求总览",
+  }[event.type] ?? event.type;
 
   // 一条通用的纯文本消息，大多数 IM 机器人都能直接使用。
-  const lines = [`【req-kit · ${title}】${event.feature.title}`, event.text];
+  // 需求总览（digest）的 text 已经是完整的多行文字。
+  const lines = event.type === "digest" ? [event.text] : [`【req-kit · ${title}】${event.feature.title}`, event.text];
   if (event.type === "completed" && event.details.summary) lines.push("", String(event.details.summary));
   if (event.type === "blocked") lines.push("", ...event.details.questions.map((q, i) => `${i + 1}. ${q}`));
-  lines.push("", `需求目录：${event.feature.dir}${event.branch ? `（分支 ${event.branch}）` : ""}`);
+  if (event.type !== "digest") lines.push("", `需求目录：${event.feature.dir}${event.branch ? `（分支 ${event.branch}）` : ""}`);
   const text = lines.join("\n");
 
   // TODO：按企业内部 IM 的接口实现发送。例如一个接收 JSON 的群机器人：

@@ -118,6 +118,18 @@ export interface PipelineConfig {
   browserVerify: "auto" | "off";
   /** When /req offers the independent spec review before confirmation: "standard" (standard profile only), "always", "off". */
   specReview: "standard" | "always" | "off";
+  /** Machine-wide limit on pipelines running at once; later ones queue. 0: no limit. */
+  maxConcurrentPipelines: number;
+  /** How often a queued pipeline checks for a free slot. */
+  queuePollSeconds: number;
+  /** Remind the chat (a Paseo schedule) when a decision has been waited for this long; 0: never. */
+  waitingReminderHours: number;
+  /** After a stop caused by a transient error, continue automatically after this many minutes (through the chat); 0: never. */
+  autoResumeMinutes: number;
+  /** How many automatic continuations per attempt. */
+  autoResumeMax: number;
+  /** Ask the chat to check on a running pipeline this often and continue it if the process died; 0: off. */
+  watchdogMinutes: number;
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -165,6 +177,12 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   designProposals: { enabled: false, profiles: ["standard"], members: [] },
   browserVerify: "auto",
   specReview: "standard",
+  maxConcurrentPipelines: 0,
+  queuePollSeconds: 60,
+  waitingReminderHours: 24,
+  autoResumeMinutes: 30,
+  autoResumeMax: 2,
+  watchdogMinutes: 0,
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -313,7 +331,10 @@ function validate(config: PipelineConfig): void {
   if (typeof config.quotaWarnPercent !== "number" || config.quotaWarnPercent < 0 || config.quotaWarnPercent > 100) {
     throw new ConfigError("quotaWarnPercent 必须是 0 到 100 之间的数（0 表示不提醒）");
   }
-  for (const key of ["waitChunkSeconds", "permissionPollSeconds", "serviceReadySeconds"] as const) {
+  for (const key of ["maxConcurrentPipelines", "waitingReminderHours", "autoResumeMinutes", "autoResumeMax", "watchdogMinutes"] as const) {
+    if (typeof config[key] !== "number" || config[key] < 0) throw new ConfigError(`${key} 必须是不小于 0 的数（0 表示关闭）`);
+  }
+  for (const key of ["waitChunkSeconds", "permissionPollSeconds", "serviceReadySeconds", "queuePollSeconds"] as const) {
     if (typeof config[key] !== "number" || config[key] <= 0) throw new ConfigError(`${key} 必须是正数`);
   }
 }

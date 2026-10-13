@@ -30,6 +30,8 @@ export interface LaunchArgs {
   sourceRepo: string | null;
   /** Paseo workspace of that worktree. */
   workspaceId: string | null;
+  /** --at: schedule the start for later instead of starting now. */
+  at: string | null;
 }
 
 export class PreflightError extends Error {

@@ -405,3 +405,48 @@ test("体检：paseo.json 的服务没有用 $PASEO_PORT、没有提交时提醒
   assert.match(out, /⚠ paseo\.json 中的服务 web 没有使用 \$PASEO_PORT/);
   assert.match(out, /⚠ paseo\.json 还没有提交/);
 });
+
+test("req digest：打印项目的需求总览；--notify 发给外部通知；--schedule 让 Paseo 按时间表发送", () => {
+  const home = tempHome();
+  run(ROOT, home);
+  fillConfig(home);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-digest-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  const feature = path.join(repo, "docs", "features", "20261012-sms-login");
+  fs.mkdirSync(feature, { recursive: true });
+  fs.writeFileSync(path.join(feature, "spec.md"), "# 短信验证码登录\n\n- 状态：已确认（2026-10-12）\n");
+  const out = path.join(home, "digest.json");
+  fs.mkdirSync(path.join(home, ".req-kit", "notifiers"));
+  fs.writeFileSync(path.join(home, ".req-kit", "notifiers", "capture.mjs"), `import fs from "node:fs";\nexport default (event) => fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify(event));\n`);
+  const configFile = path.join(home, ".req-kit", "config.json");
+  const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  config.notifiers = [{ module: "notifiers/capture.mjs", events: ["digest"] }];
+  fs.writeFileSync(configFile, JSON.stringify(config));
+  const events = path.join(home, "events.jsonl");
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"),
+    FAKE_EVENTS: events,
+  };
+  delete env.REQ_KIT_HOME;
+  delete env.FAKE_SCENARIO;
+  const digest = (...args: string[]) =>
+    spawnSync(process.execPath, [path.join(ROOT, "bin", "req.mjs"), "digest", "--repo", repo, ...args], { encoding: "utf8", env });
+
+  assert.match(digest().stdout, /【req-kit 需求总览】req-kit-digest-\w+[\s\S]*共 1 个需求：对齐中 \/ 未开始 1[\s\S]*短信验证码登录/);
+  assert.equal(digest("--notify").status, 0);
+  const event = JSON.parse(fs.readFileSync(out, "utf8"));
+  assert.equal(event.type, "digest");
+  assert.equal(event.details.features[0].stage, "已确认，未开始开发");
+
+  const scheduled = digest("--schedule", "0 9 * * 1");
+  assert.equal(scheduled.status, 0, scheduled.stderr);
+  assert.match(scheduled.stdout, /已创建定时任务 fake-schedule-\d+-1/);
+  const created = fs.readFileSync(events, "utf8").trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "scheduleNewAgent");
+  assert.equal(created.type, "scheduleNewAgent");
+  assert.equal(created.cron, "0 9 * * 1");
+  assert.equal(fs.realpathSync(created.cwd), fs.realpathSync(repo));
+  assert.match(created.prompt, /digest --notify --repo/);
+});

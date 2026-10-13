@@ -66,6 +66,7 @@ metadata:
 | 需求说明审阅 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --spec-review` |
 | 启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录>` |
 | 启动（自动新建工作区） | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --worktree` |
+| 预约启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --at <时间>`（时间写 `22:00`、`明天 8:30`、`2026-10-14 08:30` 或 `+2h`；可以和 `--worktree` 一起用） |
 | 查看进度 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --status` |
 | 暂停 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --stop` |
 | 继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --resume` |
@@ -86,4 +87,7 @@ metadata:
    - **需要需求方决定**：用 `requirement-interview` 的方式（`{{REQ_KIT_ROOT}}/skills/requirement-interview/SKILL.md`）逐个提问，把答案记入 `alignment.md` 并更新 `spec.md`（版本加 1，在 `changes.md` 中记一节，原因写"方案审核提出的问题"），请用户再次确认，然后执行通知中给出的继续命令。
    - **等待权限批准**：告诉用户打开通知中提到的 agent 处理批准。
    - **流水线中断**：说明发生了什么、日志在哪里。用户能处理的（例如环境没启动）告诉他怎么做；问题解决后执行通知中给出的继续命令。涉及配置或代码的，请开发同事处理。
+   - **需求说明审阅完成**：按通知中的做法核对问题、逐个问用户，再请用户确认需求说明。
+   - **排队 / 排队结束**：一句话转告。
+   - **预约的提醒、自动继续、定时检查、预约的开始时间**（由 Paseo 定时任务发来，开头写着"预约的""定时检查"）：严格按消息中的步骤执行命令；消息说"不要打扰用户"的情况就不要回复用户。
    - **流水线结束**：转告结论和摘要，读功能目录中的 `report.md`，告诉用户"需要你做的事"和"需要你确认的决定"有几条，并问是否现在开始验收（`accept.md`）。用户追问细节时，以 `report.md` 和功能目录中的其他文件为准回答。

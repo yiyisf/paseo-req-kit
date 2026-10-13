@@ -13,6 +13,7 @@ export const USAGE = `用法：
   start-pipeline --list                           列出这个项目所有工作区中的需求
   start-pipeline --feature <功能目录> --spec-review  确认前请另一个模型独立审阅需求说明草稿（后台进行，结果发回对话）
   start-pipeline --feature <功能目录> --worktree     为这个需求新建 Paseo worktree 工作区并在那里开发（对话目录不变）
+  start-pipeline --feature <功能目录> --at 22:00     预约在指定时间开始（也可以写"明天 8:30""2026-10-14 08:30""+2h"）
 
   其他选项：[--repo <仓库目录>] [--origin-agent <agent ID>] [--config <配置文件>]
 
@@ -45,6 +46,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       worktree: { type: "boolean", default: false },
       "source-repo": { type: "string" },
       "workspace-id": { type: "string" },
+      at: { type: "string" },
       help: { type: "boolean", default: false },
     },
     strict: true,
@@ -62,6 +64,9 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
   }
   if ([values.status, values.stop, values.resume, values.restart, values["spec-review"]].filter(Boolean).length > 1) {
     throw new Error("--status、--stop、--resume、--restart、--spec-review 一次只能用一个");
+  }
+  if (values.at && (values.status || values.stop || values["spec-review"] || values.resume)) {
+    throw new Error("--at 只用于启动（预约开始时间）");
   }
   if (values.worktree && (values.status || values.stop || values["spec-review"] || values.resume)) {
     throw new Error("--worktree 只用于第一次启动（或 --restart）");
@@ -84,6 +89,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     worktree: values.worktree ?? false,
     sourceRepo: values["source-repo"] ? path.resolve(values["source-repo"]) : null,
     workspaceId: values["workspace-id"] ?? null,
+    at: values.at ?? null,
   };
 }
 
@@ -97,6 +103,20 @@ function quote(value: string): string {
  * named: run from a chat, that chat becomes the origin; run elsewhere, the previous
  * origin is kept.
  */
+/** The command a chat agent runs to see progress (same shape as resumeCommand). */
+export function statusCommand(args: { repo: string; featureDir: string; configPath: string | null }): string {
+  return resumeCommand(args).replace(/ --resume$/, " --status");
+}
+
+/** The full start command, for a start scheduled for later (--at). */
+export function startCommand(args: { repo: string; featureDir: string; configPath: string | null; profile: string | null; worktree: boolean }): string {
+  const parts = ["node", LAUNCHER, "--repo", args.repo, "--feature", args.featureDir];
+  if (args.configPath) parts.push("--config", args.configPath);
+  if (args.profile) parts.push("--profile", args.profile);
+  if (args.worktree) parts.push("--worktree");
+  return parts.map(quote).join(" ");
+}
+
 export function resumeCommand(args: { repo: string; featureDir: string; configPath: string | null }): string {
   const parts = ["node", LAUNCHER, "--repo", args.repo, "--feature", args.featureDir];
   if (args.configPath) parts.push("--config", args.configPath);

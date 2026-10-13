@@ -2,6 +2,7 @@ import type { PaseoAgentHandle, PaseoClient } from "@getpaseo/client";
 import { summarizeActivity } from "./activity.js";
 import { type AgentProfile, isResolved, type PipelineConfig } from "./config.js";
 import { profilesFromDaemonConfig } from "./paseo-profiles.js";
+import { cronAt, localTimeZone } from "./schedule-time.js";
 import { samePath } from "./paths.js";
 import type { AgentRuntime, ManagedService, ProviderQuota, RuntimeFactory, ServiceTarget, StepAgent, WaitOutcome } from "./runtime.js";
 
@@ -45,6 +46,9 @@ export interface WorkspaceScripts {
   stop(workspaceId: string, name: string): Promise<void>;
   /** paseo.json setup of a new worktree; null when the daemon does not report one. */
   setupStatus(workspaceId: string): Promise<{ status: "running" | "completed" | "failed" | "blocked"; error: string | null } | null>;
+  /** Paseo schedules (daemon-client scheduleCreate / scheduleDelete). Returns the schedule ID. */
+  createSchedule(options: Record<string, unknown>): Promise<string>;
+  deleteSchedule(id: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -297,6 +301,46 @@ export function createRuntimeWithClient(
         await sleep(3000);
       }
     },
+    async scheduleMessage(input) {
+      const api = await getScripts();
+      if (!api) return null;
+      const oneShot = input.at !== undefined;
+      return api.createSchedule({
+        name: input.name,
+        prompt: input.prompt,
+        cadence: { type: "cron", expression: oneShot ? cronAt(input.at as Date) : (input.cron as string), timezone: localTimeZone() },
+        target: { type: "agent", agentId: input.agentId },
+        ...(oneShot ? { maxRuns: 1, expiresAt: new Date((input.at as Date).getTime() + 6 * 3600_000).toISOString() } : {}),
+        ...(input.expiresAt ? { expiresAt: input.expiresAt.toISOString() } : {}),
+      });
+    },
+    async scheduleNewAgent(input) {
+      const api = await getScripts();
+      if (!api) return null;
+      const settings = agentConfig(input.profile);
+      const slash = settings.provider.indexOf("/");
+      return api.createSchedule({
+        name: input.name,
+        prompt: input.prompt,
+        cadence: { type: "cron", expression: input.cron, timezone: localTimeZone() },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: settings.provider.slice(0, slash),
+            model: settings.provider.slice(slash + 1),
+            cwd: input.cwd,
+            ...(settings.modeId ? { modeId: settings.modeId } : {}),
+            ...(settings.thinkingOptionId ? { thinkingOptionId: settings.thinkingOptionId } : {}),
+            archiveOnFinish: true,
+            title: input.name,
+          },
+        },
+      });
+    },
+    async cancelSchedule(id) {
+      const api = await getScripts();
+      if (api) await api.deleteSchedule(id);
+    },
     async capabilities() {
       if (!client.config) return null;
       try {
@@ -358,6 +402,17 @@ async function connectScripts(config: PipelineConfig): Promise<WorkspaceScripts 
     async stop(workspaceId, name) {
       check(await daemon.stopWorkspaceScript(workspaceId, name));
     },
+    async createSchedule(options) {
+      if (typeof daemon.scheduleCreate !== "function") throw new Error("这个 Paseo 版本不支持定时任务");
+      const payload = await daemon.scheduleCreate(options);
+      if (payload.error || !payload.schedule) throw new Error(payload.error ?? "Paseo 没有返回定时任务");
+      return payload.schedule.id;
+    },
+    async deleteSchedule(id) {
+      if (typeof daemon.scheduleDelete !== "function") return;
+      const payload = await daemon.scheduleDelete({ id });
+      if (payload.error && !/not found/i.test(payload.error)) throw new Error(payload.error);
+    },
     async setupStatus(workspaceId) {
       if (typeof daemon.fetchWorkspaceSetupStatus !== "function") return null;
       const payload = await daemon.fetchWorkspaceSetupStatus(workspaceId);
@@ -375,6 +430,8 @@ interface InternalDaemonClient {
   listWorkspaceScripts(workspaceId: string): Promise<{ scripts?: unknown[]; error: string | null }>;
   startWorkspaceScriptWithStatus(workspaceId: string, name: string): Promise<{ error: string | null }>;
   stopWorkspaceScript(workspaceId: string, name: string): Promise<{ error: string | null }>;
+  scheduleCreate?(options: Record<string, unknown>): Promise<{ schedule: { id: string } | null; error: string | null }>;
+  scheduleDelete?(options: { id: string }): Promise<{ error: string | null }>;
   fetchWorkspaceSetupStatus?(
     workspaceId: string,
   ): Promise<{ snapshot: { status: "running" | "completed" | "failed" | "blocked"; error: string | null } | null }>;

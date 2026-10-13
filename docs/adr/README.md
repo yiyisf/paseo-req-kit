@@ -21,3 +21,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0017 用好 Paseo 自身的能力：profile、工作区脚本、用量和时间线](0017-use-paseo-capabilities.md)
 - [0018 可选：流水线为需求新建 worktree 工作区](0018-own-worktree-option.md)
 - [0019 用 Paseo 的并行子 agent：确认前独立审阅、方案提案](0019-parallel-orchestration.md)
+- [0020 调度：用 Paseo 定时任务把消息发回对话，排队在本机进行](0020-scheduling-through-the-chat.md)

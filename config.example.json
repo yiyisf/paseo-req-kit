@@ -83,5 +83,10 @@
       "standard"
     ],
     "members": []
-  }
+  },
+  "maxConcurrentPipelines": 0,
+  "waitingReminderHours": 24,
+  "autoResumeMinutes": 30,
+  "autoResumeMax": 2,
+  "watchdogMinutes": 0
 }

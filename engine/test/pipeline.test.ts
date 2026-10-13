@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -84,6 +84,9 @@ interface FakeEvent {
   provider?: string | null;
   modeId?: string | null;
   cwd?: string;
+  id?: string;
+  runAt?: string | null;
+  cron?: string | null;
   names?: string[];
   providers?: string[];
   title?: string;
@@ -1274,6 +1277,113 @@ test("自动新建工作区：在主分支上用 --worktree 启动，需求移�
   while (Date.now() < deadline2 && JSON.parse(fs.readFileSync(stateFile, "utf8")).status !== "completed") await new Promise((r) => setTimeout(r, 100));
   const again = events(env).slice(before).filter((e) => e.type === "start") as Array<FakeEvent & { workspaceId: string }>;
   assert.ok(again.length > 0 && again.every((e) => e.workspaceId === "fake-wks-1"));
+});
+
+const BLOCKED: FakeScenario = { steps: { design_review: { result: { verdict: "blocked", questions: ["验证码有效期多久？"] } } } };
+
+test("等待提醒：需要需求方决定时预约 24 小时后在对话里提醒一次；继续时取消上次的预约", () => {
+  const env = setup();
+  const started = Date.now();
+  assert.equal(runMain(env, BLOCKED).code, 3);
+  const scheduled = events(env).find((e) => e.type === "scheduleMessage")!;
+  assert.equal(scheduled.agentId, ORIGIN);
+  const hours = (new Date(scheduled.runAt ?? 0).getTime() - started) / 3600_000;
+  assert.ok(hours > 23.9 && hours < 24.1, `约 24 小时后：${hours}`);
+  assert.match(scheduled.prompt ?? "", /已经超过 24 小时[\s\S]*验证码有效期多久/);
+  assert.match(notifications(env).at(-1)?.text ?? "", /24 小时内还没有回答，会在这个对话里提醒一次/);
+  assert.deepEqual(state(env).schedules.map((s: { kind: string }) => s.kind), ["reminder"]);
+  assert.match(spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--status"], { encoding: "utf8" }).stdout, /已预约：.* 提醒/);
+
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n- **AC-1.2** 有效期 5 分钟\n");
+  assert.equal(runMain(env, {}, ["--resume"]).code, 0);
+  assert.ok(events(env).some((e) => e.type === "cancelSchedule" && e.id === scheduled.id));
+  assert.deepEqual(state(env).schedules, []);
+});
+
+test("自动继续：临时错误中断后预约在对话里自动继续（每次尝试最多 2 次）；其他错误不预约；暂停命令取消预约", () => {
+  const env = setup({ retry: { attempts: 0, backoffSeconds: [0] } });
+  const flaky: FakeScenario = { steps: { implement: { transientErrors: 99 } } };
+  assert.equal(runMain(env, flaky).code, 1);
+  const first = events(env).filter((e) => e.type === "scheduleMessage");
+  assert.equal(first.length, 1);
+  assert.match(first[0].prompt ?? "", /预约的自动继续[\s\S]*--status[\s\S]*--resume/);
+  assert.match(notifications(env).at(-1)?.text ?? "", /已预约在 .* 自动继续/);
+  assert.equal(state(env).autoResumes.count, 1);
+
+  const stop = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--stop"], {
+    encoding: "utf8",
+    env: fakeEnv(env, {}),
+  });
+  assert.match(stop.stdout, /已取消预约的提醒或自动继续（1 个）/);
+  assert.deepEqual(state(env).schedules, []);
+
+  assert.equal(runMain(env, flaky, ["--resume"]).code, 1);
+  assert.equal(runMain(env, flaky, ["--resume"]).code, 1);
+  assert.equal(events(env).filter((e) => e.type === "scheduleMessage").length, 2, "同一次尝试最多自动继续 2 次");
+  assert.doesNotMatch(notifications(env).at(-1)?.text ?? "", /已预约在/);
+
+  const broken = setup({ retry: { attempts: 0, backoffSeconds: [0] } });
+  assert.equal(runMain(broken, { steps: { implement: { error: "TypeError: x is undefined" } } }).code, 1);
+  assert.ok(!events(broken).some((e) => e.type === "scheduleMessage"));
+});
+
+test("预约开始：--at 用 Paseo 定时任务预约，到时由对话执行启动命令；可以查看和取消", () => {
+  const env = setup();
+  const scheduled = launch(env, ["--at", "+2h"]);
+  assert.equal(scheduled.status, 0, scheduled.stderr);
+  assert.match(scheduled.stdout, /已预约在 .* 开始开发/);
+  const event = events(env).find((e) => e.type === "scheduleMessage")!;
+  assert.match(event.prompt ?? "", /用户之前预约的开发开始时间[\s\S]*--feature docs\/features\/20261012-sms-login/);
+  assert.doesNotMatch(event.prompt ?? "", /--at/);
+  assert.ok(fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "scheduled-start.json")));
+  assert.match(launch(env, ["--status"]).stdout, /已预约在 .* 开始开发/);
+  assert.match(launch(env, ["--at", "下午三点"]).stderr, /看不懂开始时间/);
+
+  const cancelled = launch(env, ["--stop"]);
+  assert.match(cancelled.stdout, /已取消预约在 .* 的开始/);
+  assert.ok(events(env).some((e) => e.type === "cancelSchedule" && e.id === event.id));
+  assert.ok(!fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "scheduled-start.json")));
+
+  // Starting by hand before the time drops the reservation too.
+  assert.equal(launch(env, ["--at", "+1h"]).status, 0);
+  const second = events(env).filter((e) => e.type === "scheduleMessage").at(-1)!;
+  assert.equal(launch(env, []).status, 0);
+  assert.ok(events(env).some((e) => e.type === "cancelSchedule" && e.id === second.id));
+});
+
+test("并发上限：本机运行的流水线已满时排队，通知对话；空出名额后自动开始", async () => {
+  const env = setup({ maxConcurrentPipelines: 1, queuePollSeconds: 0.2 });
+  const slots = path.join(KIT_HOME, "slots");
+  fs.mkdirSync(slots, { recursive: true });
+  const busy = path.join(slots, "slot-0.json");
+  fs.writeFileSync(busy, JSON.stringify({ pid: process.pid, repo: "/other", featureDir: "docs/features/other", since: new Date().toISOString() }));
+  const child = spawn(TSX, [MAIN, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN], {
+    env: fakeEnv(env, {}),
+    stdio: "ignore",
+  });
+  try {
+    const queued = await waitForEvent(env, (e) => e.type === "notify" && /在排队/.test(e.text ?? ""));
+    assert.ok(queued);
+    assert.match(queued.text ?? "", /正在运行：docs\/features\/other/);
+    assert.match(spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--status"], { encoding: "utf8" }).stdout, /排队中/);
+    assert.ok(!events(env).some((e) => e.type === "start"), "排队时不启动步骤");
+    fs.rmSync(busy);
+    assert.ok(await waitForEvent(env, (e) => e.type === "notify" && /排队结束/.test(e.text ?? "")));
+    assert.equal(await waitForStatus(env, ["completed"]), "completed");
+  } finally {
+    child.kill();
+  }
+  assert.deepEqual(fs.readdirSync(slots), [], "结束后释放名额");
+});
+
+test("定时检查（可选）：开启后运行期间预约对话定时检查，正常结束时取消", () => {
+  const env = setup({ watchdogMinutes: 30 });
+  assert.equal(runMain(env, {}).code, 0);
+  const watch = events(env).find((e) => e.type === "scheduleMessage")!;
+  assert.equal(watch.cron, "*/30 * * * *");
+  assert.match(watch.prompt ?? "", /定时检查[\s\S]*已中断（后台进程意外退出/);
+  assert.ok(events(env).some((e) => e.type === "cancelSchedule" && e.id === watch.id));
+  assert.deepEqual(state(env).schedules, []);
 });
 
 test("prompts.local：同名文件替换随工具发布的提示词", () => {

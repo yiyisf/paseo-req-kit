@@ -59,6 +59,12 @@ export interface PipelineState {
    * the Paseo workspace and the checkout the chat works in. `repo` is the worktree.
    */
   worktree?: { workspaceId: string; sourceRepo: string } | null;
+  /** Paseo schedules this run created (reminders, automatic continuation, watchdog); cancelled by the next run. */
+  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog"; at: string | null }>;
+  /** Automatic continuations used in this attempt. */
+  autoResumes?: { attempt: number; count: number } | null;
+  /** Set while waiting for a free slot (maxConcurrentPipelines). */
+  queuedSince?: string | null;
 }
 
 export interface IncrementalInfo {

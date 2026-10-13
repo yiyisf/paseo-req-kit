@@ -3,7 +3,10 @@
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { LAUNCHER, parseLaunchArgs, resumeCommand } from "./cli-args.js";
+import { LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand } from "./cli-args.js";
+import { dequeuedMessage, queuedMessage, watchdogPrompt } from "./messages.js";
+import { slotHolders, slotsDir, tryAcquireSlot } from "./queue.js";
+import { cronEvery } from "./schedule-time.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
 import { satisfies } from "./daemon-check.js";
@@ -153,16 +156,82 @@ async function main(): Promise<number> {
     }
   }
 
+  const chatRepo = state.worktree?.sourceRepo ?? repo;
+  const commands = {
+    resume: resumeCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
+    status: statusCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
+  };
+  const notify = async (text: string) => {
+    log(`通知：\n${text}`);
+    if (originAgentId) await runtime.notifyAgent(originAgentId, text).catch((error: Error) => log(`通知发送失败：${error.message}`));
+  };
+
+  // Reminders and automatic continuations from the previous run are no longer needed.
+  if (state.schedules?.length) {
+    for (const s of state.schedules) await runtime.cancelSchedule(s.id).catch((error: Error) => log(`取消定时任务 ${s.id} 失败：${error.message}`));
+    log(`已取消上次运行留下的 Paseo 定时任务：${state.schedules.map((s) => s.kind).join("、")}`);
+    state.schedules = [];
+    writeState(stateFile, state);
+  }
+
+  let releaseSlot = () => {};
   const shutdown = (signal: string) => {
     log(`收到 ${signal}，流水线停止`);
     state.status = "failed";
     state.stopReason = `流水线进程被 ${signal} 终止`;
+    state.queuedSince = null;
     writeState(stateFile, state);
+    releaseSlot();
     release();
     process.exit(1);
   };
   process.once("SIGTERM", () => shutdown("SIGTERM"));
   process.once("SIGINT", () => shutdown("SIGINT"));
+
+  // Machine-wide limit on concurrent pipelines: wait for a free slot.
+  if (config.maxConcurrentPipelines > 0) {
+    const dir = slotsDir();
+    const holder = { pid: process.pid, repo, featureDir, since: new Date().toISOString() };
+    let slot = tryAcquireSlot(dir, config.maxConcurrentPipelines, holder);
+    if (!slot) {
+      const since = Date.now();
+      state.queuedSince = new Date(since).toISOString();
+      writeState(stateFile, state);
+      log(`本机同时运行的流水线已达上限（${config.maxConcurrentPipelines}），排队等待`);
+      await notify(queuedMessage({ featureDir, max: config.maxConcurrentPipelines, holders: slotHolders(dir) }));
+      while (!slot) {
+        await new Promise((resolve) => setTimeout(resolve, config.queuePollSeconds * 1000));
+        slot = tryAcquireSlot(dir, config.maxConcurrentPipelines, holder);
+      }
+      state.queuedSince = null;
+      writeState(stateFile, state);
+      log("排队结束，开始运行");
+      await notify(dequeuedMessage({ featureDir, waitedMinutes: (Date.now() - since) / 60_000 }));
+    }
+    releaseSlot = slot;
+  }
+
+  // Optional watchdog: the chat checks on the run now and then and continues it if the process died.
+  let watchdog: string | null = null;
+  if (config.watchdogMinutes > 0 && originAgentId) {
+    watchdog = await runtime
+      .scheduleMessage({
+        agentId: originAgentId,
+        cron: cronEvery(config.watchdogMinutes),
+        expiresAt: new Date(Date.now() + 3 * 24 * 3600_000),
+        name: `req-kit 定时检查：${path.basename(featureDir)}`,
+        prompt: watchdogPrompt({ featureDir, statusCommand: commands.status, resumeCommand: commands.resume }),
+      })
+      .catch((error: Error) => {
+        log(`预约定时检查失败：${error.message}`);
+        return null;
+      });
+    if (watchdog) {
+      state.schedules = [...(state.schedules ?? []), { id: watchdog, kind: "watchdog", at: null }];
+      writeState(stateFile, state);
+      log(`已预约定时检查（每 ${config.watchdogMinutes} 分钟，Paseo 定时任务 ${watchdog}）`);
+    }
+  }
 
   try {
     const outcome = await runPipeline({
@@ -175,14 +244,22 @@ async function main(): Promise<number> {
       prompts: { promptsDir: PROMPTS_DIR, localPromptsDir: localPromptsDir(), principlesFile: PRINCIPLES_INDEX },
       logPath: path.join(pipelineDir(repo, featureDir), "pipeline.log"),
       // Run from the chat, whose directory is the source checkout when the requirement has its own worktree.
-      resumeCommand: resumeCommand({ repo: state.worktree?.sourceRepo ?? repo, featureDir, configPath: args.configPath }),
+      resumeCommand: commands.resume,
+      statusCommand: commands.status,
       log,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
     log(`流水线结束：${outcome}`);
     return outcome === "completed" ? 0 : outcome === "waiting_for_business" ? 3 : 1;
   } finally {
+    // The run ended by itself: the watchdog has nothing left to watch.
+    if (watchdog) {
+      await runtime.cancelSchedule(watchdog).catch(() => undefined);
+      state.schedules = (state.schedules ?? []).filter((s) => s.id !== watchdog);
+      writeState(stateFile, state);
+    }
     await runtime.close().catch(() => undefined);
+    releaseSlot();
     release();
   }
 }

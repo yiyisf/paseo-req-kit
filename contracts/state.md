@@ -22,6 +22,10 @@
 | `branch` | string \| null | 工作分支，启动时确定 |
 | `milestones` | string[] | 已发送的进展通知，续跑时不重复发送 |
 | `incremental` | object \| null | 可选，1.3.0 起。需求变更或回答问题后的继续：`fromAttempt`（接着哪一次）、`reason`、`baseCommit`（本次开始时的提交，评审看这之后的改动）、`hadImplementation`（上一次是否已写过代码）。第一次运行和 `--restart` 为 null |
+| `worktree` | object \| null | 可选，1.5.0 起。用 `--worktree` 启动、在为需求新建的工作区中开发时：`workspaceId`（Paseo 工作区）、`sourceRepo`（对话所在的目录）。此时 `repo` 是新工作区的目录 |
+| `schedules` | array | 可选，1.6.0 起。这次运行创建的 Paseo 定时任务：`id`、`kind`（`reminder` 提醒 / `auto-resume` 自动继续 / `watchdog` 定时检查）、`at`。下一次运行或暂停命令会取消它们 |
+| `autoResumes` | object \| null | 可选，1.6.0 起。`attempt`、`count`：这次尝试已经预约过几次自动继续 |
+| `queuedSince` | string \| null | 可选，1.6.0 起。正在排队（`maxConcurrentPipelines`）时为开始排队的时间 |
 
 ## 迁移
 

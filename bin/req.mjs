@@ -19,8 +19,11 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req status [需求]            查看进度；只有一个需求运行过时可以不写
   req stop <需求>              停止流水线（之后可以继续）
   req resume <需求>            从上次中断处继续；需求改过时只处理变化的部分
-  req start <需求> [--profile quick|standard]
+  req start <需求> [--profile quick|standard] [--at 22:00]
                                启动流水线（通常由 /req 在对话中启动，这里用于终端中手工启动）
+  req digest [--notify]        项目的需求总览；--notify 同时发到外部通知（如企业 IM）
+  req digest --schedule "0 9 * * 1"
+                               让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
 
 本机维护：
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
@@ -93,6 +96,9 @@ switch (command) {
     break;
   case "check":
     code = node([path.join(kitRoot, "install.mjs"), "--check", ...rest]);
+    break;
+  case "digest":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "digest.ts"), ...rest]) : 1;
     break;
   case "notify-test":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "notify-test.ts"), ...rest]) : 1;

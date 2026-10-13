@@ -6,7 +6,7 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 - 确认后，引擎在后台按固定顺序驱动一组 Paseo agent：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 →（有常驻服务时）服务启动验证 → 功能验证 →（发现缺陷时）缺陷修复 ⇄ 复验 → 完成报告。
 - 进展、需要决定的问题和最终结论都发回同一个对话；每个步骤以子 agent 的形式挂在对话下。只做本地提交，合并上线由人决定。
 
-当前版本：**1.5.0-beta.1**（并行编排：确认前独立审阅、方案提案、浏览器验证、可选的自动新建工作区）。变化见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**1.6.0-beta.1**（调度：预约开始、等待提醒、中断后自动继续、排队、需求总览）。1.4–1.6 让 req-kit 用上了 Paseo 自身的能力：agent profile、`paseo.json` 服务、并行子 agent、内置浏览器和定时任务，见 [CHANGELOG.md](CHANGELOG.md)。变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 体系结构
 
@@ -25,8 +25,8 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
 
 ```bash
-git clone --branch 1.5.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.5.0-beta.1
-cd ~/tools/req-kit/versions/1.5.0-beta.1
+git clone --branch 1.6.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.6.0-beta.1
+cd ~/tools/req-kit/versions/1.6.0-beta.1
 npm install
 node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/requirement-pipeline
 node install.mjs --configure   # 配置向导：从 Paseo 中可用的 agent 和模型里选择
@@ -43,7 +43,7 @@ node install.mjs --configure   # 配置向导：从 Paseo 中可用的 agent 和
 
 再运行一次 `node install.mjs`，然后 `node bin/req-doctor.mjs --no-project` 检查 daemon 和 agent，并按指南做冒烟测试。
 
-安装器还会在 `~/.req-kit/bin` 写入 `req` 命令（按提示加入 PATH 后可直接使用）：`req list`、`req status`、`req doctor`、`req upgrade`（一键升级）等，`req help` 查看全部。
+安装器还会在 `~/.req-kit/bin` 写入 `req` 命令（按提示加入 PATH 后可直接使用）：`req list`、`req status`、`req doctor`、`req upgrade`（一键升级）、`req digest`（需求总览）等，`req help` 查看全部。
 
 每个项目建议先在项目根目录的对话中运行一次 `/req-setup`。之后在任意项目的 Paseo 对话中输入 `/req 我想……`（Pi 中为 `/skill:req`）。
 
