@@ -1,0 +1,52 @@
+{
+  "daemonUrl": "ws://127.0.0.1:6767/ws",
+  "daemonPasswordEnv": "PASEO_DAEMON_PASSWORD",
+  "agents": {
+    "builder": {
+      "provider": "claude/CHANGE-ME",
+      "modeId": "bypassPermissions"
+    },
+    "reviewer": {
+      "provider": "codex/CHANGE-ME",
+      "modeId": "full-access"
+    }
+  },
+  "defaultProfile": "standard",
+  "profiles": {
+    "quick": {
+      "rounds": {
+        "designReview": 1,
+        "codeReview": 1,
+        "defectFix": 1
+      },
+      "serviceStart": false
+    },
+    "standard": {
+      "rounds": {
+        "designReview": 2,
+        "codeReview": 3,
+        "defectFix": 3
+      },
+      "serviceStart": true
+    }
+  },
+  "notifyMilestones": true,
+  "stepTimeoutMinutes": {
+    "design": 60,
+    "design_review": 30,
+    "design_revise": 30,
+    "implement": 240,
+    "code_review": 45,
+    "review_fix": 90,
+    "service_start": 30,
+    "verify": 120,
+    "defect_fix": 120,
+    "reverify": 90,
+    "report": 30
+  },
+  "waitChunkSeconds": 600,
+  "permissionPollSeconds": 30,
+  "resultFollowUps": 2,
+  "attachToOriginChat": true,
+  "archiveStepAgents": false
+}

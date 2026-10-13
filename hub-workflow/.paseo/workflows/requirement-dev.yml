@@ -1,0 +1,249 @@
+# 需求开发流水线（第 3–11 步）
+#
+# 第 1–2 步（需求对齐、生成 spec）是与人的多轮对话，在 Paseo 的聊天界面中
+# 通过 /requirement-kickoff 完成。它的产物是一个功能目录，例如
+# docs/features/20261012-sms-login，其中包含已确认的 spec.md。
+#
+# 启动本流水线时，把功能目录的路径作为 prompt 传入。它是各步骤之间唯一的
+# 传参方式：每个步骤都是全新的 agent，通过该目录下的文件交接工作。
+#
+# 步骤按文件中的顺序执行。带 if 的步骤在条件不满足时跳过。
+# Hub 的工作流没有循环，所以"修订""修复"各执行一轮，仍未解决的问题进入报告。
+
+name: requirement-dev
+on: manual.run
+max_runtime: 16h
+
+filters:
+  from_users: [automation]   # 改这里：允许启动本流水线的 Hub 用户
+
+values:
+  # 方案审核没有判定"阻塞"时，才进入实现和验证。
+  build_approved: ${{ steps.design_review.outputs.verdict != "blocked" }}
+
+steps:
+  # ---------- 第 3 步：方案设计 ----------
+  - id: design
+    environment: project
+    agent: builder
+    max_runtime: 60m
+    idle_timeout: 15m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/03-design.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+    output:
+      schema:
+        type: object
+        required: [has_runnable_service]
+        properties:
+          has_runnable_service: { type: boolean }
+        additionalProperties: false
+
+  # ---------- 第 4 步：方案审核 ----------
+  - id: design_review
+    environment: project
+    agent: reviewer
+    max_runtime: 30m
+    idle_timeout: 10m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/04-design-review.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+    output:
+      schema:
+        type: object
+        required: [verdict]
+        properties:
+          verdict: { enum: [approved, changes_required, blocked] }
+        additionalProperties: false
+
+  # ---------- 第 4 步后续：方案修订（审核要求修改时） ----------
+  - id: design_revise
+    if: ${{ steps.design_review.outputs.verdict == "changes_required" }}
+    environment: project
+    agent: builder
+    max_runtime: 30m
+    idle_timeout: 10m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/04b-design-revise.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+
+  # ---------- 第 5 步：代码实现（适用时采用测试先行） ----------
+  - id: implement
+    if: ${{ values.build_approved }}
+    environment: project
+    agent: builder
+    max_runtime: 4h
+    idle_timeout: 20m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/05-implement.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+
+  # ---------- 第 6 步：代码评审 ----------
+  - id: code_review
+    if: ${{ values.build_approved }}
+    environment: project
+    agent: reviewer
+    max_runtime: 45m
+    idle_timeout: 15m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/06-code-review.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+    output:
+      schema:
+        type: object
+        required: [verdict]
+        properties:
+          verdict: { enum: [pass, changes_required] }
+        additionalProperties: false
+
+  # ---------- 第 7 步：评审问题修复（评审要求修改时） ----------
+  - id: review_fix
+    if: ${{ values.build_approved && steps.code_review.outputs.verdict == "changes_required" }}
+    environment: project
+    agent: builder
+    max_runtime: 90m
+    idle_timeout: 20m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/07-review-fix.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+
+  # ---------- 第 8 步：服务启动验证（项目有常驻服务时） ----------
+  - id: service_start
+    if: ${{ values.build_approved && steps.design.outputs.has_runnable_service == true }}
+    environment: project
+    agent: builder
+    max_runtime: 30m
+    idle_timeout: 10m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/08-service-start.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+
+  # ---------- 第 9 步：功能验证（基础测试 + 端到端） ----------
+  - id: verify
+    if: ${{ values.build_approved }}
+    environment: project
+    agent: reviewer
+    max_runtime: 2h
+    idle_timeout: 20m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/09-verify.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+    output:
+      schema:
+        type: object
+        required: [result]
+        properties:
+          result: { enum: [pass, defects_found, blocked] }
+        additionalProperties: false
+
+  # ---------- 第 10 步：测试缺陷修复（验证发现缺陷时） ----------
+  - id: defect_fix
+    if: ${{ values.build_approved && steps.verify.outputs.result == "defects_found" }}
+    environment: project
+    agent: builder
+    max_runtime: 2h
+    idle_timeout: 20m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/10-defect-fix.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+
+  # ---------- 第 10 步后续：复验（执行过缺陷修复时） ----------
+  - id: reverify
+    if: ${{ values.build_approved && steps.verify.outputs.result == "defects_found" }}
+    environment: project
+    agent: reviewer
+    max_runtime: 90m
+    idle_timeout: 20m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/10b-reverify.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+    output:
+      schema:
+        type: object
+        required: [result]
+        properties:
+          result: { enum: [pass, defects_remaining] }
+        additionalProperties: false
+
+  # ---------- 第 11 步：完成报告与总结（始终执行） ----------
+  - id: report
+    environment: project
+    agent: builder
+    max_runtime: 30m
+    idle_timeout: 10m
+    prompt:
+      - include: partials/00-shared-context.md
+      - include: partials/11-report.md
+      - text: |
+          <feature-dir>
+          ${{ paseo.prompt }}
+          </feature-dir>
+    output:
+      schema:
+        type: object
+        required: [outcome]
+        properties:
+          outcome: { enum: [completed, completed_with_issues, not_completed] }
+        additionalProperties: false
+
+# ---------------------------------------------------------------------------
+# 可选：改为在 Slack 中 @机器人 启动，并在完成后把结论回复到同一个对话。
+# 1. 把上面的 on 和 filters 换成：
+#
+#      on: slack.mention
+#      filters:
+#        workspace: T01234567          # Slack 工作区 ID
+#        channels: [C01234567]         # 允许使用的频道 ID
+#        from_users: [U01234567]       # 允许启动的 Slack 用户 ID（不是显示名）
+#
+# 2. 在 report 步骤中加上：
+#
+#      allow_outputs:
+#        - { type: slack.reply, max: 1, required: true }
+#
+#    并在该步骤的 prompt 末尾加一个 text 块，告诉 agent：
+#    "写完 report.md 后，用 hub.reply 发送报告的'结论'和'需要你做的事'两节，
+#     然后再调用 hub.finish_execution。"
+#
+# 使用方式：在频道里发送 "@机器人 docs/features/20261012-sms-login"
+# ---------------------------------------------------------------------------

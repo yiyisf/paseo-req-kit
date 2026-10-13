@@ -1,0 +1,810 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import type { FakeScenario } from "./fake-runtime.js";
+import { lockPath } from "../src/state.js";
+
+const TOOL = path.resolve(import.meta.dirname, "..");
+const TSX = path.join(TOOL, "node_modules", ".bin", "tsx");
+const MAIN = path.join(TOOL, "src", "main.ts");
+const LAUNCHER = path.join(TOOL, "bin", "start-pipeline");
+const NODE_LAUNCHER = path.join(TOOL, "bin", "start-pipeline.mjs");
+const FAKE = path.join(TOOL, "test", "fake-runtime.ts");
+const FEATURE = "docs/features/20261012-sms-login";
+const ORIGIN = "chat-agent-1";
+
+interface Env {
+  repo: string;
+  configPath: string;
+  eventsPath: string;
+  scenarioPath: string;
+}
+
+function setup(configOverrides: Record<string, unknown> = {}, specStatus = "已确认（2026-10-12）"): Env {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "req-pipeline-repo-"));
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  execFileSync("git", ["checkout", "-q", "-b", "feature/20261012-sms-login"], { cwd: repo });
+  fs.mkdirSync(path.join(repo, FEATURE), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, FEATURE, "spec.md"),
+    `# 短信验证码登录\n\n- 状态：${specStatus}\n- 需求提出人：运营部\n\n## 5. 功能需求与验收标准\n\n### FR-1 用短信验证码登录\n- **AC-1.1** ...\n`,
+  );
+  const base = JSON.parse(fs.readFileSync(path.join(TOOL, "pipeline.config.example.json"), "utf8"));
+  const config = {
+    ...base,
+    agents: {
+      builder: { provider: "claude/test-model", modeId: "bypassPermissions" },
+      reviewer: { provider: "codex/test-model", modeId: "full-access" },
+    },
+    waitChunkSeconds: 0.05,
+    permissionPollSeconds: 0.01,
+    // Most tests count notifications; milestone notes have their own test.
+    notifyMilestones: false,
+    ...configOverrides,
+  };
+  const configPath = path.join(repo, "..", `${path.basename(repo)}.config.json`);
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  return {
+    repo,
+    configPath,
+    eventsPath: path.join(repo, "..", `${path.basename(repo)}.events.jsonl`),
+    scenarioPath: path.join(repo, "..", `${path.basename(repo)}.scenario.json`),
+  };
+}
+
+function fakeEnv(env: Env, scenario: FakeScenario): NodeJS.ProcessEnv {
+  fs.writeFileSync(env.scenarioPath, JSON.stringify(scenario));
+  return {
+    ...process.env,
+    REQ_PIPELINE_FAKE_RUNTIME: FAKE,
+    FAKE_SCENARIO: env.scenarioPath,
+    FAKE_EVENTS: env.eventsPath,
+  };
+}
+
+function runMain(env: Env, scenario: FakeScenario, extra: string[] = [], origin: string | null = ORIGIN) {
+  const args = [MAIN, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, ...extra];
+  if (origin) args.push("--origin-agent", origin);
+  const result = spawnSync(TSX, args, { env: fakeEnv(env, scenario), encoding: "utf8", timeout: 60_000 });
+  return { code: result.status, out: `${result.stdout}${result.stderr}` };
+}
+
+interface FakeEvent {
+  type: string;
+  key?: string;
+  text?: string;
+  agentId?: string;
+  role?: string;
+  title?: string;
+  parentAgentId?: string | null;
+  labels?: Record<string, string>;
+  hasSharedContext?: boolean;
+  hasStepTask?: boolean;
+  prompt?: string;
+}
+
+function events(env: Env): FakeEvent[] {
+  if (!fs.existsSync(env.eventsPath)) return [];
+  return fs
+    .readFileSync(env.eventsPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as FakeEvent);
+}
+
+function starts(env: Env, from = 0): string[] {
+  return events(env)
+    .slice(from)
+    .filter((e) => e.type === "start")
+    .map((e) => e.key as string);
+}
+
+function notifications(env: Env): FakeEvent[] {
+  return events(env).filter((e) => e.type === "notify");
+}
+
+function state(env: Env) {
+  return JSON.parse(fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", "state.json"), "utf8"));
+}
+
+test("全部一次通过：按顺序执行，跳过不需要的步骤，结果发回发起对话", () => {
+  const env = setup();
+  const { code, out } = runMain(env, {});
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), ["design", "design_review-r1", "implement", "code_review-r1", "verify", "report"]);
+
+  const startEvents = events(env).filter((e) => e.type === "start");
+  for (const e of startEvents) {
+    assert.ok(e.hasSharedContext && e.hasStepTask, `${e.key} 的提示词不完整`);
+    assert.equal(e.parentAgentId, ORIGIN);
+    assert.equal(e.labels?.["requirement-pipeline"], "20261012-sms-login");
+    assert.equal(e.labels?.["pipeline-step"], e.key);
+  }
+  const roles = Object.fromEntries(startEvents.map((e) => [e.key, e.role]));
+  assert.deepEqual(roles, {
+    design: "builder",
+    "design_review-r1": "reviewer",
+    implement: "builder",
+    "code_review-r1": "reviewer",
+    verify: "reviewer",
+    report: "builder",
+  });
+  assert.equal(startEvents[0].title, "[20261012-sms-login] 3-方案设计");
+
+  const notes = notifications(env);
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].agentId, ORIGIN);
+  assert.match(notes[0].text ?? "", /结论：已完成，可以验收/);
+  assert.match(notes[0].text ?? "", /短信登录已经做好，可以验收。/);
+  assert.match(notes[0].text ?? "", /docs\/features\/20261012-sms-login\/report\.md/);
+
+  const s = state(env);
+  assert.equal(s.status, "completed");
+  assert.equal(s.outcome, "completed");
+  assert.equal(s.history.length, 6);
+  assert.ok(s.history.every((h: { outcome: string }) => h.outcome === "completed"));
+  assert.equal(fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", ".gitignore"), "utf8"), "*\n");
+  assert.ok(!fs.existsSync(lockPath(env.repo)), "锁没有释放");
+});
+
+test("返工路径：审核、评审、验证各自循环，直到通过", () => {
+  const env = setup();
+  const { code, out } = runMain(env, {
+    steps: {
+      design: { result: { has_runnable_service: true } },
+      "design_review-r1": { result: { verdict: "changes_required" } },
+      "code_review-r1": { result: { verdict: "changes_required" } },
+      verify: { result: { result: "defects_found" } },
+      "reverify-r1": { result: { result: "defects_remaining" } },
+    },
+  });
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), [
+    "design",
+    "design_review-r1",
+    "design_revise-r1",
+    "design_review-r2",
+    "implement",
+    "code_review-r1",
+    "review_fix-r1",
+    "code_review-r2",
+    "service_start",
+    "verify",
+    "defect_fix-r1",
+    "reverify-r1",
+    "defect_fix-r2",
+    "reverify-r2",
+    "report",
+  ]);
+  const titles = events(env).filter((e) => e.type === "start").map((e) => e.title);
+  assert.ok(titles.includes("[20261012-sms-login] 4-方案审核 第2轮"));
+});
+
+test("轮数用完：继续往下走，报告结论为有遗留问题", () => {
+  const env = setup({ rounds: { designReview: 2, codeReview: 3, defectFix: 3 } });
+  const { code, out } = runMain(env, {
+    steps: {
+      design_review: { result: { verdict: "changes_required" } },
+      code_review: { result: { verdict: "changes_required" } },
+      verify: { result: { result: "defects_found" } },
+      reverify: { result: { result: "defects_remaining" } },
+      report: { result: { outcome: "completed_with_issues", summary: "主要功能可用，验证码过期提示还有问题。" } },
+    },
+  });
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), [
+    "design",
+    "design_review-r1",
+    "design_revise-r1",
+    "design_review-r2",
+    "design_revise-r2",
+    "implement",
+    "code_review-r1",
+    "review_fix-r1",
+    "code_review-r2",
+    "review_fix-r2",
+    "code_review-r3",
+    "review_fix-r3",
+    "verify",
+    "defect_fix-r1",
+    "reverify-r1",
+    "defect_fix-r2",
+    "reverify-r2",
+    "defect_fix-r3",
+    "reverify-r3",
+    "report",
+  ]);
+  assert.match(notifications(env)[0].text ?? "", /结论：已完成，但有遗留问题/);
+});
+
+test("需要业务决定：暂停并把问题发回对话；更新 spec 后用 --resume 从方案设计重新开始", () => {
+  const env = setup();
+  const blocked = runMain(env, {
+    steps: {
+      design_review: {
+        result: { verdict: "blocked", questions: ["历史订单也要显示新的配送状态吗？A. 只有新订单 B. 历史订单也显示"] },
+      },
+    },
+  });
+  assert.equal(blocked.code, 3, blocked.out);
+  assert.deepEqual(starts(env), ["design", "design_review-r1"]);
+  assert.equal(state(env).status, "waiting_for_business");
+
+  const note = notifications(env)[0].text ?? "";
+  assert.match(note, /需要用户决定的问题/);
+  assert.match(note, /历史订单也要显示新的配送状态吗/);
+  assert.match(note, /node .*start-pipeline\.mjs --repo .* --feature docs\/features\/20261012-sms-login --config .* --resume/);
+  assert.doesNotMatch(note, /--origin-agent/, "继续命令由对话执行时会自动识别对话，不应写死对话 ID");
+  assert.ok(!fs.existsSync(lockPath(env.repo)));
+
+  const again = runMain(env, {});
+  assert.equal(again.code, 2);
+  assert.match(again.out, /--resume/);
+
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n补充：历史订单不显示。\n");
+  const before = events(env).length;
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.deepEqual(starts(env, before), ["design", "design_review-r1", "implement", "code_review-r1", "verify", "report"]);
+  const s = state(env);
+  assert.equal(s.status, "completed");
+  assert.equal(s.attempt, 2);
+  assert.equal(s.history.filter((h: { attempt: number }) => h.attempt === 1).length, 2);
+});
+
+test("步骤失败：通知中断原因；--resume 沿用已完成的步骤，从失败处继续", () => {
+  const env = setup();
+  const failed = runMain(env, { steps: { implement: { error: "provider process exited" } } });
+  assert.equal(failed.code, 1, failed.out);
+  const s = state(env);
+  assert.equal(s.status, "failed");
+  assert.match(s.stopReason, /代码实现/);
+  const note = notifications(env)[0].text ?? "";
+  assert.match(note, /在「代码实现」步骤停止/);
+  assert.match(note, /provider process exited/);
+  assert.match(note, /--resume/);
+
+  const before = events(env).length;
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.deepEqual(starts(env, before), ["implement", "code_review-r1", "verify", "report"]);
+  assert.match(resumed.out, /跳过 design：沿用上次运行的结果/);
+  assert.equal(state(env).attempt, 1);
+});
+
+test("失败后修改了 spec：--resume 改为从方案设计重新开始", () => {
+  const env = setup();
+  assert.equal(runMain(env, { steps: { verify: { error: "boom" } } }).code, 1);
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n补充一条验收标准。\n");
+  const before = events(env).length;
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.equal(starts(env, before)[0], "design");
+  assert.match(resumed.out, /spec\.md 在上次运行后被修改过/);
+});
+
+test("结果文件缺失或格式错误时提醒 agent 补写；一直不写则判定失败", () => {
+  const env = setup();
+  const ok = runMain(env, {
+    steps: { "code_review-r1": { skipResultFirst: true }, verify: { invalidFirst: true } },
+  });
+  assert.equal(ok.code, 0, ok.out);
+  const followUps = events(env).filter((e) => e.type === "followUp");
+  assert.deepEqual(
+    followUps.map((e) => e.key),
+    ["code_review-r1", "verify"],
+  );
+  assert.match(followUps[0].text ?? "", /结果文件不存在/);
+  assert.match(followUps[1].text ?? "", /verdict|缺少字段 result/);
+
+  const env2 = setup();
+  const bad = runMain(env2, { steps: { design: { neverWritesResult: true } } });
+  assert.equal(bad.code, 1, bad.out);
+  assert.equal(events(env2).filter((e) => e.type === "followUp").length, 2);
+  assert.match(notifications(env2)[0].text ?? "", /仍没有得到有效的结果文件/);
+});
+
+test("等待权限批准：同一个请求只通知一次，批准后继续", () => {
+  const env = setup();
+  const { code, out } = runMain(env, { steps: { implement: { permission: true } } });
+  assert.equal(code, 0, out);
+  const notes = notifications(env);
+  assert.equal(notes.length, 2);
+  assert.match(notes[0].text ?? "", /「代码实现」步骤在等待权限批准/);
+  assert.match(notes[0].text ?? "", /运行 npm install/);
+  assert.match(notes[0].text ?? "", /\[20261012-sms-login\] 5-代码实现/);
+  assert.match(notes[1].text ?? "", /流水线已经结束/);
+});
+
+test("步骤超时：判定失败并说明 agent 可能仍在运行", () => {
+  const base = JSON.parse(fs.readFileSync(path.join(TOOL, "pipeline.config.example.json"), "utf8"));
+  const env = setup({ stepTimeoutMinutes: { ...base.stepTimeoutMinutes, implement: 0.003 } });
+  const { code, out } = runMain(env, { steps: { implement: { hang: true } } });
+  assert.equal(code, 1, out);
+  assert.match(notifications(env)[0].text ?? "", /超过 0\.003 分钟仍未完成/);
+});
+
+test("没有发起对话：步骤 agent 独立创建，通知只写日志", () => {
+  const env = setup();
+  const { code, out } = runMain(env, {}, [], null);
+  assert.equal(code, 0, out);
+  assert.ok(events(env).filter((e) => e.type === "start").every((e) => e.parentAgentId === null));
+  assert.equal(notifications(env).length, 0);
+  assert.match(out, /通知只写入日志/);
+});
+
+test("通知发送失败（对话已归档）不影响流水线完成", () => {
+  const env = setup();
+  const { code, out } = runMain(env, { notifyFails: true });
+  assert.equal(code, 0, out);
+  assert.match(out, /通知发送失败/);
+  assert.equal(state(env).status, "completed");
+});
+
+test("启动前检查：spec 未确认、目录越界、同一仓库已有流水线时拒绝启动", () => {
+  const unconfirmed = setup({}, "草稿");
+  const launch = spawnSync(LAUNCHER, ["--repo", unconfirmed.repo, "--feature", FEATURE, "--config", unconfirmed.configPath], {
+    encoding: "utf8",
+  });
+  assert.equal(launch.status, 2);
+  assert.match(launch.stderr, /未启动：spec\.md 还没有被确认/);
+  assert.ok(!fs.existsSync(path.join(unconfirmed.repo, FEATURE, ".pipeline", "state.json")));
+
+  const env = setup();
+  const outside = spawnSync(LAUNCHER, ["--repo", env.repo, "--feature", "../elsewhere", "--config", env.configPath], {
+    encoding: "utf8",
+  });
+  assert.equal(outside.status, 2);
+  assert.match(outside.stderr, /功能目录必须位于仓库目录之内/);
+
+  fs.writeFileSync(lockPath(env.repo), JSON.stringify({ pid: process.pid, featureDir: "docs/features/other", startedAt: "2026-10-12T00:00:00Z" }));
+  try {
+    const locked = spawnSync(LAUNCHER, ["--repo", env.repo, "--feature", FEATURE, "--config", env.configPath], {
+      encoding: "utf8",
+    });
+    assert.equal(locked.status, 2);
+    assert.match(locked.stderr, /已有一条流水线在运行/);
+  } finally {
+    fs.rmSync(lockPath(env.repo), { force: true });
+  }
+
+  const badConfig = setup({ agents: { builder: { provider: "claude" }, reviewer: { provider: "codex/x" } } });
+  const cfg = spawnSync(LAUNCHER, ["--repo", badConfig.repo, "--feature", FEATURE, "--config", badConfig.configPath], {
+    encoding: "utf8",
+  });
+  assert.equal(cfg.status, 2);
+  assert.match(cfg.stderr, /provider\/model/);
+});
+
+function sessionId(pid: number): number | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return Number(fields[3]);
+  } catch {
+    return null;
+  }
+}
+
+function ancestorsOf(pid: number): number[] {
+  const chain: number[] = [];
+  let current = pid;
+  for (let i = 0; i < 64; i++) {
+    try {
+      const stat = fs.readFileSync(`/proc/${current}/stat`, "utf8");
+      const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      if (!parent || parent === current) break;
+      chain.push(parent);
+      current = parent;
+    } catch {
+      break;
+    }
+  }
+  return chain;
+}
+
+test("启动器：立即返回，流水线在独立会话中继续运行到结束", async () => {
+  // Slow the run down so it is still going when the launching shell exits.
+  const env = setup({ permissionPollSeconds: 1.5 });
+  fs.writeFileSync(env.scenarioPath, JSON.stringify({ steps: { implement: { permission: true } } }));
+  const startedAt = Date.now();
+  // The launching shell exits right after the launcher returns, like a chat agent's tool call.
+  const shell = spawnSync(
+    "bash",
+    ["-c", `"${LAUNCHER}" --repo "${env.repo}" --feature ${FEATURE} --config "${env.configPath}" --origin-agent ${ORIGIN}; exit 0`],
+    { encoding: "utf8", env: fakeEnv(env, { steps: { implement: { permission: true } } }) },
+  );
+  const elapsed = Date.now() - startedAt;
+  assert.equal(shell.status, 0, shell.stderr);
+  assert.match(shell.stdout, /已在后台启动（新启动，标准档）/);
+  assert.ok(elapsed < 10_000, `启动器用了 ${elapsed}ms`);
+
+  const pid = Number(/进程 (\d+)/.exec(shell.stdout)?.[1]);
+  assert.ok(pid > 0);
+  // detached: true makes the pipeline its own session leader, outside the shell's session.
+  assert.equal(sessionId(pid), pid, "流水线进程没有脱离启动它的会话");
+  assert.notEqual(sessionId(pid), sessionId(process.pid));
+  // Paseo stops a provider with tree-kill, which follows parent links. Once the
+  // launcher has exited, the pipeline is no longer a descendant of whoever ran it.
+  const ancestors = ancestorsOf(pid);
+  assert.ok(!ancestors.includes(process.pid), `流水线仍是启动方的子孙进程：${ancestors.join(" <- ")}`);
+
+  const statePath = path.join(env.repo, FEATURE, ".pipeline", "state.json");
+  const deadline = Date.now() + 30_000;
+  let status = "";
+  while (Date.now() < deadline) {
+    if (fs.existsSync(statePath)) {
+      status = JSON.parse(fs.readFileSync(statePath, "utf8")).status;
+      if (status === "completed" || status === "failed") break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.equal(status, "completed");
+  const log = fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", "pipeline.log"), "utf8");
+  assert.match(log, /流水线结束：completed/);
+  assert.equal(notifications(env).length, 2);
+});
+
+test("发起对话不在仓库目录：启动器直接拒绝，不留下运行记录", () => {
+  const env = setup();
+  const result = spawnSync(LAUNCHER, ["--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN], {
+    encoding: "utf8",
+    env: { ...fakeEnv(env, {}), PASEO_AGENT_ID: ORIGIN, PASEO_AGENT_CWD: os.tmpdir() },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /与当前对话的工作目录 .* 不一致/);
+  assert.match(result.stderr, /对话过程中不要切换工作目录/);
+  assert.ok(!fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "state.json")));
+});
+
+test("在对话中用 node 启动器、只传 --feature：对话 ID 和仓库目录都从对话环境中识别", async () => {
+  const env = setup();
+  const shell = spawnSync(
+    process.execPath,
+    [NODE_LAUNCHER, "--feature", FEATURE, "--config", env.configPath],
+    {
+      encoding: "utf8",
+      cwd: os.tmpdir(), // the shell's own cwd is somewhere else; the chat's directory must win
+      env: { ...fakeEnv(env, {}), PASEO_AGENT_ID: ORIGIN, PASEO_AGENT_CWD: env.repo },
+    },
+  );
+  assert.equal(shell.status, 0, shell.stderr);
+  const statePath = path.join(env.repo, FEATURE, ".pipeline", "state.json");
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(statePath) && JSON.parse(fs.readFileSync(statePath, "utf8")).status === "completed") break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.equal(state(env).status, "completed");
+  assert.equal(state(env).repo, fs.realpathSync(env.repo));
+  assert.equal(state(env).originAgentId, ORIGIN);
+  assert.ok(events(env).filter((e) => e.type === "start").every((e) => e.parentAgentId === ORIGIN));
+});
+
+test("安装脚本：把 skill 装进各 agent 的全局目录，并写入启动器的绝对路径；卸载只删自己装的", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-pipeline-home-"));
+  fs.mkdirSync(path.join(home, ".claude"));
+  const run = (...args: string[]) =>
+    spawnSync(process.execPath, [path.join(TOOL, "install.mjs"), ...args], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+    });
+  const first = run();
+  for (const root of [".agents", ".claude"]) {
+    const skill = fs.readFileSync(path.join(home, root, "skills", "requirement-kickoff", "SKILL.md"), "utf8");
+    assert.ok(!skill.includes("{{PIPELINE_LAUNCHER}}"), `${root} 中的占位符没有替换`);
+    assert.ok(skill.includes(`node "${NODE_LAUNCHER.split(path.sep).join("/")}" --feature`), first.stdout);
+    assert.ok(fs.existsSync(path.join(home, root, "skills", "requirement-kickoff", "spec-template.md")));
+  }
+  fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+  assert.match(first.stdout, /缺少依赖的 skill：grilling、domain-modeling/);
+  const again = run();
+  assert.ok(!fs.existsSync(path.join(home, ".codex", "skills")), "不应安装到 ~/.codex/skills");
+  assert.match(again.stdout, /通用（\.agents，含 Codex）：已安装/);
+  assert.match(first.stdout, /npx skills add mattpocock\/skills -g --copy/);
+
+  fs.mkdirSync(path.join(home, ".agents", "skills", "mine"), { recursive: true });
+  const removed = run("--uninstall");
+  assert.equal(removed.status, 0);
+  assert.ok(!fs.existsSync(path.join(home, ".claude", "skills", "requirement-kickoff")));
+  assert.ok(fs.existsSync(path.join(home, ".agents", "skills", "mine")));
+});
+
+test("发起对话的目录与仓库不一致或已不存在：流水线拒绝启动，通知对话，不写运行记录", () => {
+  const env = setup();
+  const mismatch = runMain(env, { originCwd: "/somewhere/else" });
+  assert.equal(mismatch.code, 2, mismatch.out);
+  assert.match(mismatch.out, /未启动：发起对话的工作目录是 \/somewhere\/else/);
+  assert.equal(starts(env).length, 0);
+  assert.match(notifications(env)[0].text ?? "", /流水线没有启动/);
+  assert.ok(!fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "state.json")));
+  assert.ok(!fs.existsSync(lockPath(env.repo)));
+
+  const env2 = setup();
+  const missing = runMain(env2, { originMissing: true });
+  assert.equal(missing.code, 2, missing.out);
+  assert.match(missing.out, /找不到发起对话的 agent/);
+});
+
+test("续跑时不传 --origin-agent：沿用并重新校验原来的发起对话", () => {
+  const env = setup();
+  assert.equal(runMain(env, { steps: { implement: { error: "boom" } } }).code, 1);
+  const before = events(env).length;
+  const resumed = runMain(env, {}, ["--resume"], null);
+  assert.equal(resumed.code, 0, resumed.out);
+  const after = events(env).slice(before);
+  assert.deepEqual(after.filter((e) => e.type === "verifyOrigin").map((e) => e.agentId), [ORIGIN]);
+  assert.ok(after.filter((e) => e.type === "start").every((e) => e.parentAgentId === ORIGIN));
+});
+
+// ---------------------------------------------------------------------------
+// Worktree / branch rules
+// ---------------------------------------------------------------------------
+
+function launch(env: Env, extra: string[], scenario: FakeScenario = {}) {
+  return spawnSync(
+    process.execPath,
+    [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN, ...extra],
+    { encoding: "utf8", env: fakeEnv(env, scenario) },
+  );
+}
+
+async function waitForStatus(env: Env, wanted: string[], timeoutMs = 30_000): Promise<string> {
+  const file = path.join(env.repo, FEATURE, ".pipeline", "state.json");
+  const deadline = Date.now() + timeoutMs;
+  let status = "";
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) {
+      status = JSON.parse(fs.readFileSync(file, "utf8")).status;
+      if (wanted.includes(status)) return status;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return status;
+}
+
+test("分支规则：默认分支、分离 HEAD 上拒绝启动；续跑时分支变了也拒绝", () => {
+  const env = setup();
+  execFileSync("git", ["checkout", "-q", "-b", "main"], { cwd: env.repo });
+  const onMain = launch(env, []);
+  assert.equal(onMain.status, 2);
+  assert.match(onMain.stderr, /当前在默认分支 main 上/);
+  assert.match(onMain.stderr, /worktree 工作区/);
+
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: env.repo });
+  execFileSync("git", ["checkout", "-q", "--detach"], { cwd: env.repo });
+  const detached = launch(env, []);
+  assert.equal(detached.status, 2);
+  assert.match(detached.stderr, /detached HEAD/);
+
+  execFileSync("git", ["checkout", "-q", "-b", "feature/20261012-sms-login"], { cwd: env.repo });
+  assert.equal(runMain(env, { steps: { implement: { error: "boom" } } }).code, 1);
+  assert.equal(state(env).branch, "feature/20261012-sms-login");
+  execFileSync("git", ["checkout", "-q", "-b", "other-branch"], { cwd: env.repo });
+  const moved = runMain(env, {}, ["--resume"]);
+  assert.equal(moved.code, 2);
+  assert.match(moved.out, /之前在分支 feature\/20261012-sms-login 上进行，现在的分支是 other-branch/);
+});
+
+test("步骤提示词带上工作分支和档位，并要求不要切换分支", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  const design = events(env).find((e) => e.type === "start" && e.key === "design");
+  assert.match(design?.prompt ?? "", /工作分支：feature\/20261012-sms-login/);
+  assert.match(design?.prompt ?? "", /档位：标准/);
+  assert.match(design?.prompt ?? "", /不要切换分支/);
+});
+
+// ---------------------------------------------------------------------------
+// Status and stop
+// ---------------------------------------------------------------------------
+
+test("进度查询：未启动、运行中、已完成时都给出白话说明", async () => {
+  const env = setup({ permissionPollSeconds: 3 });
+  const before = launch(env, ["--status"]);
+  assert.equal(before.status, 0);
+  assert.match(before.stdout, /还没有启动过开发流水线/);
+
+  // Slow run: the implement step waits on a permission for a while. Every call passes
+  // the same scenario, because the helper rewrites the scenario file the pipeline reads.
+  const scenario = { steps: { implement: { permission: true } } };
+  assert.equal(launch(env, [], scenario).status, 0);
+  const deadline = Date.now() + 15_000;
+  let during = "";
+  while (Date.now() < deadline) {
+    during = launch(env, ["--status"], scenario).stdout;
+    if (/当前步骤：代码实现/.test(during)) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.match(during, /状态：运行中/);
+  assert.match(during, /当前步骤：代码实现，已进行/);
+  assert.match(during, /1\. 方案设计：完成/);
+  assert.match(during, /2\. 方案审核（第 1 轮）：通过/);
+
+  assert.equal(await waitForStatus(env, ["completed"]), "completed");
+  const after = launch(env, ["--status"], scenario).stdout;
+  assert.match(after, /状态：已完成（已完成，可以验收）/);
+  assert.match(after, /完成报告：已完成，可以验收/);
+});
+
+test("停止：结束后台进程、打断当前步骤的 agent、可以续跑", async () => {
+  const env = setup({ permissionPollSeconds: 5 });
+  const scenario = { steps: { implement: { permission: true } } };
+  const started = launch(env, [], scenario);
+  assert.equal(started.status, 0, started.stderr);
+  const pid = Number(/进程 (\d+)/.exec(started.stdout)?.[1]);
+
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline && !events(env).some((e) => e.type === "start" && e.key === "implement")) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const stopped = launch(env, ["--stop"], scenario);
+  assert.equal(stopped.status, 0, stopped.stderr);
+  assert.match(stopped.stdout, /流水线已停止，停在「代码实现」/);
+  assert.match(stopped.stdout, /--resume/);
+
+  assert.ok(!fs.existsSync(`/proc/${pid}`), "后台进程仍在运行");
+  const s = state(env);
+  assert.equal(s.status, "failed");
+  assert.equal(s.stopReason, "已被手动停止");
+  const implementAgent = events(env).find((e) => e.type === "start" && e.key === "implement")?.agentId;
+  const interrupt = events(env).find((e) => e.type === "interrupt");
+  assert.equal(interrupt?.agentId, implementAgent);
+  assert.match(interrupt?.text ?? "", /不要再修改任何文件/);
+  assert.ok(!fs.existsSync(lockPath(env.repo)), "锁没有释放");
+
+  const again = launch(env, ["--stop"], scenario);
+  assert.equal(again.status, 1);
+  assert.match(again.stdout, /当前没有在运行/);
+
+  const before = events(env).length;
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.equal(starts(env, before)[0], "implement");
+});
+
+// ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+const REWORK: FakeScenario = {
+  steps: {
+    design: { result: { has_runnable_service: true } },
+    code_review: { result: { verdict: "changes_required" } },
+    verify: { result: { result: "defects_found" } },
+    reverify: { result: { result: "defects_remaining" } },
+  },
+};
+
+test("快速档：各环节只做一轮，跳过服务启动验证；提示词注明保持简短", () => {
+  const env = setup();
+  const { code, out } = runMain(env, REWORK, ["--profile", "quick"]);
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), [
+    "design",
+    "design_review-r1",
+    "implement",
+    "code_review-r1",
+    "review_fix-r1",
+    "verify",
+    "defect_fix-r1",
+    "reverify-r1",
+    "report",
+  ]);
+  assert.match(out, /快速档不执行服务启动验证/);
+  assert.equal(state(env).profile, "quick");
+  const design = events(env).find((e) => e.type === "start" && e.key === "design");
+  assert.match(design?.prompt ?? "", /档位：快速（小改动：各产物只写必要内容，保持简短）/);
+});
+
+test("档位来源：spec 中的档位行；续跑沿用上次的档位；--profile 优先", () => {
+  const env = setup();
+  const spec = path.join(env.repo, FEATURE, "spec.md");
+  fs.writeFileSync(spec, fs.readFileSync(spec, "utf8").replace("- 需求提出人", "- 档位：快速\n- 需求提出人"));
+  assert.equal(runMain(env, { steps: { implement: { error: "boom" } } }).code, 1);
+  assert.equal(state(env).profile, "quick");
+  assert.equal(runMain(env, {}, ["--resume"]).code, 0);
+  assert.equal(state(env).profile, "quick");
+  assert.equal(runMain(env, REWORK, ["--restart", "--profile", "standard"]).code, 0);
+  assert.equal(state(env).profile, "standard");
+  assert.ok(starts(env).includes("code_review-r3"));
+});
+
+// ---------------------------------------------------------------------------
+// Project customisation
+// ---------------------------------------------------------------------------
+
+test("项目配置：覆盖本机配置，机器相关的字段被忽略并提示", () => {
+  const env = setup();
+  fs.writeFileSync(
+    path.join(env.repo, ".requirement-pipeline.json"),
+    JSON.stringify({ defaultProfile: "quick", daemonUrl: "ws://elsewhere/ws", profiles: { quick: { rounds: { codeReview: 2 } } } }),
+  );
+  const launched = launch(env, ["--status"]);
+  assert.equal(launched.status, 0);
+  const { code, out } = runMain(env, REWORK);
+  assert.equal(code, 0, out);
+  assert.match(out, /配置：.*pipeline.*\.config\.json → .*\.requirement-pipeline\.json/);
+  assert.match(out, /daemonUrl 只能在本机配置中设置，已忽略/);
+  assert.equal(state(env).profile, "quick");
+  assert.deepEqual(
+    starts(env).filter((k) => k.startsWith("code_review")),
+    ["code_review-r1", "code_review-r2"],
+  );
+});
+
+test("项目补充说明：追加到每个步骤；按步骤的说明只出现在对应步骤", () => {
+  const env = setup();
+  const dir = path.join(env.repo, ".requirement-pipeline");
+  fs.mkdirSync(path.join(dir, "steps"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "project-notes.md"), "本项目使用 pnpm，不要改动 legacy/ 目录。");
+  fs.writeFileSync(path.join(dir, "steps", "verify.md"), "端到端测试用 pnpm e2e 运行。");
+  assert.equal(runMain(env, {}).code, 0);
+  const prompts: Record<string, string> = Object.fromEntries(
+    events(env)
+      .filter((e) => e.type === "start")
+      .map((e): [string, string] => [e.key ?? "", e.prompt ?? ""]),
+  );
+  for (const [key, prompt] of Object.entries(prompts)) {
+    assert.match(prompt, /# 本项目的补充说明[\s\S]*本项目使用 pnpm/, `${key} 缺少项目说明`);
+    // The project section comes after the task and before the run context.
+    assert.ok(prompt.indexOf("# 本项目的补充说明") > prompt.indexOf("# 本步骤任务"));
+    assert.ok(prompt.indexOf("# 本项目的补充说明") < prompt.lastIndexOf("<pipeline-context>"));
+  }
+  assert.match(prompts.verify, /## 针对本步骤\s+端到端测试用 pnpm e2e 运行。/);
+  assert.doesNotMatch(prompts.design, /pnpm e2e/);
+});
+
+test("prompts.local：同名文件替换随工具发布的提示词", () => {
+  const env = setup();
+  const local = path.join(TOOL, "prompts.local");
+  const created = !fs.existsSync(local);
+  fs.mkdirSync(local, { recursive: true });
+  const file = path.join(local, "03-design.md");
+  try {
+    fs.writeFileSync(file, "# 本步骤任务：方案设计（团队定制版）\n\n结果文件写 has_runnable_service。");
+    assert.equal(runMain(env, {}).code, 0);
+    const design = events(env).find((e) => e.type === "start" && e.key === "design")?.prompt ?? "";
+    assert.match(design, /团队定制版/);
+    const review = events(env).find((e) => e.type === "start" && e.key === "design_review-r1")?.prompt ?? "";
+    assert.doesNotMatch(review, /团队定制版/);
+  } finally {
+    fs.rmSync(file, { force: true });
+    if (created) fs.rmSync(local, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Milestones
+// ---------------------------------------------------------------------------
+
+test("里程碑通知：方案确定、评审完成、发现问题时各发一次；续跑不重复", () => {
+  const env = setup({ notifyMilestones: true });
+  const failed = runMain(env, {
+    steps: { verify: { result: { result: "defects_found" } }, "defect_fix-r1": { error: "boom" } },
+  });
+  assert.equal(failed.code, 1);
+  const first = notifications(env).map((n) => n.text ?? "");
+  assert.equal(first.length, 4);
+  assert.match(first[0], /通知 · 进展[\s\S]*技术方案已经确定（审核 1 轮），开始写代码/);
+  assert.match(first[1], /代码已经写完并通过检查，开始按验收标准逐条验证功能/);
+  assert.match(first[2], /验证中发现了一些问题，正在修复并重新验证（最多 3 轮）/);
+  assert.match(first[3], /在「缺陷修复」步骤停止/);
+
+  const resumed = runMain(env, { steps: { verify: { result: { result: "defects_found" } } } }, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  const second = notifications(env).slice(4).map((n) => n.text ?? "");
+  assert.equal(second.length, 1, second.join("\n---\n"));
+  assert.match(second[0], /流水线已经结束/);
+});
+
+test("关闭里程碑通知后只发结果", () => {
+  const env = setup({ notifyMilestones: false });
+  assert.equal(runMain(env, REWORK).code, 0);
+  assert.equal(notifications(env).length, 1);
+});
+

@@ -1,0 +1,33 @@
+# Paseo Hub 项目配置：运行环境和 agent 定义。
+# 标有 "改这里" 的值需要换成你自己的。
+
+environments:
+  # 流水线所有步骤共用的运行位置。
+  # 不要在这里配置 worktree：Hub 会为每个步骤各建一个分支，
+  # 步骤之间就看不到彼此的文件了。分支由各步骤的提示词统一管理。
+  project:
+    kind: daemon
+    daemon: my-daemon                  # 改这里：在 Hub 注册的 daemon 名称（paseo hub status 可查看）
+    cwd: /absolute/path/to/your/repo   # 改这里：该机器上项目仓库的绝对路径，
+                                       # 必须是需求对齐阶段（/requirement-kickoff）使用的同一个目录
+
+agents:
+  # 负责设计、实现、修复和报告。
+  builder:
+    provider: claude
+    mode: bypassPermissions
+
+  # 负责方案审核、代码评审和功能验证。
+  # 使用不同的模型提供方，评审时更容易发现实现方自己看不到的问题。
+  # 如果只配置了一个提供方，把这里也改成 claude 即可：每个步骤都是全新的会话，
+  # 评审者仍然不带有实现者的上下文。
+  reviewer:
+    provider: codex
+    mode: full-access
+
+# 说明：
+# - 两个 agent 都以免确认的模式运行，因为流水线无人值守，没有人能点击批准。
+#   这意味着 agent 在该机器上拥有执行命令的权限。请让 cwd 只包含这一个项目，
+#   不要在其中存放生产环境凭据。部署前请阅读 https://paseo.sh/docs/hub/security
+# - 没有写 model 的 agent 使用 daemon 的默认模型。可以加上 model 和 thinkingOptionId
+#   字段来指定，可选的取值在部署时由 daemon 校验。
