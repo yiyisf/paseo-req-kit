@@ -450,3 +450,112 @@ test("req digest：打印项目的需求总览；--notify 发给外部通知；-
   assert.equal(fs.realpathSync(created.cwd), fs.realpathSync(repo));
   assert.match(created.prompt, /digest --notify --repo/);
 });
+
+/** A copy of the published package (package.json "files"), optionally as another version. */
+function packageCopy(dest: string, version?: string, paseoRange?: string): string {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of pkg.files as string[]) {
+    const from = path.join(ROOT, entry);
+    if (fs.existsSync(from)) fs.cpSync(from, path.join(dest, entry), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(dest, "package.json"),
+    JSON.stringify({ ...pkg, version: version ?? pkg.version, reqKit: { paseo: paseoRange ?? pkg.reqKit.paseo } }),
+  );
+  return dest;
+}
+
+function managerEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, REQ_KIT_NPM: path.join(ROOT, "test", "fake-npm.mjs"), ...extra };
+  delete env.REQ_KIT_HOME;
+  delete env.REQ_KIT_VERSIONS_DIR;
+  delete env.PASEO_AGENT_CWD;
+  return env;
+}
+
+test("npm 安装：全局包是版本管理器，req setup 把自己装进 versions/<版本>/node_modules 并启用；其他命令转交给启用的版本", () => {
+  const home = tempHome();
+  const version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+  const manager = packageCopy(path.join(home, "npm-global", "lib", "node_modules", "paseo-req-kit"));
+  const req = (env: NodeJS.ProcessEnv, ...args: string[]) =>
+    spawnSync(process.execPath, [path.join(manager, "bin", "req.mjs"), ...args], { encoding: "utf8", env, cwd: home });
+  const env = managerEnv(home);
+
+  const before = req(env, "list");
+  assert.equal(before.status, 1);
+  assert.match(before.stderr, /先运行：req setup/);
+
+  const setup = req(env, "setup");
+  assert.match(setup.stdout, /启用 /);
+  const root = path.join(home, "tools", "req-kit", "versions", version, "node_modules", "paseo-req-kit");
+  assert.ok(fs.existsSync(path.join(root, "install.mjs")), setup.stdout + setup.stderr);
+  const active = JSON.parse(fs.readFileSync(path.join(home, ".req-kit", "active.json"), "utf8"));
+  assert.equal(active.root, root);
+  assert.ok(fs.readFileSync(path.join(home, ".claude", "skills", "req", "SKILL.md"), "utf8").includes(slash(path.join(root, "bin", "start-pipeline.mjs"))));
+
+  assert.match(req(env, "version").stdout, new RegExp(`管理器 ${version.replace(/\./g, "\\.")}[\\s\\S]*当前启用的版本：${version.replace(/\./g, "\\.")}`));
+  assert.match(req(env, "list").stdout, /还没有需求/, "转交给启用的版本");
+  assert.match(req(env, "check").stdout, /✓ 当前启用的版本/);
+  assert.match(req(env, "versions").stdout, new RegExp(`${version.replace(/\./g, "\\.")}（npm）  ← 当前启用`));
+});
+
+test("npm 升级：只选能支持本机 Paseo 版本的最新版；指定版本、回滚（req use）、Paseo 版本未知时的提示", () => {
+  const home = tempHome();
+  const version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+  const manager = packageCopy(path.join(home, "npm-global", "lib", "node_modules", "paseo-req-kit"));
+  const registry = path.join(home, "registry");
+  packageCopy(path.join(registry, "9.0.0"), "9.0.0", ">=0.11.0 <0.12.0");
+  packageCopy(path.join(registry, "9.1.0"), "9.1.0", ">=0.12.0 <0.13.0");
+  packageCopy(path.join(registry, "9.2.0-beta.1"), "9.2.0-beta.1", ">=0.12.0 <0.13.0");
+  fs.writeFileSync(path.join(registry, "dist-tags.json"), JSON.stringify({ latest: "9.1.0", beta: "9.2.0-beta.1", "paseo-0.11": "9.0.0" }));
+  const req = (extra: NodeJS.ProcessEnv, ...args: string[]) =>
+    spawnSync(process.execPath, [path.join(manager, "bin", "req.mjs"), ...args], {
+      encoding: "utf8",
+      env: managerEnv(home, { FAKE_NPM_REGISTRY: registry, ...extra }),
+      cwd: home,
+    });
+  req({}, "setup");
+
+  const check = req({ REQ_KIT_DAEMON_VERSION: "0.11.2" }, "upgrade", "--check");
+  assert.match(check.stdout, /9\.2\.0-beta\.1 需要 Paseo >=0\.12\.0 <0\.13\.0，本机是 0\.11\.2/);
+  assert.match(check.stdout, /有新版本 9\.0\.0/);
+
+  const up = req({ REQ_KIT_DAEMON_VERSION: "0.11.2" }, "upgrade");
+  assert.match(up.stdout, /已升级到 9\.0\.0/);
+  const versions = path.join(home, "tools", "req-kit", "versions");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, ".req-kit", "active.json"), "utf8")).version, "9.0.0");
+  assert.ok(fs.existsSync(path.join(versions, "9.0.0", "node_modules", "paseo-req-kit", "install.mjs")));
+
+  assert.match(req({ REQ_KIT_DAEMON_VERSION: "0.11.2" }, "upgrade").stdout, /已是最新版本 9\.0\.0（能支持本机 Paseo 的版本中）/);
+  assert.match(req({ REQ_KIT_DAEMON_VERSION: "0.12.1" }, "upgrade", "--check").stdout, /有新版本 9\.1\.0/, "正式版只看正式版");
+  assert.match(req({ REQ_KIT_DAEMON_VERSION: "0.12.1" }, "upgrade", "--check", "--beta").stdout, /有新版本 9\.2\.0-beta\.1/);
+  assert.match(req({ REQ_KIT_DAEMON_VERSION: "none" }, "upgrade", "--check").stdout, /没能读到本机 Paseo 的版本[\s\S]*有新版本 9\.1\.0/);
+
+  assert.match(req({}, "upgrade", "9.1.0").stdout, /已升级到 9\.1\.0/, "指定版本时不按 Paseo 版本筛选");
+  const listed = req({}, "versions").stdout;
+  assert.match(listed, /9\.1\.0（npm）  ← 当前启用/);
+  assert.match(listed, /npm 上的版本：latest 9\.1\.0，beta 9\.2\.0-beta\.1，paseo-0\.11 9\.0\.0/);
+
+  const back = req({}, "use", version);
+  assert.match(back.stdout, /已从 9\.1\.0 切换到/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, ".req-kit", "active.json"), "utf8")).version, version);
+  assert.match(req({}, "use", "8.8.8").stderr, /没有安装 8\.8\.8/);
+  assert.match(req({}, "upgrade", "8.8.8").stderr, /npm 上没有 paseo-req-kit 8\.8\.8/);
+});
+
+test("发布包：skill 引用的安装目录内文件都在 package.json 的 files 里", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const included = (rel: string) => (pkg.files as string[]).some((f) => rel === f || rel.startsWith(f.endsWith("/") ? f : `${f}/`));
+  const missing = new Set<string>();
+  const walk = (dir: string) => {
+    for (const name of fs.readdirSync(dir)) {
+      const file = path.join(dir, name);
+      if (fs.statSync(file).isDirectory()) walk(file);
+      else for (const m of fs.readFileSync(file, "utf8").matchAll(/\{\{REQ_KIT_ROOT\}\}\/([\w./-]+)/g)) if (!included(m[1].replace(/[.)]+$/, ""))) missing.add(m[1]);
+    }
+  };
+  walk(path.join(ROOT, "skills"));
+  assert.deepEqual([...missing], []);
+  assert.ok(!included("evals/README.md") && !included("test/install.test.ts"), "测试和评估不进发布包");
+});

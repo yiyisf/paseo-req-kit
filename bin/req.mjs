@@ -4,12 +4,14 @@
 // Everything it does is also available through the full commands it prints in `req help`.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { findTsxCli, layoutOf } from "./locate.mjs";
 
 const kitRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(kitRoot, "package.json"), "utf8")).version;
-const tsxCli = path.join(kitRoot, "node_modules", "tsx", "dist", "cli.mjs");
+const tsxCli = findTsxCli(kitRoot) ?? path.join(kitRoot, "node_modules", "tsx", "dist", "cli.mjs");
 const launcher = path.join(kitRoot, "bin", "start-pipeline.mjs");
 
 const HELP = `req-kit ${version}（${kitRoot}）
@@ -28,7 +30,10 @@ const HELP = `req-kit ${version}（${kitRoot}）
 本机维护：
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
   req configure                配置向导：选择 builder 和 reviewer 用的 agent
-  req upgrade [版本]           升级到最新版本（或指定版本）；req upgrade --check 只看有没有新版本
+  req upgrade [版本] [--beta]  升级到最新版本（或指定版本），自动选能支持本机 Paseo 的版本；
+                               req upgrade --check 只看有没有新版本
+  req versions                 已安装的版本和 npm 上的版本
+  req use <版本>               切换到已安装的另一个版本（回滚）
   req check                    检查安装状态
   req notify-test [--type blocked|failed|completed|milestone|permission]
                                给配置的外部通知（如企业 IM）发一条测试消息
@@ -36,6 +41,14 @@ const HELP = `req-kit ${version}（${kitRoot}）
 
 <需求> 可以写功能目录（docs/features/20261012-sms-login）、目录名，或名称中能唯一确定的一部分（sms-login）。
 在对话中的用法见 /req；完整说明见 ${path.join(kitRoot, "docs", "guide")}。`;
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
 
 function node(args) {
   const result = spawnSync(process.execPath, args, { stdio: "inherit", windowsHide: true });
@@ -63,6 +76,35 @@ function feature(rest, required) {
 }
 
 const [command = "help", ...rest] = process.argv.slice(2);
+const installer = path.join(kitRoot, "install.mjs");
+const MANAGED = { setup: ["--setup"], upgrade: ["--upgrade"], use: ["--use"], versions: ["--versions"] };
+
+// Installed with `npm i -g`: this copy manages the versions under ~/tools/req-kit/versions
+// and hands every other command to the version in use.
+if (layoutOf(kitRoot).kind === "manager") {
+  if (command in MANAGED) {
+    const flags = command === "upgrade" && rest.includes("--check") ? ["--latest"] : MANAGED[command];
+    process.exit(node([installer, ...flags, ...rest.filter((a) => a !== "--check")]));
+  }
+  const kitHome = process.env.REQ_KIT_HOME?.trim() ? path.resolve(process.env.REQ_KIT_HOME.trim()) : path.join(os.homedir(), ".req-kit");
+  const active = readJson(path.join(kitHome, "active.json"));
+  const activeReq = active?.root ? path.join(active.root, "bin", "req.mjs") : null;
+  if (command === "version" || command === "--version" || command === "-v") {
+    console.log(`req-kit 管理器 ${version}（${kitRoot}）`);
+    console.log(active ? `当前启用的版本：${active.version}（${active.root}）` : "还没有启用任何版本：运行 req setup");
+    process.exit(0);
+  }
+  if (!activeReq || !fs.existsSync(activeReq)) {
+    if (["help", "--help", "-h"].includes(command)) {
+      console.log(`req-kit 管理器 ${version}\n\n还没有安装任何版本。先运行：req setup\n\n其他命令：req versions、req upgrade、req use <版本>`);
+      process.exit(0);
+    }
+    console.error(active ? `当前启用的版本 ${active.version} 不在了（${active.root}）。运行 req versions 查看已安装的版本，再 req use <版本>。` : "还没有安装任何 req-kit 版本。先运行：req setup");
+    process.exit(1);
+  }
+  process.exit(node([activeReq, command, ...rest]));
+}
+
 let code;
 switch (command) {
   case "list":
@@ -93,6 +135,11 @@ switch (command) {
     code = rest.includes("--check")
       ? node([path.join(kitRoot, "install.mjs"), "--latest", ...rest.filter((a) => a !== "--check")])
       : node([path.join(kitRoot, "install.mjs"), "--upgrade", ...rest]);
+    break;
+  case "setup":
+  case "use":
+  case "versions":
+    code = node([installer, ...MANAGED[command], ...rest]);
     break;
   case "check":
     code = node([path.join(kitRoot, "install.mjs"), "--check", ...rest]);

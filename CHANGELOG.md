@@ -2,6 +2,26 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.7.0-beta.1
+
+npm 分发：`npm i -g paseo-req-kit` 安装，按本机 Paseo 的版本升级。
+
+### 使用者会看到的变化
+
+- **用 npm 安装**：`npm i -g paseo-req-kit`，然后 `req setup`、`req configure`。Windows 上 `req` 命令由 npm 放进 PATH，不用再手工设置。全局安装的是一个版本管理器：各版本仍装在 `~/tools/req-kit/versions/<版本>`，正在运行的流水线不受升级影响。
+- **按 Paseo 版本升级**：`req upgrade` 先读本机 Paseo daemon 的版本，只升级到能支持它的 req-kit，并说明跳过了哪些版本、为什么。`req upgrade --beta` 在正式版上也考虑 beta 版。
+- **新命令**：`req versions`（已安装的版本和 npm 上的版本）、`req use <版本>`（切换或回滚）、`req setup`。也提供同名命令 `req-kit`，避免和其他工具的 `req` 冲突。
+- **体检**：显示本机 Paseo 的版本，以及它是否在当前 req-kit 支持的范围内。
+- **发布**：每个版本发布到 npm（beta 版用 `beta` 标签），正式版另有 `paseo-<小版本>` 标签（如 `npm i -g paseo-req-kit@paseo-0.11`）；GitHub Release 附带离线安装包。
+
+### 升级须知
+
+- 已用 git 安装的机器可以照旧 `req upgrade`（来源仍是 git）；想改用 npm：`npm i -g paseo-req-kit` 后 `req setup`，原有的 git 版本保留在 `versions/` 中，可以 `req use` 切回。
+- `req upgrade --from` 现在接受 `npm`、`git` 或 git 地址。
+- 依赖查找改为按 Node 的方式向上查找（npm 安装时依赖在 `versions/<版本>/node_modules`）。
+- 维护者：发布改由 GitHub Actions 完成（`.github/workflows/release.yml`），需要先在 npmjs.com 上把仓库登记为可信发布者，见维护者指南。设计决定见 ADR 0021。
+- 状态文件和配置没有变化。
+
 ## 1.6.0-beta.1
 
 调度：预约开始、等待提醒、中断后自动继续、排队，以及需求总览。

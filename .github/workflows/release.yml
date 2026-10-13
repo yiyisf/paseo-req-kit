@@ -1,0 +1,61 @@
+# Publishes req-kit to npm when a version tag (no "v" prefix, e.g. 1.7.0 or 1.7.0-beta.1) is pushed.
+# Setup once (see docs/guide/维护者指南.md): on npmjs.com, add this repository and this workflow
+# file as a trusted publisher of the package. No npm token is stored anywhere.
+name: release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write   # GitHub Release with the .tgz
+  id-token: write   # npm trusted publishing (OIDC) and provenance
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs a recent npm.
+      - run: npm install -g npm@latest
+      - run: npm ci || npm install
+      - name: Tag and package.json agree
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "$VERSION" = "$GITHUB_REF_NAME" || { echo "package.json is $VERSION, tag is $GITHUB_REF_NAME"; exit 1; }
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run eval:self-check
+      - name: Publish
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) npm publish --tag beta ;;
+            *)   npm publish ;;
+          esac
+      # Trusted publishing covers `npm publish` only; moving a dist-tag needs a token.
+      # Optional: add an NPM_TOKEN secret (automation token) to set paseo-<minor> automatically.
+      - name: Tag by supported Paseo version (releases only)
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          MINOR=$(node -p "require('./package.json').reqKit.paseo.match(/>=?\s*(\d+\.\d+)/)[1]")
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::No NPM_TOKEN secret: run 'npm dist-tag add paseo-req-kit@$GITHUB_REF_NAME paseo-$MINOR' by hand."
+          else
+            npm dist-tag add "paseo-req-kit@$GITHUB_REF_NAME" "paseo-$MINOR"
+          fi
+      - name: Release notes from CHANGELOG.md
+        run: |
+          node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8');const h='## '+process.env.GITHUB_REF_NAME+'\n';const i=s.indexOf(h);const rest=i<0?'':s.slice(i+h.length);const j=rest.search(/^## /m);require('fs').writeFileSync(process.env.RUNNER_TEMP+'/notes.md',(j<0?rest:rest.slice(0,j)).trim()+'\n')"
+      - name: Package for offline and internal registries
+        run: npm pack
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: paseo-req-kit-*.tgz
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body_path: ${{ runner.temp }}/notes.md

@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { KIT_ROOT, kitVersion } from "./locations.js";
+import { findDependency, KIT_ROOT, kitVersion } from "./locations.js";
 
 export const EVALS_DIR = path.join(KIT_ROOT, "evals");
 
@@ -87,7 +87,7 @@ export function prepareRepo(c: EvalCase, base: string): { repo: string; featureD
 }
 
 function runPipeline(repo: string, featureDir: string, c: EvalCase, configPath: string | null, timeoutMs: number): string | null {
-  const tsx = path.join(KIT_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  const tsx = path.join(findDependency("tsx") ?? path.join(KIT_ROOT, "node_modules", "tsx"), "dist", "cli.mjs");
   const args = [tsx, path.join(KIT_ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--profile", c.profile];
   if (configPath) args.push("--config", configPath);
   // Not launched from a chat: no origin, notifications go to the log only.

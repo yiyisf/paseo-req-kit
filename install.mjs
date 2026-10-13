@@ -26,9 +26,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { findDependency, findTsxCli, layoutOf } from "./bin/locate.mjs";
 
 const KIT_ROOT = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = JSON.parse(fs.readFileSync(path.join(KIT_ROOT, "package.json"), "utf8")).version;
+const PKG = JSON.parse(fs.readFileSync(path.join(KIT_ROOT, "package.json"), "utf8"));
+const VERSION = PKG.version;
 const HOME_DIR = os.homedir();
 const KIT_HOME = process.env.REQ_KIT_HOME?.trim() ? path.resolve(process.env.REQ_KIT_HOME.trim()) : path.join(HOME_DIR, ".req-kit");
 const CONFIG = path.join(KIT_HOME, "config.json");
@@ -48,6 +50,10 @@ const { values, positionals } = parseArgs({
     upgrade: { type: "boolean", default: false },
     latest: { type: "boolean", default: false },
     from: { type: "string" },
+    beta: { type: "boolean", default: false },
+    setup: { type: "boolean", default: false },
+    use: { type: "boolean", default: false },
+    versions: { type: "boolean", default: false },
     check: { type: "boolean", default: false },
     quiet: { type: "boolean", default: false },
     uninstall: { type: "boolean", default: false },
@@ -259,8 +265,16 @@ function checkRuntime() {
   const [major] = process.versions.node.split(".").map(Number);
   if (major < 22) fail(`需要 Node.js 22 或更新版本，当前为 ${process.versions.node}`, "升级 Node.js");
   else ok(`Node.js ${process.versions.node}`);
-  const missing = ["tsx", path.join("@getpaseo", "client")].filter((m) => !fs.existsSync(path.join(KIT_ROOT, "node_modules", m)));
-  if (missing.length) fail(`依赖未安装（${missing.join("、")}）`, `在 ${KIT_ROOT} 中执行 npm install`);
+  const missing = ["tsx", "@getpaseo/client"].filter((m) => !findDependency(KIT_ROOT, m));
+  if (missing.length) {
+    const fix =
+      LAYOUT.kind === "npm"
+        ? `重新安装这个版本：删除 ${path.join(LAYOUT.versionsDir, VERSION)} 后运行 req upgrade ${VERSION}`
+        : LAYOUT.kind === "manager"
+          ? `重新安装管理器：npm i -g ${PACKAGE_NAME}`
+          : `在 ${KIT_ROOT} 中执行 npm install`;
+    fail(`依赖未安装（${missing.join("、")}）`, fix);
+  }
   else ok("依赖已安装");
 }
 
@@ -343,17 +357,22 @@ function checkActive(active) {
 }
 
 function prune(active) {
-  const versionsDir = path.dirname(KIT_ROOT);
-  if (path.basename(versionsDir) !== "versions") {
+  const versionsDir = LAYOUT.versionsDir;
+  if (!versionsDir || !fs.existsSync(versionsDir)) {
     say(`这个安装目录不在 versions/ 下（${KIT_ROOT}），没有可以整理的旧版本。`);
     return;
   }
   const history = fs.existsSync(path.join(LOG_DIR, "install.jsonl"))
     ? fs.readFileSync(path.join(LOG_DIR, "install.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => readJson2(l)).filter(Boolean)
     : [];
-  const activeRoot = path.resolve(active?.root ?? KIT_ROOT);
-  const previous = [...history].reverse().find((e) => e.action === "activate" && e.root && path.resolve(e.root) !== activeRoot);
-  const keep = new Set([activeRoot, previous ? path.resolve(previous.root) : null].filter(Boolean));
+  // A version's directory is versions/<version>, whichever layout its program has inside.
+  const versionDirOf = (root) => {
+    const rel = path.relative(versionsDir, path.resolve(root));
+    return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? path.join(versionsDir, rel.split(path.sep)[0]) : path.resolve(root);
+  };
+  const activeDir = versionDirOf(active?.root ?? KIT_ROOT);
+  const previous = [...history].reverse().find((e) => e.action === "activate" && e.root && versionDirOf(e.root) !== activeDir);
+  const keep = new Set([activeDir, previous ? versionDirOf(previous.root) : null].filter(Boolean));
   const candidates = fs
     .readdirSync(versionsDir)
     .map((name) => path.join(versionsDir, name))
@@ -413,7 +432,8 @@ function writeShims() {
     if (name === "req") fs.chmodSync(file, 0o755);
   }
   ok(`req 命令：${SHIM_DIR}`);
-  pathHint();
+  // Installed through the npm manager, `req` is already on PATH.
+  if (LAYOUT.kind !== "npm") pathHint();
 }
 
 function checkShims(active) {
@@ -428,9 +448,11 @@ function checkShims(active) {
 }
 
 // ---------------------------------------------------------------------------
-// Upgrade
+// Versions: where they live, which to install, installing and switching
 // ---------------------------------------------------------------------------
 
+const PACKAGE_NAME = JSON.parse(fs.readFileSync(path.join(KIT_ROOT, "package.json"), "utf8")).name;
+const LAYOUT = layoutOf(KIT_ROOT);
 const RELEASE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 
 /** Semver order; a prerelease (1.3.0-beta.1) comes before its release (1.3.0). */
@@ -456,19 +478,161 @@ function compareVersions(a, b) {
   return 0;
 }
 
+/** "0.11.2" satisfies ">=0.11.0 <0.12.0" (the ranges req-kit declares; prerelease tags ignored). */
+function satisfies(version, range) {
+  const parse = (v) => v.replace(/^v/, "").split(/[-+]/)[0].split(".").map((n) => Number(n) || 0);
+  const cmp = (a, b) => {
+    for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) - (b[i] ?? 0);
+    return 0;
+  };
+  const v = parse(version);
+  return range
+    .trim()
+    .split(/\s+/)
+    .every((part) => {
+      const m = /^(>=|<=|>|<|=)?(.+)$/.exec(part);
+      if (!m) return false;
+      const c = cmp(v, parse(m[2]));
+      return { ">=": c >= 0, "<=": c <= 0, ">": c > 0, "<": c < 0, "=": c === 0 }[m[1] ?? "="];
+    });
+}
+
+/** The program directory of an installed version, in either layout; null when not installed. */
+function versionRoot(versionsDir, version) {
+  const dir = path.join(versionsDir, version);
+  for (const root of [dir, path.join(dir, "node_modules", PACKAGE_NAME)]) {
+    if (readJson(path.join(root, "package.json"))?.version === version && fs.existsSync(path.join(root, "install.mjs"))) return root;
+  }
+  return null;
+}
+
+function installedVersions(versionsDir) {
+  if (!versionsDir || !fs.existsSync(versionsDir)) return [];
+  return fs
+    .readdirSync(versionsDir)
+    .filter((name) => RELEASE.test(name) && versionRoot(versionsDir, name))
+    .sort((a, b) => compareVersions(b, a));
+}
+
+/** The version the machine uses now (the manager's own version does not count). */
+function currentVersion() {
+  return readJson(ACTIVE)?.version ?? VERSION;
+}
+
+/** Runs npm (REQ_KIT_NPM: a script standing in for npm, for tests). */
+function npm(args, options = {}) {
+  const fake = process.env.REQ_KIT_NPM?.trim();
+  const windows = process.platform === "win32" && !fake;
+  const quoted = windows ? args.map((a) => (/[\s&()^]/.test(a) ? `"${a}"` : a)) : args;
+  return spawnSync(fake ? process.execPath : windows ? "npm.cmd" : "npm", fake ? [fake, ...args] : quoted, {
+    encoding: "utf8",
+    windowsHide: true,
+    shell: windows,
+    cwd: options.cwd,
+    timeout: options.timeout ?? 900_000,
+    stdio: options.inherit ? "inherit" : "pipe",
+  });
+}
+
+function npmJson(args) {
+  const result = npm([...args, "--json"], { timeout: 60_000 });
+  if (result.error) throw new Error(`无法运行 npm：${result.error.message}`);
+  if (result.status !== 0) {
+    const lines = `${result.stderr ?? ""}`.trim().split("\n").filter(Boolean);
+    throw new Error(lines.find((l) => /npm (ERR|error)/.test(l)) ?? lines.at(-1) ?? `npm 退出码 ${result.status}`);
+  }
+  return JSON.parse(result.stdout.trim() || "null");
+}
+
+function npmInstall(spec, prefix) {
+  const result = npm(["install", "--prefix", prefix, "--omit=dev", "--no-audit", "--no-fund", "--no-save", spec], { inherit: true });
+  if (result.error) throw new Error(`无法运行 npm：${result.error.message}`);
+  if (result.status !== 0) throw new Error(`npm install ${spec} 失败（退出码 ${result.status}）。请检查网络或 npm 镜像设置（npm config get registry）。`);
+}
+
+/** Installs a version into versions/<version> through npm; the directory appears only when complete. */
+function installWithNpm(versionsDir, version, spec) {
+  const existing = versionRoot(versionsDir, version);
+  if (existing) {
+    console.log(`${version} 已经装过（${existing}），直接使用。`);
+    return existing;
+  }
+  const dest = path.join(versionsDir, version);
+  if (fs.existsSync(dest)) throw new Error(`${dest} 已存在但不是完整的 ${version}。确认没有用处后删除它，再重新运行。`);
+  fs.mkdirSync(versionsDir, { recursive: true });
+  const partial = `${dest}.partial-${Date.now()}`;
+  fs.mkdirSync(partial);
+  try {
+    console.log(`安装 ${version}（npm）→ ${dest}`);
+    npmInstall(spec, partial);
+    fs.renameSync(partial, dest);
+  } finally {
+    fs.rmSync(partial, { recursive: true, force: true });
+  }
+  const root = versionRoot(versionsDir, version);
+  if (!root) throw new Error(`npm 安装完成，但 ${dest} 中没有找到 ${PACKAGE_NAME} ${version}`);
+  return root;
+}
+
+/** Version of the local Paseo daemon, read through this copy's engine; null when unknown. */
+function localDaemonVersion() {
+  const override = process.env.REQ_KIT_DAEMON_VERSION?.trim();
+  if (override) return override === "none" ? null : override;
+  const tsx = findTsxCli(KIT_ROOT);
+  if (!tsx) return null;
+  const result = spawnSync(process.execPath, [tsx, path.join(KIT_ROOT, "engine", "src", "daemon-version.ts"), "--config", CONFIG], {
+    encoding: "utf8",
+    timeout: 20_000,
+    windowsHide: true,
+  });
+  return result.status === 0 ? result.stdout.trim().split("\n")[0] || null : null;
+}
+
+/**
+ * The newest published version worth installing: releases only unless the current one is a
+ * prerelease (or --beta), and one whose reqKit.paseo range accepts the local daemon.
+ */
+function chooseNpmVersion(current) {
+  const raw = npmJson(["view", PACKAGE_NAME, "versions"]);
+  const published = (Array.isArray(raw) ? raw : [raw]).filter((v) => typeof v === "string" && RELEASE.test(v)).sort((a, b) => compareVersions(b, a));
+  const wanted = positionals[0]?.replace(/^v/, "");
+  if (wanted) {
+    if (!published.includes(wanted)) throw new Error(`npm 上没有 ${PACKAGE_NAME} ${wanted}。已发布的版本：${published.slice(0, 8).join("、") || "无"}`);
+    return { version: wanted, notes: [], daemon: null };
+  }
+  const prerelease = current.includes("-") || values.beta;
+  const candidates = published.filter((v) => (prerelease || !v.includes("-")) && compareVersions(v, current) > 0);
+  if (candidates.length === 0) return { version: null, notes: [], daemon: null };
+  const daemon = localDaemonVersion();
+  if (!daemon) {
+    return { version: candidates[0], notes: ["没能读到本机 Paseo 的版本（daemon 没有运行？），没有按 Paseo 版本筛选，升级后请运行 req doctor"], daemon };
+  }
+  const notes = [];
+  for (const version of candidates.slice(0, 10)) {
+    let range = null;
+    try {
+      range = npmJson(["view", `${PACKAGE_NAME}@${version}`, "reqKit.paseo"]);
+    } catch {
+      // The registry did not say; treat it as compatible.
+    }
+    if (typeof range !== "string" || satisfies(daemon, range)) return { version, notes, daemon };
+    notes.push(`${version} 需要 Paseo ${range}，本机是 ${daemon}`);
+  }
+  return { version: null, notes, daemon };
+}
+
 function repoUrl() {
-  if (values.from) return values.from;
+  if (values.from && values.from !== "git" && values.from !== "npm") return values.from;
   if (process.env.REQ_KIT_REPO_URL?.trim()) return process.env.REQ_KIT_REPO_URL.trim();
-  const pkg = JSON.parse(fs.readFileSync(path.join(KIT_ROOT, "package.json"), "utf8"));
-  const repo = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+  const repo = typeof PKG.repository === "string" ? PKG.repository : PKG.repository?.url;
   const github = /^github:(.+)$/.exec(repo ?? "");
   return github ? `https://github.com/${github[1]}.git` : repo;
 }
 
-/** Published versions (git tags), newest first. Throws with a readable message. */
-function publishedVersions(url) {
+/** Git tags as published versions, newest first. Throws with a readable message. */
+function publishedTags(url) {
   const result = spawnSync("git", ["ls-remote", "--tags", "--refs", url], { encoding: "utf8", timeout: 30_000, windowsHide: true });
-  if (result.error) throw new Error(`无法运行 git：${result.error.message}。--upgrade 需要安装 git。`);
+  if (result.error) throw new Error(`无法运行 git：${result.error.message}。从 git 升级需要安装 git。`);
   if (result.status !== 0) {
     const lines = (result.stderr || "").trim().split("\n").filter(Boolean);
     const reason = (lines.find((l) => l.startsWith("fatal:")) ?? lines[0] ?? `git 退出码 ${result.status}`).replace(/^fatal:\s*/, "");
@@ -481,112 +645,202 @@ function publishedVersions(url) {
     .sort((a, b) => compareVersions(b, a));
 }
 
-/** Newest version worth offering: releases only, unless this is already a prerelease. */
-function newest(tags) {
-  const prerelease = VERSION.includes("-");
-  return tags.find((t) => prerelease || !t.includes("-")) ?? null;
+/** Where upgrades come from: npm for npm installs and the manager, git for git installs; --from overrides. */
+function upgradeSource() {
+  if (values.from === "npm") return "npm";
+  if (values.from) return "git";
+  return LAYOUT.kind === "git" ? "git" : "npm";
+}
+
+/** Picks the version to install from git tags. */
+function chooseGitVersion(current) {
+  const tags = publishedTags(repoUrl());
+  const wanted = positionals[0]?.replace(/^v/, "");
+  if (wanted) {
+    const tag = tags.find((t) => t.replace(/^v/, "") === wanted);
+    if (!tag) throw new Error(`没有找到版本 ${wanted}。已发布的版本：${tags.slice(0, 8).join("、") || "无"}`);
+    return { version: wanted, tag, notes: [] };
+  }
+  const prerelease = current.includes("-") || values.beta;
+  const tag = tags.find((t) => (prerelease || !t.includes("-")) && compareVersions(t.replace(/^v/, ""), current) > 0) ?? null;
+  return { version: tag ? tag.replace(/^v/, "") : null, tag, notes: [] };
+}
+
+function installWithGit(versionsDir, version, tag) {
+  const url = repoUrl();
+  const dest = path.join(versionsDir, version);
+  if (versionRoot(versionsDir, version)) {
+    console.log(`${dest} 已经下载过，直接使用。`);
+  } else {
+    if (fs.existsSync(dest)) throw new Error(`${dest} 已存在但不是完整的 ${version}。确认没有用处后删除它，再重新运行。`);
+    console.log(`下载 ${version}：${url} → ${dest}`);
+    const partial = `${dest}.partial-${Date.now()}`;
+    try {
+      const clone = spawnSync("git", ["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", tag, url, partial], {
+        stdio: "inherit",
+        windowsHide: true,
+      });
+      if (clone.status !== 0) throw new Error(`git clone 失败（退出码 ${clone.status}）`);
+      fs.renameSync(partial, dest);
+    } finally {
+      fs.rmSync(partial, { recursive: true, force: true });
+    }
+  }
+  if (process.env.REQ_KIT_SKIP_NPM === "1") {
+    console.log("跳过 npm install（REQ_KIT_SKIP_NPM=1）。");
+  } else if (!findTsxCli(dest)) {
+    console.log("安装依赖（npm install）……");
+    const result = npm(["install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: dest, inherit: true });
+    if (result.status !== 0) throw new Error(`npm install 失败（退出码 ${result.status}）`);
+  }
+  return dest;
+}
+
+/** Runs a version's own installer, which installs its skills and records it as active. */
+function activate(root) {
+  return spawnSync(process.execPath, [path.join(root, "install.mjs"), ...values.target.flatMap((t) => ["--target", t])], {
+    stdio: "inherit",
+    windowsHide: true,
+  }).status ?? 1;
 }
 
 function latestCommand() {
-  const url = repoUrl();
-  let tag;
+  if (!LAYOUT.versionsDir && upgradeSource() === "npm") {
+    console.error(`这个目录（${KIT_ROOT}）是开发用的检出，不能自动升级。`);
+    return 1;
+  }
+  const current = currentVersion();
+  let choice;
   try {
-    tag = newest(publishedVersions(url));
+    choice = upgradeSource() === "npm" ? chooseNpmVersion(current) : chooseGitVersion(current);
   } catch (error) {
     console.error(error.message);
     return 1;
   }
-  if (!tag) {
-    console.error(`${url} 还没有发布过版本。`);
-    return 1;
+  if (values.quiet) {
+    if (choice.version) console.log(choice.version);
+    else console.log(current);
+    return 0;
   }
-  const plain = tag.replace(/^v/, "");
-  if (values.quiet) console.log(plain);
-  else if (compareVersions(plain, VERSION) > 0) console.log(`有新版本 ${plain}（当前 ${VERSION}）。升级：node install.mjs --upgrade（或 req upgrade）`);
-  else console.log(`已是最新版本 ${VERSION}。`);
+  for (const note of choice.notes) console.log(`· ${note}`);
+  if (choice.version) console.log(`有新版本 ${choice.version}（当前 ${current}）。升级：req upgrade`);
+  else console.log(`已是最新版本 ${current}${choice.notes.length ? "（能支持本机 Paseo 的版本中）" : ""}。`);
   return 0;
 }
 
-function run(command, args, options = {}) {
-  const windowsShell = process.platform === "win32" && command === "npm";
-  const result = spawnSync(windowsShell ? "npm.cmd" : command, args, { stdio: "inherit", windowsHide: true, shell: windowsShell, ...options });
-  if (result.error) throw new Error(`无法运行 ${command}：${result.error.message}`);
-  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} 失败（退出码 ${result.status}）`);
-}
-
 function upgradeCommand() {
-  const versionsDir = path.dirname(KIT_ROOT);
-  if (path.basename(versionsDir) !== "versions") {
-    console.error(`这个安装目录不在 versions/ 下（${KIT_ROOT}），无法自动升级。请按 docs/guide/安装与升级.md 手工升级。`);
+  const versionsDir = LAYOUT.versionsDir;
+  if (!versionsDir) {
+    console.error(`这个安装目录不在 versions/ 下（${KIT_ROOT}），无法自动升级。请按 docs/guide/安装与升级.md 安装。`);
     return 1;
   }
-  const url = repoUrl();
-  let tag;
+  const current = currentVersion();
+  const source = upgradeSource();
+  let root;
+  let target;
   try {
-    const tags = publishedVersions(url);
-    if (positionals[0]) {
-      tag = tags.find((t) => t.replace(/^v/, "") === positionals[0].replace(/^v/, ""));
-      if (!tag) throw new Error(`没有找到版本 ${positionals[0]}。已发布的版本：${tags.slice(0, 8).join("、") || "无"}`);
-    } else {
-      tag = newest(tags);
-      if (!tag) throw new Error(`${url} 还没有发布过版本。`);
+    const choice = source === "npm" ? chooseNpmVersion(current) : chooseGitVersion(current);
+    for (const note of choice.notes) console.log(`· ${note}`);
+    if (!choice.version) {
+      console.log(`已是最新版本 ${current}${choice.notes.length ? "（能支持本机 Paseo 的版本中）" : ""}，不需要升级。`);
+      return 0;
     }
-  } catch (error) {
-    console.error(error.message);
-    return 1;
-  }
-  const target = tag.replace(/^v/, "");
-  const dest = path.join(versionsDir, target);
-  const active = readJson(ACTIVE);
-  if (!positionals[0] && compareVersions(target, VERSION) <= 0) {
-    console.log(`已是最新版本 ${VERSION}，不需要升级。`);
-    if (active && path.resolve(active.root) !== path.resolve(KIT_ROOT)) console.log(`（当前启用的是 ${active.version}；要切换到这个目录的版本，运行 node install.mjs）`);
-    return 0;
-  }
-  try {
-    const pkgFile = path.join(dest, "package.json");
-    if (fs.existsSync(pkgFile) && readJson(pkgFile)?.version === target) {
-      console.log(`${dest} 已经下载过，直接使用。`);
-    } else {
-      if (fs.existsSync(dest)) throw new Error(`${dest} 已存在但不是完整的 ${target}。确认没有用处后删除它，再重新运行。`);
-      console.log(`下载 ${target}：${url} → ${dest}`);
-      const partial = `${dest}.partial-${Date.now()}`;
-      try {
-        run("git", ["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", tag, url, partial]);
-        fs.renameSync(partial, dest);
-      } finally {
-        fs.rmSync(partial, { recursive: true, force: true });
-      }
-    }
-    if (process.env.REQ_KIT_SKIP_NPM === "1") {
-      console.log("跳过 npm install（REQ_KIT_SKIP_NPM=1）。");
-    } else if (!fs.existsSync(path.join(dest, "node_modules", "tsx"))) {
-      console.log("安装依赖（npm install）……");
-      run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: dest });
-    }
+    target = choice.version;
+    root =
+      source === "npm"
+        ? installWithNpm(versionsDir, target, `${PACKAGE_NAME}@${target}`)
+        : versionRoot(versionsDir, target) ?? installWithGit(versionsDir, target, choice.tag);
+    if (source === "git") root = versionRoot(versionsDir, target) ?? root;
   } catch (error) {
     console.error(`升级没有完成：${error.message}`);
-    console.error(`当前版本 ${VERSION} 仍然可用，没有任何改动。`);
+    console.error(`当前版本 ${current} 仍然可用，没有任何改动。`);
     return 1;
   }
   console.log(`\n切换到 ${target}：`);
-  const result = spawnSync(process.execPath, [path.join(dest, "install.mjs"), ...values.target.flatMap((t) => ["--target", t])], {
-    stdio: "inherit",
-    windowsHide: true,
-  });
+  const status = activate(root);
   const now = readJson(ACTIVE);
-  if (now?.version === target && path.resolve(now.root) === path.resolve(dest)) {
-    console.log(`\n已升级到 ${target}${result.status === 0 ? "" : "，但还有需要处理的项（见上面的 ✗）"}。正在运行的流水线不受影响，继续用启动它的版本；之后启动的用新版本。`);
-    console.log(`更新内容见 ${path.join(dest, "CHANGELOG.md")}。要回到 ${VERSION}：在 ${KIT_ROOT} 中运行 node install.mjs`);
+  if (now?.version === target && path.resolve(now.root) === path.resolve(root)) {
+    console.log(`\n已升级到 ${target}${status === 0 ? "" : "，但还有需要处理的项（见上面的 ✗）"}。正在运行的流水线不受影响，继续用启动它的版本；之后启动的用新版本。`);
+    console.log(`更新内容见 ${path.join(root, "CHANGELOG.md")}。要回到 ${current}：req use ${current}`);
   } else {
-    console.log(`\n没有切换到 ${target}（见上面的输出），仍在使用 ${VERSION}。`);
+    console.log(`\n没有切换到 ${target}（见上面的输出），仍在使用 ${current}。`);
   }
-  return result.status ?? 1;
+  return status;
+}
+
+/** npm i -g, then `req setup`: installs this package's own version under versions/ and switches to it. */
+function setupCommand() {
+  if (LAYOUT.kind !== "manager") {
+    return activate(KIT_ROOT);
+  }
+  let root;
+  try {
+    root = versionRoot(LAYOUT.versionsDir, VERSION);
+    if (!root) {
+      // Install from this very package (no download of req-kit itself; its dependencies come from npm).
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-pack-"));
+      try {
+        const packed = npmJson(["pack", KIT_ROOT, "--pack-destination", tmp]);
+        const file = Array.isArray(packed) ? packed[0]?.filename : null;
+        if (!file) throw new Error("npm pack 没有生成安装包");
+        root = installWithNpm(LAYOUT.versionsDir, VERSION, path.join(tmp, path.basename(file)));
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  } catch (error) {
+    console.error(`安装没有完成：${error.message}`);
+    return 1;
+  }
+  console.log(`\n启用 ${VERSION}：`);
+  const status = activate(root);
+  const config = readJson(CONFIG);
+  if (config && JSON.stringify(config).includes("CHANGE-ME")) {
+    console.log("\n下一步：运行 req configure，按提示为 builder 和 reviewer 选择 agent。");
+  }
+  return status;
+}
+
+function useCommand() {
+  const version = positionals[0]?.replace(/^v/, "");
+  const versionsDir = LAYOUT.versionsDir;
+  if (!version || !versionsDir) {
+    console.error("用法：req use <版本>。已安装的版本见 req versions。");
+    return 2;
+  }
+  const root = versionRoot(versionsDir, version);
+  if (!root) {
+    console.error(`没有安装 ${version}。已安装：${installedVersions(versionsDir).join("、") || "无"}。要安装它：req upgrade ${version}`);
+    return 1;
+  }
+  return activate(root);
+}
+
+function versionsCommand() {
+  const versionsDir = LAYOUT.versionsDir;
+  const active = readJson(ACTIVE);
+  const installed = installedVersions(versionsDir);
+  console.log(`安装目录：${versionsDir ?? KIT_ROOT}`);
+  if (installed.length === 0) console.log("还没有安装任何版本。运行 req setup。");
+  for (const v of installed) {
+    const root = versionRoot(versionsDir, v);
+    const mark = active && path.resolve(active.root) === path.resolve(root) ? "  ← 当前启用" : "";
+    console.log(`  ${v}${root.includes(`${path.sep}node_modules${path.sep}`) ? "（npm）" : "（git）"}${mark}`);
+  }
+  if (LAYOUT.kind === "manager") console.log(`管理器（req 命令）：${VERSION}，${KIT_ROOT}`);
+  try {
+    const tags = npmJson(["view", PACKAGE_NAME, "dist-tags"]);
+    const shown = Object.entries(tags ?? {}).map(([tag, v]) => `${tag} ${v}`);
+    if (shown.length) console.log(`npm 上的版本：${shown.join("，")}`);
+  } catch {
+    // Offline or not published: nothing to add.
+  }
+  return 0;
 }
 
 function configureCommand() {
-  const tsx = path.join(KIT_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
-  if (!fs.existsSync(tsx)) {
+  const tsx = findTsxCli(KIT_ROOT);
+  if (!tsx) {
     console.error(`依赖未安装：在 ${KIT_ROOT} 中执行 npm install 后再运行配置向导。`);
     return 1;
   }
@@ -602,6 +856,23 @@ function configureCommand() {
 if (values.latest) process.exit(latestCommand());
 if (values.upgrade) process.exit(upgradeCommand());
 if (values.configure) process.exit(configureCommand());
+if (values.setup) process.exit(setupCommand());
+if (values.use) process.exit(useCommand());
+if (values.versions) process.exit(versionsCommand());
+
+// The npm-installed manager is not a version itself: plain installs go through setup,
+// and checks or removal concern the version it manages.
+if (LAYOUT.kind === "manager") {
+  if (values.check || values.uninstall || values.prune) {
+    const activeRoot = readJson(ACTIVE)?.root;
+    if (!activeRoot || !fs.existsSync(path.join(activeRoot, "install.mjs"))) {
+      console.log("✗ 还没有启用任何 req-kit 版本\n    修复：运行 req setup");
+      process.exit(1);
+    }
+    process.exit(spawnSync(process.execPath, [path.join(activeRoot, "install.mjs"), ...process.argv.slice(2)], { stdio: "inherit", windowsHide: true }).status ?? 1);
+  }
+  process.exit(setupCommand());
+}
 
 const active = readJson(ACTIVE);
 const roots = skillRoots(active);

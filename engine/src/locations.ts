@@ -41,3 +41,15 @@ export function kitVersion(): string {
     return "unknown";
   }
 }
+
+/** An installed dependency, looked up like Node does (see bin/locate.mjs). */
+export function findDependency(name: string, fromDir: string = KIT_ROOT): string | null {
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    const candidate = path.join(dir, "node_modules", ...name.split("/"));
+    if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}

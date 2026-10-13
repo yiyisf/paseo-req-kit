@@ -11,8 +11,9 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { ConfigError, DEFAULT_CONFIG, loadConfig, type PipelineConfig, PROJECT_CONFIG_FILE } from "./config.js";
 import { checkProfile, connect, type Report, satisfies } from "./daemon-check.js";
+import { daemonVersion } from "./daemon-version.js";
 import { gitInfo } from "./git.js";
-import { defaultConfigPath, KIT_ROOT, kitVersion } from "./locations.js";
+import { defaultConfigPath, findDependency, KIT_ROOT, kitVersion } from "./locations.js";
 import { PROJECT_DIR } from "./prompts.js";
 import { describeAgentProfile, ProfileResolutionError, profilesFromDaemonConfig, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { isAlive, STATE_VERSION } from "./state.js";
@@ -76,7 +77,7 @@ function installation(offline: boolean): void {
     else if (line.startsWith("⚠")) counts.warn += 1;
     if (line.trim()) console.log(line);
   }
-  const pkg = path.join(KIT_ROOT, "node_modules", "@getpaseo", "client", "package.json");
+  const pkg = path.join(findDependency("@getpaseo/client") ?? path.join(KIT_ROOT, "node_modules", "@getpaseo", "client"), "package.json");
   const range = readPaseoRange();
   if (fs.existsSync(pkg) && range) {
     const sdk = (JSON.parse(fs.readFileSync(pkg, "utf8")) as { version: string }).version;
@@ -163,6 +164,12 @@ async function daemon(config: PipelineConfig | null, configPath: string): Promis
   }
   try {
     report("ok", `已连接 ${settings.daemonUrl}`);
+    const range = readPaseoRange();
+    const version = await daemonVersion(settings.daemonUrl, process.env[settings.daemonPasswordEnv]).catch(() => null);
+    if (version && range) {
+      if (satisfies(version, range)) report("ok", `Paseo ${version}（本版本支持 ${range}）`);
+      else report("warn", `Paseo ${version} 不在本版本 req-kit 支持的范围 ${range} 内`, "运行 req upgrade，它会选能支持这个 Paseo 版本的 req-kit");
+    }
     const snapshot = await client.providers.waitForReady({ timeoutMs: 30_000 });
     const providers = snapshot.entries.map((e) => `${e.provider}（${e.status}）`).join("、");
     report("ok", `可用的 provider：${providers || "（无）"}`);
