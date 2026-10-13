@@ -5,6 +5,7 @@ import { PROFILE_LABELS, type PipelineConfig } from "./config.js";
 import type { RuntimeFactory } from "./runtime.js";
 import { isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
 import { STEPS } from "./steps.js";
+import { describeTotals, totals } from "./usage.js";
 
 export function duration(fromIso: string, to: Date = new Date()): string {
   const minutes = Math.floor((to.getTime() - new Date(fromIso).getTime()) / 60_000);
@@ -82,6 +83,8 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
   }
   const failed = records.filter((h) => h.outcome === "failed").at(-1);
   if (failed && !running) lines.push(`中断在：${stepName(failed)}（${failed.error ?? "原因未知"}）`);
+  if (records.length > 0) lines.push(`用时与用量：${describeTotals(totals(records, now))}`);
+  if (state.attempt > 1) lines.push(`这个需求的全部 ${state.attempt} 次尝试合计：${describeTotals(totals(state.history, now))}`);
   return lines.join("\n");
 }
 

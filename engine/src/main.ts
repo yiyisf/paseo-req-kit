@@ -1,6 +1,7 @@
 // The long-running pipeline process. Normally started by launch.ts, detached
 // from the chat agent's shell; can also be run in the foreground for debugging.
 
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { LAUNCHER, parseLaunchArgs, resumeCommand } from "./cli-args.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
@@ -19,6 +20,14 @@ import {
   statePath,
   writeState,
 } from "./state.js";
+
+function headCommit(repo: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 function log(message: string): void {
   console.log(`[${new Date().toISOString()}] ${message}`);
@@ -88,10 +97,13 @@ async function main(): Promise<number> {
       profile,
       branch: checked.branch,
       milestones: [],
+      incremental: null,
     };
     log(`开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，分支 ${checked.branch ?? "无"}）`);
   } else {
     const startOver = mode.kind !== "resume-reuse";
+    const previousImplemented = Object.keys(mode.previous.results).some((k) => k === "implement") ||
+      mode.previous.history.some((h) => h.stepId === "implement" && h.outcome === "completed");
     state = {
       ...mode.previous,
       status: "running",
@@ -107,6 +119,12 @@ async function main(): Promise<number> {
       branch: checked.branch,
       // Older state files have no milestones; a fresh attempt sends them again.
       milestones: startOver ? [] : (mode.previous.milestones ?? []),
+      incremental:
+        mode.kind === "resume-from-design"
+          ? { fromAttempt: mode.previous.attempt, reason: mode.reason, baseCommit: headCommit(repo), hadImplementation: previousImplemented }
+          : mode.kind === "restart"
+            ? null
+            : (mode.previous.incremental ?? null),
     };
     const why = mode.kind === "resume-from-design" ? mode.reason : mode.kind === "restart" ? "按 --restart 从头开始" : "从中断处继续，已完成的步骤沿用结果";
     log(`继续流水线：${featureDir}（第 ${state.attempt} 次尝试，${PROFILE_LABELS[profile]}档）—— ${why}`);

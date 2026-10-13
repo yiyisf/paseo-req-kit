@@ -43,6 +43,7 @@ function wrap(handle: PaseoAgentHandle): StepAgent {
           id: p.id,
           title: p.title ?? p.description ?? p.name,
         })),
+        usage: result.final?.lastUsage ?? null,
       };
     },
     async followUp(text: string): Promise<void> {

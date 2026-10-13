@@ -15,7 +15,11 @@ function tempHome(withClaude = true): string {
 }
 
 function run(kitRoot: string, home: string, ...args: string[]) {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  return runWith({}, kitRoot, home, ...args);
+}
+
+function runWith(extra: NodeJS.ProcessEnv, kitRoot: string, home: string, ...args: string[]) {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, ...extra };
   delete env.REQ_KIT_HOME;
   const result = spawnSync(process.execPath, [path.join(kitRoot, "install.mjs"), ...args], { encoding: "utf8", env });
   return { code: result.status, out: `${result.stdout}${result.stderr}` };
@@ -242,4 +246,133 @@ test("体检：验证方法缺失、未提交、可能过时、正常四种情�
     env: { ...process.env, GIT_COMMITTER_DATE: "2030-01-01T00:00:00" },
   });
   assert.match(doctor(), /⚠ 验证方法可能过时：构建文件在 .* 改过/);
+});
+
+test("req 命令：安装时写入 ~/.req-kit/bin，指向启用的版本；--check 检查它；卸载时删除", () => {
+  const home = tempHome();
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-tools-"));
+  const v1 = versionDir(base, "1.0.0");
+  const v2 = versionDir(base, "1.1.0");
+  const first = run(v1, home);
+  assert.match(first.out, /req 命令：/);
+  assert.match(first.out, /加入 PATH/);
+  const shim = path.join(home, ".req-kit", "bin", "req");
+  assert.ok(fs.readFileSync(shim, "utf8").includes(slash(path.join(v1, "bin", "req.mjs"))));
+  assert.ok(fs.readFileSync(`${shim}.cmd`, "utf8").includes(path.join(v1, "bin", "req.mjs")));
+  if (process.platform !== "win32") {
+    const version = spawnSync(shim, ["version"], { encoding: "utf8" });
+    assert.match(version.stdout, /req-kit 1\.0\.0/);
+  }
+  run(v2, home);
+  assert.ok(fs.readFileSync(shim, "utf8").includes(slash(path.join(v2, "bin", "req.mjs"))), "切换版本后 req 指向新版本");
+  assert.match(run(v2, home, "--check").out, /✓ req 命令/);
+  fs.writeFileSync(shim, "#!/bin/sh\nexec node /elsewhere/bin/req.mjs\n");
+  assert.match(run(v2, home, "--check").out, /req 命令指向的不是当前启用的版本/);
+  run(v2, home, "--uninstall");
+  assert.ok(!fs.existsSync(shim));
+});
+
+/** A git repository that publishes the given versions as tags, like the GitHub one. */
+function publishedRepo(versions: string[]): string {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-origin-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+  git("init", "-q");
+  git("config", "user.email", "t@example.com");
+  git("config", "user.name", "t");
+  for (const name of ["install.mjs", "config.example.json", "skills", "bin"]) {
+    fs.cpSync(path.join(ROOT, name), path.join(repo, name), { recursive: true });
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  for (const version of versions) {
+    fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ ...pkg, version }));
+    git("add", "-A");
+    git("commit", "-q", "-m", version);
+    git("tag", version);
+  }
+  return repo;
+}
+
+test("一键升级：--latest 查最新版本，--upgrade 下载到 versions/ 并切换；正式版只升到正式版，可以指定版本", () => {
+  const home = tempHome();
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-tools-"));
+  const v1 = versionDir(base, "1.0.0");
+  const origin = publishedRepo(["1.0.0", "1.1.0", "1.2.0-beta.1", "1.2.0-beta.10", "1.2.0-beta.2"]);
+  const env = { REQ_KIT_REPO_URL: origin, REQ_KIT_SKIP_NPM: "1" };
+  run(v1, home);
+
+  assert.equal(runWith(env, v1, home, "--latest", "--quiet").out.trim(), "1.1.0", "正式版只提示正式版");
+  assert.match(runWith(env, v1, home, "--latest").out, /有新版本 1\.1\.0（当前 1\.0\.0）/);
+
+  const up = runWith(env, v1, home, "--upgrade");
+  assert.match(up.out, /已升级到 1\.1\.0/);
+  const v2 = path.join(base, "versions", "1.1.0");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, ".req-kit", "active.json"), "utf8")).root, v2);
+  assert.ok(fs.readFileSync(path.join(home, ".claude", "skills", "req", "SKILL.md"), "utf8").includes(slash(v2)));
+  assert.ok(!fs.readdirSync(path.join(base, "versions")).some((n) => n.includes("partial")));
+
+  assert.match(runWith(env, v2, home, "--upgrade").out, /已是最新版本 1\.1\.0/);
+  const beta = runWith(env, v2, home, "--upgrade", "1.2.0-beta.2");
+  assert.match(beta.out, /已升级到 1\.2\.0-beta\.2/);
+  // From a prerelease, prereleases count, in numeric order (beta.10 after beta.2).
+  const v3 = path.join(base, "versions", "1.2.0-beta.2");
+  assert.equal(runWith(env, v3, home, "--latest", "--quiet").out.trim(), "1.2.0-beta.10");
+
+  const missing = runWith(env, v3, home, "--upgrade", "9.9.9");
+  assert.equal(missing.code, 1);
+  assert.match(missing.out, /没有找到版本 9\.9\.9/);
+  const offline = runWith({ ...env, REQ_KIT_REPO_URL: path.join(base, "no-such-repo") }, v3, home, "--upgrade");
+  assert.equal(offline.code, 1);
+  assert.match(offline.out, /无法读取 .* 的版本列表/);
+});
+
+test("req：帮助、版本、未知命令；status 在没有需求的目录中列出需求", () => {
+  const req = path.join(ROOT, "bin", "req.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-empty-"));
+  const env = { ...process.env };
+  delete env.PASEO_AGENT_CWD;
+  const call = (...args: string[]) => spawnSync(process.execPath, [req, ...args], { encoding: "utf8", cwd: dir, env });
+  assert.match(call().stdout, /req status \[需求\]/);
+  assert.match(call("version").stdout, /req-kit \d+\.\d+\.\d+/);
+  const unknown = call("frobnicate");
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /没有 "frobnicate" 这个命令/);
+  assert.match(call("status").stdout, /还没有需求/);
+  const stop = call("stop");
+  assert.equal(stop.status, 2);
+  assert.match(stop.stderr, /请写出是哪个需求/);
+});
+
+test("req notify-test：给配置的通知模块发一条示例事件；没有配置时说明怎么配", () => {
+  const home = tempHome();
+  run(ROOT, home);
+  fillConfig(home);
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.REQ_KIT_HOME;
+  const notify = (...args: string[]) =>
+    spawnSync(process.execPath, [path.join(ROOT, "bin", "req.mjs"), "notify-test", ...args], { encoding: "utf8", env, cwd: home });
+  const none = notify();
+  assert.equal(none.status, 1);
+  assert.match(none.stdout, /没有配置外部通知/);
+
+  const configFile = path.join(home, ".req-kit", "config.json");
+  const out = path.join(home, "event.json");
+  fs.mkdirSync(path.join(home, ".req-kit", "notifiers"));
+  fs.writeFileSync(
+    path.join(home, ".req-kit", "notifiers", "capture.mjs"),
+    `import fs from "node:fs";\nexport default (event, options) => fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ event, options }));\n`,
+  );
+  const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  config.notifiers = [{ module: "notifiers/capture.mjs", events: ["blocked"], options: { group: "dev" } }];
+  fs.writeFileSync(configFile, JSON.stringify(config));
+  const sent = notify("--type", "blocked");
+  assert.equal(sent.status, 0, sent.stdout + sent.stderr);
+  assert.match(sent.stdout, /外部通知已发送（blocked）/);
+  const { event, options } = JSON.parse(fs.readFileSync(out, "utf8"));
+  assert.equal(event.schema, 1);
+  assert.equal(event.type, "blocked");
+  assert.match(event.text, /^【测试】/);
+  assert.ok(Array.isArray(event.details.questions));
+  assert.deepEqual(options, { group: "dev" });
+  assert.match(notify("--type", "failed").stdout, /没有订阅 failed 事件/);
+  assert.equal(notify("--type", "nonsense").status, 2);
 });

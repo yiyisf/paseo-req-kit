@@ -21,6 +21,8 @@ export interface FakeBehavior {
   invalidFirst?: boolean;
   /** Never writes a valid result, whatever the follow-ups say. */
   neverWritesResult?: boolean;
+  /** The first N agents started for this step end with a transient (rate-limit) error. */
+  transientErrors?: number;
 }
 
 export interface FakeScenario {
@@ -77,6 +79,7 @@ export const createRuntime: RuntimeFactory = async () => {
   const scenarioFile = process.env.FAKE_SCENARIO;
   const scenario: FakeScenario = scenarioFile ? JSON.parse(fs.readFileSync(scenarioFile, "utf8")) : {};
   let counter = 0;
+  const startsByKey = new Map<string, number>();
 
   const runtime: AgentRuntime = {
     async verifyOrigin(agentId, cwd) {
@@ -97,6 +100,9 @@ export const createRuntime: RuntimeFactory = async () => {
       const behavior: FakeBehavior = scenario.steps?.[key] ?? scenario.steps?.[stepId] ?? {};
       const result = behavior.result ?? DEFAULT_RESULTS[stepId];
       const resultAbs = path.join(input.cwd, resultRel);
+      const startNumber = (startsByKey.get(key) ?? 0) + 1;
+      startsByKey.set(key, startNumber);
+      const transient = startNumber <= (behavior.transientErrors ?? 0);
 
       record({
         type: "start",
@@ -139,12 +145,18 @@ export const createRuntime: RuntimeFactory = async () => {
         id,
         async wait(timeoutMs): Promise<WaitOutcome> {
           await new Promise((resolve) => setTimeout(resolve, 5));
-          const base = { error: null, lastMessage: "完成", pendingPermissions: [] };
+          const base = {
+            error: null,
+            lastMessage: "完成",
+            pendingPermissions: [],
+            usage: { inputTokens: 12_000, outputTokens: 800, totalCostUsd: 0.05 },
+          };
           if (behavior.hang) {
             await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 50)));
             return { ...base, status: "timeout" };
           }
           if (behavior.error) return { ...base, status: "error", error: behavior.error };
+          if (transient) return { ...base, status: "error", error: "provider error: rate limit exceeded (429)" };
           if (behavior.permission && turn === 0 && permissionWaits < 2) {
             permissionWaits += 1;
             // The same request is reported on every check until someone answers it.

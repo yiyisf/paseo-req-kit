@@ -29,7 +29,8 @@ node "{{REQ_KIT_ROOT}}/bin/req-doctor.mjs"
 ## 常见问题
 
 - **skill 版本与安装目录不一致**：在要使用的版本目录中运行 `node install.mjs`。
-- **配置中的 provider 还是示例值，或者在 daemon 中不存在**：编辑 `~/.req-kit/config.json`，可用的值见输出中的列表（或运行 `npm run smoke -- check`）。
+- **配置中的 provider 还是示例值，或者在 daemon 中不存在**：在终端运行配置向导 `req configure`（或在安装目录运行 `node install.mjs --configure`），按提示选择即可。向导需要在终端里交互，请用户自己运行，你不要代为运行。
+- **有新版本**（输出中的 ↑ 行）：不是问题，告诉用户可以在终端运行 `req upgrade` 升级；正在运行的流水线不受影响。
 - **连不上 daemon**：确认 Paseo 桌面端或 daemon 在运行；设置了密码时，确认环境变量（默认 `PASEO_DAEMON_PASSWORD`）已设置。
 - **发现卡住的流水线**（状态为运行中但进程已不在）：用 `/req` 说"继续开发"即可从中断处继续。
 - **状态文件需要迁移**：下次继续时会自动迁移并保留备份，无需手动处理。

@@ -15,3 +15,6 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0011 完成后修改 spec 可以继续开发](0011-resume-after-completion.md)
 - [0012 评审小组：首轮并行评审，评审者核实汇总](0012-review-panel.md)
 - [0013 发布不使用 changesets 等工具](0013-no-release-tooling.md)
+- [0014 外部通知只留接口，不内置任何 IM](0014-notifier-slot.md)
+- [0015 需求变更后增量继续，而不是从零重做](0015-incremental-continue.md)
+- [0016 一键升级：从 git 标签下载到 versions/ 再切换](0016-upgrade-from-tags.md)

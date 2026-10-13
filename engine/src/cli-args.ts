@@ -8,20 +8,21 @@ export { LAUNCHER };
 
 export const USAGE = `用法：
   start-pipeline --feature <功能目录> [--profile quick|standard] [--resume | --restart]
-  start-pipeline --feature <功能目录> --status     查看进度
+  start-pipeline [--feature <功能目录>] --status   查看进度（不写 --feature 时：工作区里只有一个需求运行过就看它）
   start-pipeline --feature <功能目录> --stop       停止（之后可用 --resume 继续）
   start-pipeline --list                           列出这个项目所有工作区中的需求
 
   其他选项：[--repo <仓库目录>] [--origin-agent <agent ID>] [--config <配置文件>]
 
-  --feature       功能目录，相对于仓库目录，例如 docs/features/20261012-sms-login
+  --feature       功能目录，相对于仓库目录，例如 docs/features/20261012-sms-login；
+                  也可以只写目录名（20261012-sms-login）或其中能唯一确定的一部分（sms-login）
   --repo          仓库目录。在 Paseo 的聊天中运行时默认为该聊天的工作目录，否则为当前目录
   --origin-agent  发起对话的 agent ID。在 Paseo 的聊天中运行时默认为该聊天（PASEO_AGENT_ID），
                   流水线会把进展和结果发回这个对话；在聊天之外运行且不传时，只写日志。
   --profile       档位：quick（快速，小改动）或 standard（标准）。不传时读取 spec 中的"档位"，
                   再不行用配置中的 defaultProfile
   --resume        从上次中断处继续
-  --restart       丢弃上次的结果，从方案设计重新开始
+  --restart       丢弃上次的结果，完全从零开始（不参考上次的方案和代码）
   --config        配置文件，默认为 ~/.req-kit/config.json（可用环境变量 REQ_KIT_HOME 改变目录）`;
 
 export function parseLaunchArgs(argv: string[]): LaunchArgs {
@@ -46,7 +47,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     console.log(USAGE);
     process.exit(0);
   }
-  if (!values.feature && !values.list) {
+  if (!values.feature && !values.list && !values.status) {
     throw new Error(`缺少 --feature\n\n${USAGE}`);
   }
   const profile = values.profile?.trim().toLowerCase();

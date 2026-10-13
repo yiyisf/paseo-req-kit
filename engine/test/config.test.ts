@@ -68,3 +68,17 @@ test("版本范围判断", () => {
   assert.ok(satisfies("0.11.2", ">=0.11.0 <0.12.0"));
   assert.ok(satisfies("1.0.0", "1.0.0"));
 });
+
+test("通知模块：路径相对声明它的配置文件，\"~/\" 为用户目录；项目配置不能设置", () => {
+  const { machinePath, repo } = files(
+    { agents, notifiers: [{ module: "notifiers/im.mjs" }, { module: "~/im2.mjs", events: ["failed"] }] },
+    undefined,
+    { notifiers: [{ module: "evil.mjs" }] },
+  );
+  const { config, ignored } = loadConfig(machinePath, repo);
+  assert.equal(config.notifiers[0].module, path.join(path.dirname(machinePath), "notifiers", "im.mjs"));
+  assert.equal(config.notifiers[1].module, path.join(os.homedir(), "im2.mjs"));
+  assert.deepEqual(ignored, ["项目配置中的 notifiers"]);
+  const bad = files({ agents, notifiers: [{ module: "x.mjs", events: ["sometimes"] }] });
+  assert.throws(() => loadConfig(bad.machinePath), /notifiers\[0\]\.events 只能包含/);
+});

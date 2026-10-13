@@ -6,7 +6,7 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 - 确认后，引擎在后台按固定顺序驱动一组 Paseo agent：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 →（有常驻服务时）服务启动验证 → 功能验证 →（发现缺陷时）缺陷修复 ⇄ 复验 → 完成报告。
 - 进展、需要决定的问题和最终结论都发回同一个对话；每个步骤以子 agent 的形式挂在对话下。只做本地提交，合并上线由人决定。
 
-当前版本：**1.2.0-beta.1**（第三阶段：质量与分发）。变化见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**1.3.0-beta.1**（便利性与可靠性：配置向导、一键升级、`req` 命令、需求变更后增量继续、临时错误自动重试、用时与用量、企业 IM 通知接口）。变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 体系结构
 
@@ -25,13 +25,14 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
 
 ```bash
-git clone --branch 1.2.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.2.0-beta.1
-cd ~/tools/req-kit/versions/1.2.0-beta.1
+git clone --branch 1.3.0-beta.1 --depth 1 https://github.com/yiyisf/paseo-req-kit ~/tools/req-kit/versions/1.3.0-beta.1
+cd ~/tools/req-kit/versions/1.3.0-beta.1
 npm install
 node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/requirement-pipeline
+node install.mjs --configure   # 配置向导：从 Paseo 中可用的 agent 和模型里选择
 ```
 
-然后编辑 `~/.req-kit/config.json`，为 `builder` 和 `reviewer` 各选一个 agent：
+配置向导会为 `builder` 和 `reviewer` 各选一个 agent，并自动选择不需要确认的模式。也可以手工编辑 `~/.req-kit/config.json`：
 
 | agent | 配置 |
 | --- | --- |
@@ -41,6 +42,8 @@ node install.mjs          # 已装过脚本版的，加 --import-legacy ~/tools/
 | Pi | `{ "provider": "pi/<上游>/<模型 ID>" }`（不写 `modeId`） |
 
 再运行一次 `node install.mjs`，然后 `node bin/req-doctor.mjs --no-project` 检查 daemon 和 agent，并按指南做冒烟测试。
+
+安装器还会在 `~/.req-kit/bin` 写入 `req` 命令（按提示加入 PATH 后可直接使用）：`req list`、`req status`、`req doctor`、`req upgrade`（一键升级）等，`req help` 查看全部。
 
 每个项目建议先在项目根目录的对话中运行一次 `/req-setup`。之后在任意项目的 Paseo 对话中输入 `/req 我想……`（Pi 中为 `/skill:req`）。
 
@@ -70,9 +73,10 @@ npm run eval              # 用真实的 Paseo 和 agent 跑端到端评估
 skills/            安装到各 agent 的 skill（入口、方法、原则、旧入口的引导）
 principles/        原则索引
 engine/            流水线引擎：src/ 程序、prompts/ 步骤提示词、test/ 测试
-bin/               start-pipeline.mjs（启动器）、req-doctor.mjs（体检）
+bin/               start-pipeline.mjs（启动器）、req-doctor.mjs（体检）、req.mjs（req 命令）
+notifiers/         外部通知（企业 IM 等）模板，由使用方实现
 install.mjs        安装、升级、回滚、卸载
-contracts/         spec、状态文件、结果文件的格式约定
+contracts/         spec、状态文件、结果文件、通知事件的格式约定
 docs/              使用指南与设计决定
 test/              安装器、体检、skill 的测试
 evals/             评估：样例仓库、用例、对话剧本

@@ -32,6 +32,7 @@
     }
   },
   "notifyMilestones": true,
+  "notifiers": [],
   "stepTimeoutMinutes": {
     "design": 60,
     "design_review": 30,
@@ -51,6 +52,13 @@
   "resultFollowUps": 2,
   "attachToOriginChat": true,
   "archiveStepAgents": false,
+  "retry": {
+    "attempts": 2,
+    "backoffSeconds": [
+      60,
+      300
+    ]
+  },
   "reviewPanel": {
     "enabled": false,
     "steps": [

@@ -29,7 +29,41 @@ function section(title: string): void {
   console.log(`\n## ${title}\n`);
 }
 
-function installation(): void {
+/** Newer published version, as an informational line; never counted as a problem. */
+function newVersion(): void {
+  const result = spawnSync(process.execPath, [path.join(KIT_ROOT, "install.mjs"), "--latest", "--quiet"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 20_000,
+  });
+  const latest = result.status === 0 ? result.stdout.trim().split("\n")[0] : "";
+  const current = kitVersion();
+  if (!latest) {
+    console.log(`· 无法检查是否有新版本（${(result.stderr ?? "").trim().split("\n").at(-1) || "网络不通或超时"}），不影响使用`);
+  } else if (latest !== current && newer(latest, current)) {
+    console.log(`↑ 有新版本 ${latest}（当前 ${current}）。升级：req upgrade（或在安装目录运行 node install.mjs --upgrade）`);
+  } else {
+    report("ok", `已是最新版本 ${current}`);
+  }
+}
+
+/** a > b in semver order (prereleases before their release). */
+function newer(a: string, b: string): boolean {
+  const parse = (v: string) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(v);
+    return m ? { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null } : null;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return false;
+  for (let i = 0; i < 3; i++) if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] > pb.nums[i];
+  if (pa.pre === pb.pre) return false;
+  if (pa.pre === null) return true;
+  if (pb.pre === null) return false;
+  return pa.pre.localeCompare(pb.pre, "en", { numeric: true }) > 0;
+}
+
+function installation(offline: boolean): void {
   section("安装");
   const result = spawnSync(process.execPath, [path.join(KIT_ROOT, "install.mjs"), "--check", "--quiet"], {
     encoding: "utf8",
@@ -48,6 +82,7 @@ function installation(): void {
     if (satisfies(sdk, range)) report("ok", `Paseo SDK ${sdk}（本版本支持 ${range}）`);
     else report("warn", `Paseo SDK ${sdk} 不在本版本支持的范围 ${range} 内`, "确认 Paseo 与 req-kit 版本匹配，必要时升级 req-kit");
   }
+  if (!offline) newVersion();
 }
 
 function readPaseoRange(): string | null {
@@ -279,7 +314,7 @@ async function main(): Promise<number> {
   const repo = values["no-project"] ? null : path.resolve(values.repo ?? process.env.PASEO_AGENT_CWD ?? process.cwd());
 
   console.log(`req-kit ${kitVersion()} 体检（安装目录 ${KIT_ROOT}）`);
-  installation();
+  installation(values.offline ?? false);
   const config = configuration(configPath, repo);
   if (values.offline) {
     section("Paseo daemon");

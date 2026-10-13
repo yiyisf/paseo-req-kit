@@ -139,11 +139,11 @@ export function preflight(
         "这个需求的流水线已经完成，没有可继续的步骤。要修改需求或修复验收中发现的问题，请先更新并重新确认 spec.md；要原样重跑一遍，请用 --restart。",
       );
     }
-    mode = { kind: "resume-from-design", previous, reason: "流水线完成后 spec.md 被修改过（需求变更或验收发现的问题），从方案设计重新开始" };
+    mode = { kind: "resume-from-design", previous, reason: "流水线完成后 spec.md 被修改过（需求变更或验收发现的问题），从方案设计开始增量处理" };
   } else if (previous.status === "waiting_for_business") {
-    mode = { kind: "resume-from-design", previous, reason: "上次因等待需求方决定而停止，需求可能已更新，从方案设计重新开始" };
+    mode = { kind: "resume-from-design", previous, reason: "上次因等待需求方决定而停止，需求可能已更新，从方案设计开始增量处理" };
   } else if (currentSpecHash(specPath) !== previous.specHash) {
-    mode = { kind: "resume-from-design", previous, reason: "spec.md 在上次运行后被修改过，从方案设计重新开始" };
+    mode = { kind: "resume-from-design", previous, reason: "spec.md 在上次运行后被修改过，从方案设计开始增量处理" };
   } else {
     // "failed", or "running" left behind by a process that died without cleanup.
     mode = { kind: "resume-reuse", previous };

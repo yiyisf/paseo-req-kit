@@ -824,6 +824,8 @@ test("--list：列出所有工作区中的需求及其阶段，同一需求取�
 });
 
 const PANEL = {
+  // Member failures in these tests are not meant to be retried.
+  retry: { attempts: 0, backoffSeconds: [0] },
   reviewPanel: {
     enabled: true,
     members: [
@@ -896,6 +898,134 @@ test("评审小组：开启但没有成员时，启动前就报配置错误", ()
   const result = runMain(env, {});
   assert.notEqual(result.code, 0);
   assert.match(result.out, /开启了 reviewPanel，但 reviewPanel\.members 为空/);
+});
+
+test("外部通知：按配置把事件交给通知模块；模块出错或超时不影响流水线", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-notifier-"));
+  const sink = path.join(dir, "events.jsonl");
+  fs.writeFileSync(
+    path.join(dir, "im.mjs"),
+    `import fs from "node:fs";\nexport default async function notify(event, options) { fs.appendFileSync(${JSON.stringify(sink)}, JSON.stringify({ event, options }) + "\\n"); }\n`,
+  );
+  fs.writeFileSync(path.join(dir, "broken.mjs"), "export default () => { throw new Error('IM 不可用'); };\n");
+  fs.writeFileSync(path.join(dir, "nothing.mjs"), "export const other = 1;\n");
+  const env = setup({
+    notifyMilestones: true,
+    notifiers: [
+      { module: path.join(dir, "im.mjs"), events: ["milestone", "blocked", "completed"], options: { group: "dev" } },
+      { module: path.join(dir, "broken.mjs") },
+      { module: path.join(dir, "nothing.mjs") },
+    ],
+  });
+  const blocked = runMain(env, { steps: { "design_review-r1": { result: { verdict: "blocked", questions: ["过期的验证码能否重发？"] } } } });
+  assert.equal(blocked.code, 3, blocked.out);
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n补充：可以重发。\n");
+  const done = runMain(env, {}, ["--resume"]);
+  assert.equal(done.code, 0, done.out);
+
+  const sent = fs.readFileSync(sink, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(sent.map((s) => s.event.type), ["blocked", "milestone", "milestone", "completed"]);
+  const first = sent[0].event;
+  assert.equal(first.schema, 1);
+  assert.equal(first.feature.title, "短信验证码登录");
+  assert.equal(first.feature.dir, FEATURE);
+  assert.equal(first.branch, "feature/20261012-sms-login");
+  assert.deepEqual(first.details.questions, ["过期的验证码能否重发？"]);
+  assert.match(first.text, /1 个需要需求方决定的问题/);
+  assert.deepEqual(sent[0].options, { group: "dev" });
+  assert.equal(sent[3].event.details.outcome, "completed");
+  assert.match(sent[3].event.details.summary, /可以验收/);
+
+  const log = done.out;
+  assert.match(log, /外部通知失败（completed，.*broken\.mjs）：IM 不可用。不影响流水线/);
+  assert.match(log, /nothing\.mjs 没有导出 notify 函数/);
+});
+
+test("临时错误自动重试：限流等错误换一个 agent 重试并提示检查上次的改动；普通错误不重试；重试用完才失败", () => {
+  const env = setup({ retry: { attempts: 2, backoffSeconds: [0.01] } });
+  const ok = runMain(env, { steps: { implement: { transientErrors: 2 } } });
+  assert.equal(ok.code, 0, ok.out);
+  const implementStarts = events(env).filter((e) => e.type === "start" && e.key === "implement");
+  assert.equal(implementStarts.length, 3);
+  assert.doesNotMatch(implementStarts[0].prompt ?? "", /自动重试/);
+  assert.match(implementStarts[1].prompt ?? "", /自动重试：本步骤上一次因临时错误中断（agent 报告错误：provider error: rate limit exceeded \(429\)）/);
+  assert.equal((implementStarts[2].prompt ?? "").match(/自动重试：/g)?.length, 1, "重试说明只保留一条");
+  assert.match(ok.out, /遇到临时错误.*0\.01 秒后自动重试（第 1 次，最多 2 次）/);
+
+  const plain = setup({ retry: { attempts: 2, backoffSeconds: [0.01] } });
+  assert.equal(runMain(plain, { steps: { implement: { error: "tests failed: syntax error" } } }).code, 1);
+  assert.equal(events(plain).filter((e) => e.type === "start" && e.key === "implement").length, 1);
+
+  const exhausted = setup({ retry: { attempts: 1, backoffSeconds: [0.01] } });
+  assert.equal(runMain(exhausted, { steps: { verify: { transientErrors: 5 } } }).code, 1);
+  assert.match(notifications(exhausted).at(-1)?.text ?? "", /rate limit exceeded \(429\)（已自动重试 1 次）/);
+});
+
+test("需求变更后继续：各步骤在已有方案和代码上增量处理；--restart 则从零开始", () => {
+  const env = setup();
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"], { cwd: env.repo });
+  assert.equal(runMain(env, {}).code, 0);
+  assert.equal(state(env).incremental, null);
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n- **AC-1.2** 新增：验证码 5 分钟过期。\n");
+  const before = events(env).length;
+  assert.equal(runMain(env, {}, ["--resume"]).code, 0);
+  const second = events(env).slice(before).filter((e) => e.type === "start");
+  const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: env.repo, encoding: "utf8" }).trim();
+  for (const e of second) {
+    assert.match(e.prompt ?? "", /# 这次是需求变更后的继续/, `${e.key} 缺少增量说明`);
+    assert.match(e.prompt ?? "", /增量继续：本次是第 2 次尝试，接着第 1 次的工作（流水线完成后 spec\.md 被修改过/);
+    assert.match(e.prompt ?? "", /上一次是否已经写过代码：是/);
+    assert.match(e.prompt ?? "", new RegExp(`本次开始时的提交：${head}`));
+  }
+  assert.equal(state(env).incremental?.fromAttempt, 1);
+
+  const mark = events(env).length;
+  assert.equal(runMain(env, {}, ["--restart"]).code, 0);
+  const third = events(env).slice(mark).filter((e) => e.type === "start");
+  assert.ok(third.every((e) => !(e.prompt ?? "").includes("这次是需求变更后的继续")));
+  assert.equal(state(env).incremental, null);
+});
+
+test("回答了需求方的问题后继续：标记为增量，但上一次没有写过代码", () => {
+  const env = setup();
+  assert.equal(runMain(env, { steps: { "design_review-r1": { result: { verdict: "blocked", questions: ["要不要支持海外手机号？"] } } } }).code, 3);
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n只支持中国大陆手机号。\n");
+  const before = events(env).length;
+  assert.equal(runMain(env, {}, ["--resume"]).code, 0);
+  const design = events(env).slice(before).find((e) => e.type === "start" && e.key === "design")?.prompt ?? "";
+  assert.match(design, /上一次是否已经写过代码：否/);
+  assert.match(design, /上次因等待需求方决定而停止/);
+});
+
+test("用时与用量：每步记录 agent 报告的用量；报告步骤拿到汇总数字；进度查询显示合计", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  const history = state(env).history;
+  assert.ok(history.every((h: { usage?: { inputTokens?: number } }) => h.usage?.inputTokens === 12_000));
+  const report = events(env).find((e) => e.type === "start" && e.key === "report")?.prompt ?? "";
+  const steps = history.length - 1;
+  assert.match(report, new RegExp(`用时与用量（本次尝试，截至报告前）：${steps} 个步骤，agent 合计用时 .+；输入 ${(steps * 1.2).toFixed(1).replace(/\.0$/, "")} 万 tokens`));
+  const status = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--status"], { encoding: "utf8" });
+  assert.match(status.stdout, /用时与用量：\d+ 个步骤，agent 合计用时/);
+});
+
+test("简写：--feature 可以只写名称的一部分；--status 不写 --feature 时自动选唯一运行过的需求", () => {
+  const env = setup();
+  const status = (...extra: string[]) =>
+    spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--status", ...extra], { encoding: "utf8" });
+  // Nothing has run yet: falls back to the list.
+  assert.match(status().stdout, /共 1 个需求/);
+  assert.equal(runMain(env, {}).code, 0);
+  assert.match(status().stdout, /已完成|结束/);
+  assert.match(status("--feature", "sms-login").stdout, /已完成|结束/);
+  fs.mkdirSync(path.join(env.repo, "docs/features/20261013-sms-limit/.pipeline"), { recursive: true });
+  fs.writeFileSync(path.join(env.repo, "docs/features/20261013-sms-limit/spec.md"), "# 短信限流\n");
+  fs.writeFileSync(path.join(env.repo, "docs/features/20261013-sms-limit/.pipeline/state.json"), "{}");
+  assert.match(status().stdout, /多个需求运行过[\s\S]*共 2 个需求/);
+  const ambiguous = status("--feature", "sms");
+  assert.equal(ambiguous.status, 2);
+  assert.match(ambiguous.stderr, /对应多个需求/);
+  assert.match(status("--feature", "nothing-like-this").stderr, /没有找到/);
 });
 
 test("prompts.local：同名文件替换随工具发布的提示词", () => {

@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { NOTIFIER_EVENT_TYPES, type NotifierConfig } from "./notifiers.js";
 import type { StepId } from "./steps.js";
 
 export interface AgentProfile {
@@ -78,6 +80,10 @@ export interface PipelineConfig {
   requiredVersion: string | null;
   /** Optional review panel: several reviewers in parallel, then a consolidation. Off by default. */
   reviewPanel: ReviewPanelSettings;
+  /** External notifiers (e.g. an internal IM). Machine or team config only. */
+  notifiers: NotifierConfig[];
+  /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
+  retry: { attempts: number; backoffSeconds: number[] };
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -115,6 +121,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   teamConfig: null,
   requiredVersion: null,
   reviewPanel: { enabled: false, steps: ["design_review", "code_review"], profiles: ["standard"], members: [] },
+  notifiers: [],
+  retry: { attempts: 2, backoffSeconds: [60, 300] },
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -171,6 +179,7 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
     }
   }
   merged.profiles = profiles;
+  merged.retry = { ...base.retry, ...(isRecord(raw.retry) ? (raw.retry as Partial<PipelineConfig["retry"]>) : {}) };
   merged.reviewPanel = { ...base.reviewPanel, ...(isRecord(raw.reviewPanel) ? (raw.reviewPanel as Partial<ReviewPanelSettings>) : {}) };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
@@ -185,7 +194,7 @@ function validateProvider(label: string, profile: unknown): void {
     throw new ConfigError(`${label}.provider 必须是 "provider/model" 格式，当前为 "${profile.provider}"`);
   }
   if (profile.provider.includes("CHANGE-ME")) {
-    throw new ConfigError(`${label}.provider 还是示例值，请填写真实的 provider/model（npm run smoke -- check 会列出可用的值）`);
+    throw new ConfigError(`${label}.provider 还是示例值，请在终端运行配置向导 req configure（或在 req-kit 安装目录运行 node install.mjs --configure），也可以手工填写真实的 provider/model`);
   }
 }
 
@@ -223,6 +232,19 @@ function validate(config: PipelineConfig): void {
     if (typeof value !== "number" || value <= 0) throw new ConfigError(`stepTimeoutMinutes.${key} 必须是正数`);
   }
   validatePanel(config.reviewPanel);
+  if (!Number.isInteger(config.retry.attempts) || config.retry.attempts < 0) throw new ConfigError("retry.attempts 必须是不小于 0 的整数");
+  if (!Array.isArray(config.retry.backoffSeconds) || config.retry.backoffSeconds.length === 0 || !config.retry.backoffSeconds.every((n) => typeof n === "number" && n >= 0)) {
+    throw new ConfigError("retry.backoffSeconds 必须是非空的秒数数组，例如 [60, 300]");
+  }
+  if (!Array.isArray(config.notifiers)) throw new ConfigError("notifiers 必须是数组");
+  config.notifiers.forEach((n, i) => {
+    if (!isRecord(n) || typeof n.module !== "string" || n.module.trim() === "") {
+      throw new ConfigError(`notifiers[${i}].module 必须是通知模块文件的路径`);
+    }
+    if (n.events !== undefined && (!Array.isArray(n.events) || !n.events.every((e) => NOTIFIER_EVENT_TYPES.includes(e)))) {
+      throw new ConfigError(`notifiers[${i}].events 只能包含 ${NOTIFIER_EVENT_TYPES.join("、")}`);
+    }
+  });
   if (config.requiredVersion !== null && typeof config.requiredVersion !== "string") {
     throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
   }
@@ -239,9 +261,30 @@ export interface LoadedConfig {
   ignored: string[];
 }
 
+/** Keys a project file may not set: they run code or reach outside the repository. */
+const NOT_IN_PROJECT_KEYS = ["notifiers"] as const;
+
+/** Notifier module paths are relative to the file that names them; "~/" is the home directory. */
+function resolveNotifiers(raw: Record<string, unknown>, file: string): Record<string, unknown> {
+  if (!Array.isArray(raw.notifiers)) return raw;
+  raw.notifiers = raw.notifiers.map((n: unknown) => {
+    if (!isRecord(n) || typeof n.module !== "string") return n;
+    const module = n.module.startsWith("~/") || n.module.startsWith("~\\")
+      ? path.join(os.homedir(), n.module.slice(2))
+      : path.resolve(path.dirname(file), n.module);
+    return { ...n, module };
+  });
+  return raw;
+}
+
 /** Removes machine-only keys from a shared (team or project) file, recording them. */
-function stripMachineKeys(raw: Record<string, unknown>, label: string, ignored: string[]): Record<string, unknown> {
-  for (const key of MACHINE_ONLY_KEYS) {
+function stripMachineKeys(
+  raw: Record<string, unknown>,
+  label: string,
+  ignored: string[],
+  extra: readonly string[] = [],
+): Record<string, unknown> {
+  for (const key of [...MACHINE_ONLY_KEYS, ...extra]) {
     if (key in raw) {
       ignored.push(`${label}中的 ${key}`);
       delete raw[key];
@@ -262,7 +305,7 @@ export function loadConfig(configPath: string, repo?: string): LoadedConfig {
       `找不到配置文件 ${configPath}。请在 req-kit 的安装目录运行 node install.mjs，它会生成这个文件；然后填写两个 agent 的 provider/model。`,
     );
   }
-  let config = merge(DEFAULT_CONFIG, readJson(configPath, "配置文件"));
+  let config = merge(DEFAULT_CONFIG, resolveNotifiers(readJson(configPath, "配置文件"), configPath));
   const sources = [configPath];
   const ignored: string[] = [];
 
@@ -271,14 +314,14 @@ export function loadConfig(configPath: string, repo?: string): LoadedConfig {
     if (!fs.existsSync(teamFile)) {
       throw new ConfigError(`找不到本机配置中 teamConfig 指向的团队配置文件：${teamFile}`);
     }
-    config = merge(config, stripMachineKeys(readJson(teamFile, "团队配置文件"), "团队配置", ignored));
+    config = merge(config, resolveNotifiers(stripMachineKeys(readJson(teamFile, "团队配置文件"), "团队配置", ignored), teamFile));
     sources.push(teamFile);
   }
 
   if (repo) {
     const projectFile = path.join(repo, PROJECT_CONFIG_FILE);
     if (fs.existsSync(projectFile)) {
-      config = merge(config, stripMachineKeys(readJson(projectFile, "项目配置文件"), "项目配置", ignored));
+      config = merge(config, stripMachineKeys(readJson(projectFile, "项目配置文件"), "项目配置", ignored, NOT_IN_PROJECT_KEYS));
       sources.push(projectFile);
     }
   }

@@ -9,6 +9,9 @@ import {
   permissionMessage,
   resultFollowUp,
 } from "./messages.js";
+import { kitVersion } from "./locations.js";
+import { type AgentUsage, describeTotals, totals } from "./usage.js";
+import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, StepAgent } from "./runtime.js";
 import { type PipelineState, type StepRecord, writeState } from "./state.js";
@@ -39,6 +42,18 @@ class StepFailure extends Error {
     super(message);
     this.name = "StepFailure";
   }
+}
+
+/**
+ * Errors that usually go away by themselves: provider rate limits and overload,
+ * dropped connections, a restarting daemon. A step that fails this way is started
+ * again after a pause instead of stopping the whole run.
+ */
+const TRANSIENT_ERROR =
+  /rate.?limit|too many requests|\b429\b|overload|\b5(?:02|03|04|29)\b|temporarily|unavailable|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|socket hang up|network|disconnect|连接|无法获取 agent 状态/i;
+
+export function isTransientError(message: string): boolean {
+  return TRANSIENT_ERROR.test(message);
 }
 
 class BusinessDecisionNeeded extends Error {
@@ -105,12 +120,21 @@ function buildPrompt(
     `本步骤：${def.title}（流水线第 ${def.number} 步）`,
   ];
   if (round !== null && maxRounds !== null) lines.push(`轮次：第 ${round} 轮，最多 ${maxRounds} 轮`);
+  const inc = ctx.state.incremental;
+  if (inc) {
+    lines.push(
+      `增量继续：本次是第 ${ctx.state.attempt} 次尝试，接着第 ${inc.fromAttempt} 次的工作（${inc.reason}）`,
+      `上一次是否已经写过代码：${inc.hadImplementation ? "是" : "否"}`,
+      `本次开始时的提交：${inc.baseCommit ?? "（不是 git 仓库）"}`,
+    );
+  }
   if (extras.contextLines) lines.push(...extras.contextLines);
   lines.push(`结果文件：${resultFile}`, `结果文件绝对路径：${path.join(ctx.repo, resultFile)}`, "</pipeline-context>");
   const parts = [readToolPrompt(sources, "00-shared-context.md")];
   const principles = principlesSection(sources);
   if (principles) parts.push(principles);
   parts.push(readToolPrompt(sources, def.promptFile));
+  if (ctx.state.incremental) parts.push(readToolPrompt(sources, "incremental.md"));
   if (extras.criteriaFile) {
     parts.push(
       [
@@ -129,15 +153,47 @@ function buildPrompt(
   return `${parts.join("\n\n")}\n`;
 }
 
+function specTitle(ctx: PipelineContext): string {
+  try {
+    const spec = fs.readFileSync(path.join(ctx.repo, ctx.featureDir, "spec.md"), "utf8");
+    return /^#\s+(.+)$/m.exec(spec)?.[1]?.trim() ?? featureName(ctx.featureDir);
+  } catch {
+    return featureName(ctx.featureDir);
+  }
+}
+
+/** Calls the configured external notifiers (e.g. an internal IM). Never throws. */
+async function notifyExternal(ctx: PipelineContext, type: NotifierEventType, text: string, details: Record<string, unknown>): Promise<void> {
+  if (ctx.config.notifiers.length === 0) return;
+  await dispatchNotifiers(
+    ctx.config.notifiers,
+    {
+      schema: 1,
+      type,
+      at: new Date().toISOString(),
+      kitVersion: kitVersion(),
+      feature: { dir: ctx.featureDir, name: featureName(ctx.featureDir), title: specTitle(ctx) },
+      repo: ctx.repo,
+      branch: ctx.state.branch,
+      profile: ctx.state.profile,
+      originAgentId: ctx.state.originAgentId,
+      text,
+      details,
+    },
+    ctx.log,
+  );
+}
+
 /** Sends a progress note once per run attempt, when enabled. */
 async function milestone(ctx: PipelineContext, id: string, text: string): Promise<void> {
   if (!ctx.config.notifyMilestones || ctx.state.milestones.includes(id)) return;
   ctx.state.milestones.push(id);
   save(ctx);
   await notifyOrigin(ctx, milestoneMessage(text));
+  await notifyExternal(ctx, "milestone", text, { milestone: id });
 }
 
-async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: number): Promise<void> {
+async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: number): Promise<AgentUsage | null> {
   const notifiedPermissions = new Set<string>();
   let consecutiveErrors = 0;
   for (;;) {
@@ -163,7 +219,7 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
     }
     switch (outcome.status) {
       case "idle":
-        return;
+        return outcome.usage ?? null;
       case "timeout":
         continue;
       case "error":
@@ -176,6 +232,11 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
             ctx,
             permissionMessage({ stepTitle: def.title, agentTitle, requests: fresh.map((p) => p.title) }),
           );
+          await notifyExternal(ctx, "permission", `「${def.title}」步骤在等待权限批准，批准前会一直停在这里。`, {
+            stepTitle: def.title,
+            agentTitle,
+            requests: fresh.map((p) => p.title),
+          });
         }
         await ctx.sleep(ctx.config.permissionPollSeconds * 1000);
         continue;
@@ -195,12 +256,49 @@ function readResultFile(file: string, def: StepDef) {
   return validateResult(def.result, raw);
 }
 
+/**
+ * Runs a step; a transient failure (see isTransientError) starts it again with a
+ * fresh agent after a pause, up to config.retry.attempts more times.
+ */
 async function runStep(
   ctx: PipelineContext,
   id: StepId,
   round: number | null = null,
   maxRounds: number | null = null,
   extras: StepExtras = {},
+): Promise<Record<string, unknown>> {
+  const { attempts, backoffSeconds } = ctx.config.retry;
+  for (let retry = 0; ; retry += 1) {
+    try {
+      return await runStepOnce(ctx, id, round, maxRounds, extras);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (!(error instanceof StepFailure) || !isTransientError(message) || retry >= attempts) {
+        if (error instanceof StepFailure && retry > 0) {
+          throw new StepFailure(error.stepTitle, `${message}（已自动重试 ${retry} 次）`);
+        }
+        throw error;
+      }
+      const wait = backoffSeconds.at(Math.min(retry, backoffSeconds.length - 1)) ?? 60;
+      ctx.log(`${error.stepTitle} 遇到临时错误：${message}。${wait} 秒后自动重试（第 ${retry + 1} 次，最多 ${attempts} 次）`);
+      await ctx.sleep(wait * 1000);
+      extras = {
+        ...extras,
+        contextLines: [
+          ...(extras.contextLines ?? []).filter((l) => !l.startsWith("自动重试：")),
+          `自动重试：本步骤上一次因临时错误中断（${message.slice(0, 200)}）。工作区里可能留有上一次没做完的改动，先用 git status 和 git diff 查看，在此基础上继续，不要重复提交`,
+        ],
+      };
+    }
+  }
+}
+
+async function runStepOnce(
+  ctx: PipelineContext,
+  id: StepId,
+  round: number | null,
+  maxRounds: number | null,
+  extras: StepExtras,
 ): Promise<Record<string, unknown>> {
   const def = STEPS[id];
   const key = extras.key ?? stepKey(id, round);
@@ -250,14 +348,14 @@ async function runStep(
     save(ctx);
 
     const deadline = Date.now() + ctx.config.stepTimeoutMinutes[id] * 60_000;
-    await waitForTurn(ctx, agent, def, agentTitle, deadline);
+    record.usage = (await waitForTurn(ctx, agent, def, agentTitle, deadline)) ?? record.usage ?? null;
     let validation = readResultFile(resultAbs, def);
     while (!validation.ok && record.followUps < ctx.config.resultFollowUps) {
       record.followUps += 1;
       save(ctx);
       ctx.log(`${key} 的结果无效（${validation.error}），第 ${record.followUps} 次提醒 agent`);
       await agent.followUp(resultFollowUp({ resultFile: resultAbs, problem: validation.error }));
-      await waitForTurn(ctx, agent, def, agentTitle, deadline);
+      record.usage = (await waitForTurn(ctx, agent, def, agentTitle, deadline)) ?? record.usage ?? null;
       validation = readResultFile(resultAbs, def);
     }
     if (!validation.ok) {
@@ -419,7 +517,11 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
     }
   }
 
-  return runStep(ctx, "report");
+  const thisAttempt = ctx.state.history.filter((h) => h.attempt === ctx.state.attempt);
+  const allAttempts = ctx.state.history;
+  const usageLines = [`用时与用量（本次尝试，截至报告前）：${describeTotals(totals(thisAttempt))}`];
+  if (ctx.state.attempt > 1) usageLines.push(`用时与用量（这个需求的全部尝试）：${describeTotals(totals(allAttempts))}`);
+  return runStep(ctx, "report", null, null, { contextLines: usageLines });
 }
 
 export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome> {
@@ -440,6 +542,16 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         reportPath: `${ctx.featureDir}/report.md`,
       }),
     );
+    const outcomeText: Record<string, string> = {
+      completed: "已完成，可以验收",
+      completed_with_issues: "已完成，但有遗留问题",
+      not_completed: "未完成",
+    };
+    await notifyExternal(ctx, "completed", `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`, {
+      outcome: report.outcome,
+      summary: report.summary,
+      reportPath: `${ctx.featureDir}/report.md`,
+    });
     return "completed";
   } catch (error) {
     if (error instanceof BusinessDecisionNeeded) {
@@ -450,6 +562,10 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         ctx,
         blockedMessage({ featureDir: ctx.featureDir, questions: error.questions, resumeCommand: ctx.resumeCommand }),
       );
+      await notifyExternal(ctx, "blocked", `方案审核发现 ${error.questions.length} 个需要需求方决定的问题，流水线已暂停，请到发起的对话中回答。`, {
+        questions: error.questions,
+        resumeCommand: ctx.resumeCommand,
+      });
       return "waiting_for_business";
     }
     const stepTitle = error instanceof StepFailure ? error.stepTitle : "流水线";
@@ -465,6 +581,12 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         resumeCommand: ctx.resumeCommand,
       }),
     );
+    await notifyExternal(ctx, "failed", `开发流水线在「${stepTitle}」步骤中断：${(error as Error).message}`, {
+      stepTitle,
+      reason: (error as Error).message,
+      logPath: ctx.logPath,
+      resumeCommand: ctx.resumeCommand,
+    });
     return "failed";
   }
 }

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ProfileName } from "./config.js";
+import type { AgentUsage } from "./usage.js";
 import type { StepId } from "./steps.js";
 
 export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed";
@@ -19,6 +20,8 @@ export interface StepRecord {
   followUps: number;
   result: Record<string, unknown> | null;
   error: string | null;
+  /** Latest usage the agent reported for this step; absent in older state files. */
+  usage?: AgentUsage | null;
 }
 
 export interface PipelineState {
@@ -45,6 +48,22 @@ export interface PipelineState {
   branch: string | null;
   /** Progress notes already sent, so a resumed run does not repeat them. */
   milestones: string[];
+  /**
+   * Set when this attempt restarted from design because the requirement changed (or a
+   * business decision was answered): the steps build on the existing design and code
+   * instead of starting over. Absent in older state files.
+   */
+  incremental?: IncrementalInfo | null;
+}
+
+export interface IncrementalInfo {
+  /** Attempt whose work this one continues. */
+  fromAttempt: number;
+  reason: string;
+  /** Commit at the start of this attempt; reviewers look at changes since here. Null outside git. */
+  baseCommit: string | null;
+  /** Whether the previous attempt got as far as writing code. */
+  hadImplementation: boolean;
 }
 
 export function pipelineDir(repo: string, featureDir: string): string {

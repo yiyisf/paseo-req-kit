@@ -11,6 +11,7 @@ import { PROFILE_LABELS, type ProfileName } from "./config.js";
 import { samePath } from "./paths.js";
 import { isSpecConfirmed, specProfile } from "./preflight.js";
 import { isAlive } from "./state.js";
+import { describeTotals, totals } from "./usage.js";
 
 export const FEATURES_DIR = path.join("docs", "features");
 
@@ -30,6 +31,8 @@ export interface FeatureSummary {
   stage: string;
   /** Last change to the feature directory's state or spec, ISO time. */
   updatedAt: string;
+  /** Time and usage of all pipeline attempts, in words; null before the first run. */
+  usage: string | null;
 }
 
 interface Worktree {
@@ -69,6 +72,7 @@ interface RawState {
   pid?: number;
   outcome?: string | null;
   updatedAt?: string;
+  history?: Array<{ attempt: number; startedAt: string; endedAt: string | null; usage?: Record<string, number> | null }>;
 }
 
 function stageOf(confirmed: boolean, state: RawState | null, acceptance: string | null): string {
@@ -129,6 +133,7 @@ export function summarize(worktree: Worktree, name: string): FeatureSummary | nu
     profile: specProfile(spec),
     stage: stageOf(confirmed, state, acceptance),
     updatedAt: new Date(updated || Date.now()).toISOString(),
+    usage: state?.history && state.history.length > 0 ? describeTotals(totals(state.history)) : null,
   };
 }
 
@@ -179,6 +184,38 @@ export function describeFeatures(features: FeatureSummary[], here: string): stri
     lines.push(`   ${facts.join("；")}`);
     const where = isSameDir(f.worktree, here) ? "当前工作区" : `工作区 ${f.worktree}`;
     lines.push(`   位置：${where}${f.branch ? `，分支 ${f.branch}` : ""}`);
+    if (f.usage) lines.push(`   用时与用量：${f.usage}`);
   });
   return lines.join("\n");
+}
+
+/**
+ * Lets people name a requirement the short way. Accepts a feature directory
+ * (docs/features/20261012-sms-login), its name (20261012-sms-login) or a unique part
+ * of the name (sms-login). Returns the directory relative to the repository, "/"-separated.
+ */
+export function resolveFeatureArg(repo: string, arg: string): string {
+  const trimmed = arg.trim().replace(/[\\/]+$/, "");
+  if (/[\\/]/.test(trimmed) || fs.existsSync(path.join(repo, trimmed, "spec.md"))) return trimmed;
+  const root = path.join(repo, FEATURES_DIR);
+  const prefix = FEATURES_DIR.split(path.sep).join("/");
+  const names = fs.existsSync(root) ? fs.readdirSync(root).filter((n) => fs.existsSync(path.join(root, n, "spec.md"))) : [];
+  if (names.includes(trimmed)) return `${prefix}/${trimmed}`;
+  const matches = names.filter((n) => n.toLowerCase().includes(trimmed.toLowerCase()));
+  if (matches.length === 1) return `${prefix}/${matches[0]}`;
+  if (matches.length > 1) {
+    throw new Error(`"${arg}" 对应多个需求：${matches.join("、")}。请写完整的名称。`);
+  }
+  throw new Error(`在 ${prefix} 下没有找到 "${arg}" 对应的需求。用 --list 查看全部需求。`);
+}
+
+/** Requirements in this worktree that have been handed to the pipeline at least once. */
+export function featuresWithRuns(repo: string): string[] {
+  const root = path.join(repo, FEATURES_DIR);
+  if (!fs.existsSync(root)) return [];
+  const prefix = FEATURES_DIR.split(path.sep).join("/");
+  return fs
+    .readdirSync(root)
+    .filter((n) => fs.existsSync(path.join(root, n, ".pipeline", "state.json")))
+    .map((n) => `${prefix}/${n}`);
 }

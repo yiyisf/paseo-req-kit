@@ -14,6 +14,8 @@ export interface WaitOutcome {
   error: string | null;
   lastMessage: string | null;
   pendingPermissions: PendingPermission[];
+  /** Usage the agent reports (its latest snapshot), when the provider reports it. */
+  usage?: import("./usage.js").AgentUsage | null;
 }
 
 export interface StepAgent {

@@ -12,7 +12,7 @@ import { parseLaunchArgs } from "./cli-args.js";
 import { loadConfig, PROFILE_LABELS } from "./config.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeStatus, stopPipeline } from "./control.js";
-import { describeFeatures, listFeatures } from "./features.js";
+import { describeFeatures, featuresWithRuns, listFeatures, resolveFeatureArg } from "./features.js";
 import { normalizeFeatureDir, preflight } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import { ensurePipelineDir, hashFile, pipelineDir, readState, statePath } from "./state.js";
@@ -34,6 +34,30 @@ const configPath = args.configPath ?? defaultConfigPath();
 if (args.list) {
   console.log(describeFeatures(listFeatures(args.repo), args.repo));
   process.exit(0);
+}
+
+// Short names: "sms-login" for docs/features/20261012-sms-login.
+if (args.featureDir && fs.existsSync(args.repo)) {
+  try {
+    args.featureDir = resolveFeatureArg(args.repo, args.featureDir);
+  } catch (error) {
+    if (args.status || args.stop) {
+      console.error((error as Error).message);
+      process.exit(2);
+    }
+    fail((error as Error).message);
+  }
+}
+
+// --status without --feature: the only requirement here that has run, else the list.
+if (args.status && !args.featureDir) {
+  const ran = fs.existsSync(args.repo) ? featuresWithRuns(args.repo) : [];
+  if (ran.length !== 1) {
+    if (ran.length > 1) console.log("这个工作区里有多个需求运行过，请指定要看哪一个（--feature 后写名称即可）。\n");
+    console.log(describeFeatures(listFeatures(args.repo), args.repo));
+    process.exit(0);
+  }
+  args.featureDir = ran[0];
 }
 
 if (args.status || args.stop) {
@@ -102,7 +126,7 @@ const modeText: Record<string, string> = {
   fresh: "新启动",
   restart: "从头重新开始",
   "resume-reuse": "从中断处继续",
-  "resume-from-design": "从方案设计重新开始",
+  "resume-from-design": "需求有变化，从方案设计开始增量处理",
 };
 const profile =
   args.profile ??
