@@ -1668,6 +1668,9 @@ test("状态和总览：研发完成，待测试验证；按阶段统计用时",
 test("测试同事接手：自动新建工作区的需求研发完成后，同一仓库另一个工作区的对话可以开始测试验证；研发阶段不行", async () => {
   const env = setup({ phases: { mode: "gated" } });
   const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+  // The worktree commit made by the launcher needs an identity (CI has no global git config).
+  git(env.repo, "config", "user.email", "t@t");
+  git(env.repo, "config", "user.name", "t");
   git(env.repo, "checkout", "-q", "-b", "main");
   fs.writeFileSync(path.join(env.repo, "README.md"), "app\n");
   git(env.repo, "add", "README.md");

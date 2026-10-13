@@ -281,7 +281,6 @@ export function createRuntimeWithClient(
       const workspace = await client.workspaces.create({
         source: { kind: "worktree", cwd: request.sourceRepo, action: "branch-off", refName: request.baseRef, branchName: request.branchName },
         title: request.title,
-        background: false,
         ...(request.callerAgentId ? { callerAgentId: request.callerAgentId } : {}),
       });
       const directory = workspace.directory ?? (await workspace.refresh())?.workspaceDirectory ?? null;

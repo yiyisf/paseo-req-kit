@@ -30,8 +30,18 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run eval:self-check
+      # Trusted publishing (OIDC) needs the package to exist on npm. For the very first
+      # publish, add an NPM_TOKEN secret (or publish the Release .tgz by hand once).
+      # A version already on npm (a re-run) is skipped, so the Release can still be made.
       - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          NAME=$(node -p "require('./package.json').name")
+          if npm view "$NAME@$GITHUB_REF_NAME" version >/dev/null 2>&1; then
+            echo "::notice::$NAME@$GITHUB_REF_NAME is already on npm; skipping publish."
+            exit 0
+          fi
           case "$GITHUB_REF_NAME" in
             *-*) npm publish --tag beta ;;
             *)   npm publish ;;
