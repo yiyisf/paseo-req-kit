@@ -377,7 +377,7 @@ test("req notify-test：给配置的通知模块发一条示例事件；没有�
   assert.equal(notify("--type", "nonsense").status, 2);
 });
 
-test("体检：paseo.json 的服务没有用 $PASEO_PORT、没有提交时提醒；配置引用 Paseo profile 时显示名称", () => {
+test("体检：paseo.json 的服务没有用 Paseo 分配的端口、没有提交时提醒；配置引用 Paseo profile 时显示名称", () => {
   const home = tempHome();
   run(ROOT, home);
   fillConfig(home);
@@ -402,7 +402,7 @@ test("体检：paseo.json 的服务没有用 $PASEO_PORT、没有提交时提醒
   );
   const out = doctor();
   assert.match(out, /✓ paseo\.json：新建 worktree 时自动准备环境；脚本 2 个，其中服务 web/);
-  assert.match(out, /⚠ paseo\.json 中的服务 web 没有使用 \$PASEO_PORT/);
+  assert.match(out, /⚠ paseo\.json 中的服务 web 没有使用 Paseo 分配的端口/);
   assert.match(out, /⚠ paseo\.json 还没有提交/);
 });
 

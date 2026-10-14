@@ -64,24 +64,29 @@ metadata:
 
 - 失败的命令不要写成可用。查明原因：是环境问题（缺少服务、缺少配置）就写明准备步骤后重试；是项目本身的问题就写进"已知问题"。
 - 启动的服务、容器在结束前关掉。
-- 生成了 `paseo.json` 的服务定义时，设置环境变量 `PASEO_PORT=<一个空闲端口>` 后，用 Paseo 会用的那个 shell（见第 5 步的表）手工跑一遍它的启动命令，确认服务确实监听这个端口，再关掉。
+- 生成了 `paseo.json` 的服务定义时，设置环境变量 `PASEO_PORT=<一个空闲端口>` 后手工跑一遍它的启动命令（`node scripts/paseo/with-port.mjs …`），确认服务确实监听这个端口，再关掉。准备命令也照样跑一遍（`copy-local-files.mjs` 需要设置 `PASEO_SOURCE_CHECKOUT_PATH`）。
 - 不连接生产环境，不使用生产凭据，不触发真实的外部动作。
 
 ## 5. 写文件并展示
 
 - `verify.md`：按 `{{REQ_KIT_ROOT}}/contracts/verify.md` 的结构，第一行之后写"最后核对：<日期>（/req-setup，<全部命令已运行 / 哪些没能运行>）"。只写实际跑通的命令；跑不通的写在"已知问题"。
 - `project-notes.md`：一条一行，只写对做需求有影响的约定。例如"包管理用 pnpm，不要用 npm""数据库变更必须写成 migrations/ 下的迁移脚本""不要改动 legacy/ 目录""提交信息用 Conventional Commits 格式"。
-- `paseo.json`（Paseo 读取，格式见 Paseo 文档的 Git worktrees 一节）：
-  - `worktree.setup`：新建 worktree 后要执行的准备命令，通常是安装依赖（用锁文件对应的命令，例如 `npm ci`、`pnpm install --frozen-lockfile`），以及从主目录复制不提交的本地配置。
-  - `scripts`：常用的命令写成脚本（如 `test`、`lint`）；常驻服务写成 `"type": "service"`，启动命令必须监听 Paseo 分配的端口（环境变量 `PASEO_PORT`），不要写死端口。服务之间互相调用时用环境变量 `PASEO_SERVICE_<名称>_URL`。
-  - **先确认运行 Paseo 的机器是什么系统**（`node -p process.platform`，团队里还有别的系统时一并问用户），因为 Paseo 在不同系统上用不同的 shell 执行这些命令，写法不同：
+- `paseo.json`（Paseo 读取，格式见 Paseo 文档的 Git worktrees 一节）。它会提交、整个团队共用，而团队成员的电脑可能是 macOS、Linux 或 Windows，Paseo 在各系统上用不同的 shell 执行其中的命令（macOS/Linux：bash 和 sh；Windows：准备命令用 PowerShell、脚本用 cmd.exe）。所以**命令一律写成各系统都一样的形式**：只调用程序本身（`npm`、`pnpm`、`node`、`python` 等），不用 shell 的语法——不写 `$变量`、`%变量%`、`$env:变量`，不用 `&&`、`||`、`cp`、`[ -f … ]`、`Copy-Item`。需要读环境变量或判断文件的逻辑交给下面两个脚本：
+  - 把 `{{REQ_KIT_ROOT}}/skills/req-setup/templates/paseo/` 中的 `with-port.mjs` 和 `copy-local-files.mjs` 复制到项目的 `scripts/paseo/`（已有就比较，内容相同不动），和 `paseo.json` 一起提交。它们只依赖 Node.js（req-kit 本来就需要）。
+  - `worktree.setup`：写成数组，一行一条命令。通常是安装依赖（用锁文件对应的命令，例如 `npm ci`、`pnpm install --frozen-lockfile`），以及复制不提交的本地配置：`node scripts/paseo/copy-local-files.mjs .env config/local.json`（来源目录里没有的文件会跳过，不会报错）。
+  - `scripts`：常用的命令写成脚本（如 `test`、`lint`）；常驻服务写成 `"type": "service"`，必须监听 Paseo 分配的端口，不要写死。写法：`node scripts/paseo/with-port.mjs npm run dev -- --port {PORT}`（`{PORT}` 换成 Paseo 分配的端口，同时设置环境变量 `PORT`）；程序本来就读取 `PORT` 环境变量的，`node scripts/paseo/with-port.mjs npm start` 即可。服务之间互相调用的地址，让程序读取环境变量 `PASEO_SERVICE_<名称>_URL`。
+  - 例子：
 
-    | 系统 | `worktree.setup` 用 | `scripts` 用 | 复制本地配置的例子 | 服务端口的例子 |
-    | --- | --- | --- | --- | --- |
-    | macOS、Linux | bash | 系统默认 shell | `[ -f "$PASEO_SOURCE_CHECKOUT_PATH/.env" ] && cp "$PASEO_SOURCE_CHECKOUT_PATH/.env" .env \|\| true` | `npm run dev -- --port $PASEO_PORT` |
-    | Windows | PowerShell（不受执行策略限制） | cmd.exe | `if (Test-Path "$env:PASEO_SOURCE_CHECKOUT_PATH\.env") { Copy-Item "$env:PASEO_SOURCE_CHECKOUT_PATH\.env" .env }` | `npm run dev -- --port %PASEO_PORT%` |
-
-    团队里不同系统混用时，命令只写 `npm ci`、`node scripts/xxx.mjs` 这类各系统都一样的形式：复制配置之类的逻辑放进一个小的 node 脚本，服务在程序里读取环境变量 `PASEO_PORT`（例如 `npm run dev`，由 dev 脚本自己取端口）。写完后运行 `/req-doctor`，它在 Windows 上会指出 bash 写法的命令。
+    ```json
+    {
+      "worktree": { "setup": ["npm ci", "node scripts/paseo/copy-local-files.mjs .env"] },
+      "scripts": {
+        "test": { "command": "npm test" },
+        "web": { "type": "service", "command": "node scripts/paseo/with-port.mjs npm run dev -- --port {PORT}" }
+      }
+    }
+    ```
+  - 团队确定只用一种系统、并且用户明确要求时，才可以用那种系统的 shell 写法；`/req-doctor` 会提示它在其他系统上不能用。
   - 已有 `paseo.json` 时只补充缺少的部分，不改别人写的内容。
   - 在 `verify.md` 的启动服务一节注明：服务已定义在 `paseo.json`，由流水线通过 Paseo 启动；同时保留手工启动的命令，供没有 Paseo 时使用。
 - `.requirement-pipeline.json`：只在需要和本机配置不同的设置时才写，例如 `{ "defaultProfile": "quick" }`。不要写 `daemonUrl`、`daemonPasswordEnv`、`teamConfig`，写了也会被忽略。
@@ -91,6 +96,6 @@ metadata:
 
 ## 6. 确认后提交
 
-用户确认后，只提交这几个文件（和 `.gitignore` 的改动）。`paseo.json` 必须提交：Paseo 新建 worktree 时读取的是基准分支上已提交的版本，提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
+用户确认后，只提交这几个文件（以及 `scripts/paseo/` 和 `.gitignore` 的改动）。`paseo.json` 必须提交：Paseo 新建 worktree 时读取的是基准分支上已提交的版本，提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
 
 最后告诉用户：之后项目的构建、测试或启动方式有变化时，再运行一次 `/req-setup`；也可以直接编辑这些文件。可以运行 `/req-doctor` 确认项目检查全部正常。

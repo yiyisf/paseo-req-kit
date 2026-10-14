@@ -4,7 +4,7 @@
 
 ## 未发布
 
-- **Windows 上的 paseo.json**：Paseo 在 Windows 上用 PowerShell 执行 `worktree.setup`、用 cmd.exe 运行脚本和服务，按 macOS / Linux 写的命令（`$PASEO_PORT`、`[ -f … ] && cp …`）在那里会失败。`/req-setup` 现在先确认系统再按对应写法生成，团队混用时改用各系统一样的写法；`/req-doctor` 在 Windows 上会指出 bash 写法的命令。
+- **paseo.json 跨系统**：Paseo 在各系统上用不同的 shell 执行 `paseo.json` 的命令（macOS/Linux：bash、sh；Windows：准备命令用 PowerShell，脚本和服务用 cmd.exe），之前按 bash 写的命令（`$PASEO_PORT`、`[ -f … ] && cp …`）在 Windows 上会失败。`/req-setup` 现在只写各系统一样的命令，并在项目中写入两个小脚本 `scripts/paseo/with-port.mjs`（服务端口）和 `scripts/paseo/copy-local-files.mjs`（复制本地配置）；`/req-doctor` 按本机系统检查 `paseo.json`，在本机会失败的写法给出警告，只在某个系统能用的写法给出提示。已经用 `/req-setup` 生成过 `paseo.json` 的项目，再运行一次即可更新。
 
 ## 1.7.0-beta.2
 

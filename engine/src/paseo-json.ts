@@ -1,31 +1,73 @@
 // paseo.json checks shared by the doctor.
+//
+// Paseo 0.11 runs project commands with a different shell on each system:
+//   worktree.setup: bash (macOS, Linux) / powershell -ExecutionPolicy Bypass (Windows)
+//   scripts:        the terminal's shell, $SHELL or /bin/sh (macOS, Linux) / cmd.exe (Windows)
+// paseo.json is committed and shared, so commands should work in all of them: plain program
+// invocations, with environment variables read by the program (see /req-setup's helpers).
 
 export type PaseoJson = { worktree?: { setup?: unknown }; scripts?: Record<string, { type?: string; command?: string; port?: number }> };
 
-/**
- * Problems of a paseo.json on a Windows machine. Paseo 0.11 runs worktree.setup commands
- * in PowerShell (powershell -ExecutionPolicy Bypass -Command) and scripts/services in a
- * terminal whose shell is cmd.exe (ComSpec). Commands written for bash fail there.
- */
-export function windowsPaseoJsonIssues(raw: PaseoJson): Array<{ text: string; fix: string }> {
-  const issues: Array<{ text: string; fix: string }> = [];
-  const setup = Array.isArray(raw.worktree?.setup) ? (raw.worktree?.setup as unknown[]) : raw.worktree?.setup ? [raw.worktree.setup] : [];
-  for (const cmd of setup.map(String)) {
-    const bashVar = /(^|[^:\w])\$(?!env:)[A-Za-z_]/.test(cmd);
-    if (bashVar || /\[\s+-[a-z]\s/.test(cmd) || /&&|\|\|/.test(cmd)) {
-      issues.push({
-        text: `paseo.json 的 worktree.setup 中「${cmd.slice(0, 60)}」是 bash 写法；Windows 上 Paseo 用 PowerShell 执行准备命令，会失败`,
-        fix: '改成 PowerShell 写法，例如 if (Test-Path "$env:PASEO_SOURCE_CHECKOUT_PATH\\.env") { Copy-Item "$env:PASEO_SOURCE_CHECKOUT_PATH\\.env" .env }；或改成 node 脚本',
-      });
-    }
+export type ShellStyle = "posix" | "powershell" | "cmd";
+
+const STYLE_NAMES: Record<ShellStyle, string> = { posix: "bash/sh", powershell: "PowerShell", cmd: "cmd.exe" };
+
+/** Shell-specific syntax found in a command (empty: works the same everywhere). */
+export function shellStyles(command: string): ShellStyle[] {
+  const styles = new Set<ShellStyle>();
+  if (/\$env:[A-Za-z_]/i.test(command) || /\b(Test-Path|Copy-Item|Set-Location|Get-ChildItem|Remove-Item)\b/.test(command)) styles.add("powershell");
+  if (/%[A-Za-z_][A-Za-z0-9_]*%/.test(command)) styles.add("cmd");
+  if (/(^|[^:\w`])\$\{?(?!env:)[A-Za-z_]/i.test(command) || /\[\s+-[a-z]\s/.test(command) || /(^|\s)(cp|mv|rm|export)\s/.test(command) || /\|\||&&/.test(command)) {
+    // `&&` works in cmd and PowerShell 7 too, but not in Windows PowerShell 5.1, which Paseo uses for setup.
+    styles.add("posix");
   }
-  for (const [name, s] of Object.entries(raw.scripts ?? {})) {
-    if (/\$\{?[A-Za-z_]/.test(String(s.command ?? ""))) {
+  return [...styles];
+}
+
+function setupCommands(raw: PaseoJson): string[] {
+  const setup = raw.worktree?.setup;
+  if (Array.isArray(setup)) return setup.map(String);
+  return typeof setup === "string" ? setup.split(/\r?\n/).filter((l) => l.trim()) : [];
+}
+
+export interface PaseoJsonIssue {
+  /** "fails": the command will not work on this machine; "portable": it only works on some systems. */
+  kind: "fails" | "portable";
+  text: string;
+  fix: string;
+}
+
+const FIX =
+  "改成各系统都一样的写法：准备命令用 node scripts/paseo/copy-local-files.mjs .env，服务用 node scripts/paseo/with-port.mjs npm run dev -- --port {PORT}（/req-setup 会写入这两个脚本）";
+
+/** Problems of the project's paseo.json for the system Paseo runs on (process.platform by default). */
+export function paseoJsonIssues(raw: PaseoJson, platform: NodeJS.Platform = process.platform): PaseoJsonIssue[] {
+  const windows = platform === "win32";
+  const setupShell: ShellStyle = windows ? "powershell" : "posix";
+  const scriptShell: ShellStyle = windows ? "cmd" : "posix";
+  const issues: PaseoJsonIssue[] = [];
+  const check = (where: string, command: string, shell: ShellStyle) => {
+    const styles = shellStyles(command);
+    if (styles.length === 0) return;
+    const short = command.length > 60 ? `${command.slice(0, 60)}…` : command;
+    const foreign = styles.filter((s) => s !== shell);
+    if (foreign.length > 0) {
       issues.push({
-        text: `paseo.json 中的${s.type === "service" ? "服务" : "脚本"} ${name} 用了 $变量；Windows 上 Paseo 在 cmd.exe 中运行脚本，$PASEO_PORT 这类变量不会被替换`,
-        fix: "改成 cmd 写法 %PASEO_PORT%，或者让程序自己读取环境变量 PASEO_PORT（这样各个系统都能用）",
+        kind: "fails",
+        text: `${where}「${short}」是 ${foreign.map((s) => STYLE_NAMES[s]).join("、")} 写法，这台机器上 Paseo 用 ${STYLE_NAMES[shell]} 执行，会失败`,
+        fix: FIX,
+      });
+    } else {
+      issues.push({
+        kind: "portable",
+        text: `${where}「${short}」用了 ${STYLE_NAMES[shell]} 的写法，在这台机器上可以用，换到其他系统（Windows 和 macOS/Linux 之间）会失败`,
+        fix: FIX,
       });
     }
+  };
+  for (const cmd of setupCommands(raw)) check("paseo.json 的 worktree.setup 中", cmd, setupShell);
+  for (const [name, s] of Object.entries(raw.scripts ?? {})) {
+    check(`paseo.json 的${s.type === "service" ? "服务" : "脚本"} ${name}`, String(s.command ?? ""), scriptShell);
   }
   return issues;
 }

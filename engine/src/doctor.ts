@@ -6,7 +6,7 @@
 // Paseo daemon, and the current project with its pipelines.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { type PaseoJson, windowsPaseoJsonIssues } from "./paseo-json.js";
+import { type PaseoJson, paseoJsonIssues } from "./paseo-json.js";
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -312,12 +312,13 @@ function paseoJson(repo: string, isRepo: boolean): void {
     `paseo.json：${raw.worktree?.setup ? "新建 worktree 时自动准备环境；" : ""}脚本 ${scripts.length} 个${services.length ? `，其中服务 ${services.map(([n]) => n).join("、")}（由流水线通过 Paseo 启动）` : ""}`,
   );
   for (const [name, s] of services) {
-    if (s.port === undefined && !String(s.command ?? "").includes("PASEO_PORT")) {
-      report("warn", `paseo.json 中的服务 ${name} 没有使用 $PASEO_PORT，几个工作区同时运行时会端口冲突`, `让启动命令监听 $PASEO_PORT，例如 "npm run dev -- --port $PASEO_PORT"`);
+    if (s.port === undefined && !/PASEO_PORT|\{PORT\}|with-port/.test(String(s.command ?? ""))) {
+      report("warn", `paseo.json 中的服务 ${name} 没有使用 Paseo 分配的端口（PASEO_PORT），几个工作区同时运行时会端口冲突`, `让服务监听 Paseo 分配的端口，例如 "node scripts/paseo/with-port.mjs npm run dev -- --port {PORT}"（/req-setup 会写入这个脚本）`);
     }
   }
-  if (process.platform === "win32") {
-    for (const issue of windowsPaseoJsonIssues(raw)) report("warn", issue.text, issue.fix);
+  for (const issue of paseoJsonIssues(raw)) {
+    if (issue.kind === "fails") report("warn", issue.text, issue.fix);
+    else info(`${issue.text}。团队都用同一种系统时可以不改；否则：${issue.fix}`);
   }
   if (!isRepo) return;
   try {
