@@ -1,0 +1,15 @@
+{
+  "name": "paseo-req-kit-site",
+  "private": true,
+  "type": "module",
+  "description": "req-kit 产品站点（VitePress）。文档正文来自仓库的 docs/guide、contracts、docs/adr。",
+  "scripts": {
+    "sync": "node scripts/sync-docs.mjs --check",
+    "dev": "npm run sync && vitepress dev",
+    "build": "npm run sync && vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.3"
+  }
+}

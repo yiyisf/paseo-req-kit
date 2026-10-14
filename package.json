@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git+https://github.com/yiyisf/paseo-req-kit.git"
   },
-  "homepage": "https://github.com/yiyisf/paseo-req-kit#readme",
+  "homepage": "https://yiyisf.github.io/paseo-req-kit/",
   "bugs": "https://github.com/yiyisf/paseo-req-kit/issues",
   "keywords": [
     "paseo",
@@ -59,7 +59,8 @@
     "config.example.json",
     "CHANGELOG.md",
     "SCOPE.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public",

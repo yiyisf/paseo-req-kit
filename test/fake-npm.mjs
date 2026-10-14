@@ -20,14 +20,24 @@ function fail(message) {
 }
 
 const [command] = args;
-if (command === "pack") {
+const globalInstall = args.includes("-g") || args.includes("--global");
+// Global prefix: --prefix, else FAKE_NPM_PREFIX. Global packages go to <prefix>/lib/node_modules.
+const globalPrefix = () => (args.includes("--prefix") ? value("--prefix") : process.env.FAKE_NPM_PREFIX);
+if (command === "--version") {
+  process.stdout.write("11.0.0-fake\n");
+} else if (command === "prefix" && globalInstall) {
+  if (!globalPrefix()) fail("no FAKE_NPM_PREFIX");
+  process.stdout.write(`${globalPrefix()}\n`);
+} else if (command === "root" && globalInstall) {
+  process.stdout.write(`${path.join(globalPrefix(), "lib", "node_modules")}\n`);
+} else if (command === "pack") {
   const dir = path.resolve(args[1]);
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   const filename = `${pkg.name}-${pkg.version}.tgz`;
   fs.writeFileSync(path.join(value("--pack-destination"), filename), JSON.stringify({ dir }));
   process.stdout.write(JSON.stringify([{ filename }]));
 } else if (command === "install") {
-  const prefix = value("--prefix");
+  const prefix = globalInstall ? path.join(globalPrefix(), "lib") : value("--prefix");
   const spec = args.at(-1);
   let source;
   if (spec.endsWith(".tgz")) source = JSON.parse(fs.readFileSync(spec, "utf8")).dir;
@@ -39,6 +49,7 @@ if (command === "pack") {
   const pkg = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "utf8"));
   const dest = path.join(prefix, "node_modules", pkg.name);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.rmSync(dest, { recursive: true, force: true });
   fs.cpSync(source, dest, {
     recursive: true,
     filter: (src) => {
@@ -48,7 +59,8 @@ if (command === "pack") {
   });
   for (const dep of ["tsx", "@getpaseo"]) {
     const from = path.join(ROOT, "node_modules", dep);
-    if (fs.existsSync(from)) fs.symlinkSync(fs.realpathSync(from), path.join(prefix, "node_modules", dep), "junction");
+    const link = path.join(prefix, "node_modules", dep);
+    if (fs.existsSync(from) && !fs.existsSync(link)) fs.symlinkSync(fs.realpathSync(from), link, "junction");
   }
 } else if (command === "view") {
   if (!registry) fail("network unavailable");
@@ -57,6 +69,13 @@ if (command === "pack") {
   const at = target.lastIndexOf("@");
   const version = at > 0 ? target.slice(at + 1) : null;
   let out;
+  if (field === "version") {
+    const tags = JSON.parse(fs.readFileSync(path.join(registry, "dist-tags.json"), "utf8"));
+    const resolved = versions.includes(version) ? version : tags[version];
+    if (!resolved) fail(`404 No match found for version ${version}`);
+    process.stdout.write(`${resolved}\n`);
+    process.exit(0);
+  }
   if (field === "versions") out = versions;
   else if (field === "dist-tags") out = JSON.parse(fs.readFileSync(path.join(registry, "dist-tags.json"), "utf8"));
   else if (field === "reqKit.paseo") {

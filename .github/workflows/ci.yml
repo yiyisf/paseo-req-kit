@@ -24,3 +24,9 @@ jobs:
       - run: npm run eval:self-check
       - name: Package contents
         run: npm pack --dry-run
+      - name: Install scripts
+        shell: bash
+        run: |
+          set -o pipefail
+          shellcheck -s sh -f gcc install.sh | sed -E 's/^([^:]+):([0-9]+):([0-9]+): (error|warning|note): (.*)$/::\4 file=\1,line=\2,col=\3::\5/; s/^::note /::notice /'
+          pwsh -NoProfile -Command '$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$errors); if ($errors) { $errors | ForEach-Object { Write-Host "::error file=install.ps1,line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 }'

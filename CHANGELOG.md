@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- **一键安装**：`curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh`（macOS、Linux、Git Bash、WSL），Windows PowerShell 用 `irm …/install.ps1 | iex`。一条命令完成检查环境、安装（npm 上没有时用 GitHub Release 的安装包，npm 全局目录不可写时装到 `~/.req-kit/npm`）、`req setup` 和配置向导，再次运行即升级。
+- **产品站点**：https://yiyisf.github.io/paseo-req-kit/ ，包括首页、快速开始、工作原理、分阶段执行、命令和配置参考，以及由仓库文档生成的指南、文件约定、设计决定和更新记录（`site/`，VitePress）。
 - **paseo.json 跨系统**：Paseo 在各系统上用不同的 shell 执行 `paseo.json` 的命令（macOS/Linux：bash、sh；Windows：准备命令用 PowerShell，脚本和服务用 cmd.exe），之前按 bash 写的命令（`$PASEO_PORT`、`[ -f … ] && cp …`）在 Windows 上会失败。`/req-setup` 现在只写各系统一样的命令，并在项目中写入两个小脚本 `scripts/paseo/with-port.mjs`（服务端口）和 `scripts/paseo/copy-local-files.mjs`（复制本地配置）；`/req-doctor` 按本机系统检查 `paseo.json`，在本机会失败的写法给出警告，只在某个系统能用的写法给出提示。已经用 `/req-setup` 生成过 `paseo.json` 的项目，再运行一次即可更新。
 
 ## 1.7.0-beta.2

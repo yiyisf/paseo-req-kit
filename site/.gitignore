@@ -1,0 +1,15 @@
+# Generated from the repository's documents by scripts/sync-docs.mjs
+/guide/user.md
+/guide/install.md
+/guide/project.md
+/guide/maintainer.md
+/reference/contracts/
+/reference/adr/
+/reference/scope.md
+/changelog.md
+/public/install.sh
+/public/install.ps1
+/.generated.json
+node_modules/
+.vitepress/cache/
+.vitepress/dist/

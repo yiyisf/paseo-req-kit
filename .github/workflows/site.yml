@@ -1,0 +1,57 @@
+# Builds the product site (site/, VitePress) and publishes it to the gh-pages branch.
+# One-time setup: Settings → Pages → Build and deployment → Source "Deploy from a branch",
+# branch gh-pages, folder / (root). The site is then at https://yiyisf.github.io/paseo-req-kit/
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/**", "contracts/**", "CHANGELOG.md", "SCOPE.md", "install.sh", "install.ps1", "package.json", ".github/workflows/site.yml"]
+  pull_request:
+    paths: ["site/**", "docs/**", "contracts/**", "CHANGELOG.md", "SCOPE.md", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the built site to gh-pages
+
+concurrency:
+  group: site
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # "last updated" times come from git history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+      - name: Show build errors
+        if: failure()
+        shell: bash
+        run: |
+          msg=$(tail -n 40 build.log 2>/dev/null | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=site build failed::$msg"
+      - name: Publish to gh-pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd .vitepress/dist
+          touch .nojekyll
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "site: ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
