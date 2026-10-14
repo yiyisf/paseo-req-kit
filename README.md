@@ -22,7 +22,7 @@ req-kit 是运行在 [Paseo](https://paseo.sh) 上的一套需求开发体系，
 
 ## 快速开始
 
-在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
+在运行 Paseo daemon 的机器上（需要 Node.js 22+ 和 Paseo 0.11；新机器从安装 Node.js、Paseo 和 agent 开始的，先看[环境准备](docs/guide/环境准备.md)）：
 
 ```bash
 npm i -g paseo-req-kit        # beta 版：npm i -g paseo-req-kit@beta
@@ -57,6 +57,7 @@ cd ~/tools/req-kit/versions/1.7.0-beta.2 && npm install && node install.mjs && n
 | 读者 | 文档 |
 | --- | --- |
 | 使用者 | [使用者指南](docs/guide/使用者指南.md) |
+| 第一次准备环境的人 | [环境准备](docs/guide/环境准备.md)：Node.js、Paseo 的安装和启动、agent、daemon 密码、各操作系统的差异、公司网络、排错速查 |
 | 安装和维护的人 | [安装与升级](docs/guide/安装与升级.md)：安装、各 agent 配置、冒烟测试、升级、回滚、从脚本版迁移、卸载 |
 | 项目维护者 | [项目定制与运行规则](docs/guide/项目定制与运行规则.md)：项目配置、项目说明、档位、运行规则、注意事项 |
 | 体系维护者 | [维护者指南](docs/guide/维护者指南.md)、[evals/](evals/README.md)、[docs/adr/](docs/adr/)、[contracts/](contracts/)、[SCOPE.md](SCOPE.md)、[.out-of-scope/](.out-of-scope/) |

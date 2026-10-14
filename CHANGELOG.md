@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- **新文档 [环境准备](docs/guide/环境准备.md)**：给第一次准备环境的人，从 Node.js 和 Paseo 的安装、启动（桌面端或命令行 `paseo daemon`）讲到 req-kit 能用为止；包括 agent 的准备提示、daemon 密码要在启动 Paseo 之前设置、macOS / Linux / Windows 的差异（路径、PATH、环境变量、`paseo.json` 写法、PowerShell 执行策略、npm `EACCES`）、公司网络和排错速查。README、安装与升级、使用者指南中加了指向它的链接。
 - **Windows 上的 paseo.json**：Paseo 在 Windows 上用 PowerShell 执行 `worktree.setup`、用 cmd.exe 运行脚本和服务，按 macOS / Linux 写的命令（`$PASEO_PORT`、`[ -f … ] && cp …`）在那里会失败。`/req-setup` 现在先确认系统再按对应写法生成，团队混用时改用各系统一样的写法；`/req-doctor` 在 Windows 上会指出 bash 写法的命令。
 
 ## 1.7.0-beta.2
