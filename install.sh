@@ -5,7 +5,7 @@
 #
 # Options (after `sh -s --` when piped):
 #   --beta               also consider beta versions
-#   --version <v>        install this version, e.g. 1.7.0-beta.2
+#   --version <v>        install this version, e.g. 1.7.0-beta.3
 #   --from npm|release   where to get it: the npm registry, or the GitHub Release .tgz
 #                        (default: npm, falling back to the Release when npm does not have it)
 #   --no-configure       skip the agent configuration wizard
@@ -40,7 +40,7 @@ usage() {
 用法：curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- [选项]
 
   --beta               也考虑 beta 版
-  --version <版本>     安装指定版本，例如 1.7.0-beta.2
+  --version <版本>     安装指定版本，例如 1.7.0-beta.3
   --from npm|release   从 npm 安装，或从 GitHub Release 的安装包安装（默认先 npm，没有再用 Release）
   --no-configure       不运行选择 agent 的配置向导
   -h, --help           显示这段说明
@@ -53,7 +53,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --beta) CHANNEL="beta" ;;
     --version)
-      [ $# -ge 2 ] || die "--version 后面要写版本号，例如 --version 1.7.0-beta.2"
+      [ $# -ge 2 ] || die "--version 后面要写版本号，例如 --version 1.7.0-beta.3"
       VERSION="${2#v}"
       shift
       ;;

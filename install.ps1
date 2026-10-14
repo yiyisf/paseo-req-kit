@@ -5,7 +5,7 @@
 # Piped into iex it is not a script file, so the execution policy does not block it.
 # Options: set them as variables before the command, e.g.
 #   $ReqKitBeta = $true; irm .../install.ps1 | iex
-#   $ReqKitVersion = "1.7.0-beta.2"; irm .../install.ps1 | iex
+#   $ReqKitVersion = "1.7.0-beta.3"; irm .../install.ps1 | iex
 #   $ReqKitFrom = "release"     # npm | release (default: npm, falling back to the Release)
 #   $ReqKitNoConfigure = $true  # skip the agent configuration wizard
 #

@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.s
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --beta             # 包括 beta 版
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --version 1.7.0-beta.2
+curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --version 1.7.0-beta.3
 ```
 
 ::: tip 不能用一键脚本时
