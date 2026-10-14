@@ -5,3 +5,4 @@ node_modules/
 .DS_Store
 # 评估结果（需要留档的基线请手工复制到 evals/baselines/）
 evals/results/
+.vercel

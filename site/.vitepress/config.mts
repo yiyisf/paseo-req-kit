@@ -19,16 +19,18 @@ function adrItems() {
     });
 }
 
+const base = process.env.BASE_URL ?? "/";
+
 export default defineConfig({
   lang: "zh-CN",
   title: "req-kit",
   titleTemplate: ":title · req-kit",
   description: "在 Paseo 中用对话对齐需求，由一组 AI agent 在后台完成设计、实现、评审和验证。给测试、产品、项目经理用的需求开发体系。",
-  base: "/paseo-req-kit/",
+  base,
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/paseo-req-kit/logo.svg" }],
+    ["link", { rel: "icon", type: "image/svg+xml", href: `${base.replace(/\/$/, "")}/logo.svg` }],
     ["meta", { name: "theme-color", content: "#3f6fd8" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:title", content: "req-kit：从一句需求，到可验收的功能" }],

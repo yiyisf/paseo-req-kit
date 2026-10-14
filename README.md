@@ -18,8 +18,9 @@
 </p>
 
 <p align="center">
-  <a href="https://yiyisf.github.io/paseo-req-kit/">文档站点</a> ·
-  <a href="https://yiyisf.github.io/paseo-req-kit/guide/getting-started">快速开始</a> ·
+  <a href="https://paseo-req-kit.vercel.app/">文档站点 (Vercel)</a> ·
+  <a href="https://yiyisf.github.io/paseo-req-kit/">GitHub Pages 镜像</a> ·
+  <a href="https://paseo-req-kit.vercel.app/guide/getting-started">快速开始</a> ·
   <a href="docs/guide/使用者指南.md">使用者指南</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
@@ -88,7 +89,7 @@ Paseo 对话（/req）                              流水线引擎（后台进�
 - 每一步写一个 JSON 结果文件，流水线据此决定下一步，不解析 agent 的回复文字。
 - 运行状态在 `.pipeline/state.json`，可以随时查看进度、暂停、继续。
 
-详见 [工作原理](https://yiyisf.github.io/paseo-req-kit/guide/how-it-works)。
+详见 [工作原理](https://paseo-req-kit.vercel.app/guide/how-it-works)。
 
 ## 文档
 
@@ -99,7 +100,7 @@ Paseo 对话（/req）                              流水线引擎（后台进�
 | 项目维护者 | [项目定制与运行规则](docs/guide/项目定制与运行规则.md) |
 | 体系维护者 | [维护者指南](docs/guide/维护者指南.md) · [设计决定](docs/adr/) · [文件约定](contracts/) · [范围](SCOPE.md) · [评估](evals/README.md) |
 
-这些文档也发布在 [文档站点](https://yiyisf.github.io/paseo-req-kit/)，附有命令和配置参考。
+这些文档也发布在 [文档站点 (Vercel)](https://paseo-req-kit.vercel.app/)（附 [GitHub Pages 镜像](https://yiyisf.github.io/paseo-req-kit/)），附有命令和配置参考。
 
 ## 项目结构
 
