@@ -2106,3 +2106,107 @@ test("方案确认点：测试验证退回研发修缺陷时，不再请需求�
   assert.equal(s.attempt, 2);
   assert.deepEqual(s.approval.attempt, 2);
 });
+
+function backendRepo(env: Env, checks?: object[]): string {
+  const backend = fs.mkdtempSync(path.join(os.tmpdir(), "req-backend-"));
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: backend, stdio: "pipe" });
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  fs.writeFileSync(path.join(backend, "api.md"), "POST /login\n");
+  if (checks) fs.writeFileSync(path.join(backend, ".requirement-pipeline.json"), JSON.stringify({ checks }));
+  fs.writeFileSync(path.join(backend, "check.mjs"), CHECK_SCRIPT);
+  git("add", "-A");
+  git("commit", "-q", "-m", "api");
+  fs.writeFileSync(
+    path.join(env.repo, ".requirement-pipeline.json"),
+    JSON.stringify({ relatedRepos: [{ name: "后端", path: path.relative(env.repo, backend) }] }),
+  );
+  return fs.realpathSync(backend);
+}
+
+test("联合需求：每个仓库一个工作区，同时实现和评审；提测、验证、报告在主仓库；缺陷发回所在的仓库修", () => {
+  const env = setup();
+  execFileSync("git", ["config", "user.email", "t@t"], { cwd: env.repo });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: env.repo });
+  const backend = backendRepo(env, [{ name: "接口测试", command: "node check.mjs" }]);
+  specHeader(env, "- 联合开发：后端");
+  const slug = path.basename(backend).toLowerCase();
+  const scenario: FakeScenario = {
+    steps: {
+      [`implement@${slug}`]: { writeFiles: { BROKEN: "x" }, fixOnFollowUp: ["BROKEN"] },
+      verify: { result: { result: "defects_found", defect_repos: ["后端"] } },
+    },
+  };
+  const { code, out } = runMain(env, scenario);
+  assert.equal(code, 0, out);
+  const keys = starts(env);
+  assert.deepEqual(keys.slice(0, 2), ["design", "design_review-r1"]);
+  assert.deepEqual(new Set(keys.slice(2, 4)), new Set(["implement", `implement@${slug}`]));
+  assert.deepEqual(new Set(keys.slice(4, 6)), new Set(["code_review-r1", `code_review-r1@${slug}`]));
+  assert.deepEqual(keys.slice(6), ["handoff", "verify", `defect_fix-r1@${slug}`, "reverify-r1", "report"]);
+
+  const s = state(env);
+  assert.equal(s.joint.length, 1);
+  const wt = s.joint[0];
+  assert.equal(wt.name, "后端");
+  assert.equal(wt.branch, "feature/20261012-sms-login");
+  assert.equal(wt.sourceRepo, backend);
+  assert.notEqual(wt.repo, backend);
+  // The backend checkout itself is untouched; the work happens in its worktree.
+  assert.equal(execFileSync("git", ["branch", "--show-current"], { cwd: backend, encoding: "utf8" }).trim(), "main");
+
+  const child = events(env).find((e) => e.type === "start" && e.key === `implement@${slug}`) as FakeEvent & { workspaceId: string };
+  assert.equal(child.cwd, wt.repo);
+  assert.equal(child.workspaceId, wt.workspaceId);
+  assert.equal(child.parentAgentId, ORIGIN);
+  assert.equal(child.title, "[20261012-sms-login] 5-代码实现（后端）");
+  assert.match(child.prompt ?? "", new RegExp(`仓库目录：${wt.repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(child.prompt ?? "", /联合需求：本步骤在「后端」仓库中进行/);
+  assert.match(child.prompt ?? "", /# 联合需求：一个需求，几个仓库[\s\S]*## 代码实现（implement）/);
+  assert.match(prompt(env, "design"), /联合需求的仓库：后端 → /);
+  assert.match(prompt(env, "design"), /## 方案设计（design）[\s\S]*contract\.md/);
+  assert.doesNotMatch(prompt(env, "design"), /关联仓库（只读）：后端/);
+
+  // The spec and the design were copied to the backend's worktree and committed there.
+  const log = execFileSync("git", ["log", "--format=%s", "-3"], { cwd: wt.repo, encoding: "utf8" });
+  assert.match(log, /同步自主仓库/);
+  assert.ok(fs.existsSync(path.join(wt.repo, FEATURE, "spec.md")));
+  assert.ok(fs.existsSync(path.join(wt.repo, FEATURE, "design.md")));
+  // Its own checks ran as its quality gate, against its own baseline.
+  assert.equal(wt.gate.baseline.results["接口测试"], "pass");
+  assert.equal(wt.gate.runs[0].key, `implement@${slug}`);
+  assert.equal(wt.gate.runs[0].passed, true);
+  assert.match(prompt(env, "report"), /联合需求的仓库「后端」：工作区 .*分支 feature\/20261012-sms-login/);
+  assert.match(launch(env, ["--status"]).stdout, /代码实现·后端：完成/);
+});
+
+test("联合需求：需求说明写的仓库没有登记、不在本机或超过两个时，不启动", () => {
+  const env = setup();
+  specHeader(env, "- 联合开发：支付");
+  backendRepo(env);
+  const missing = runMain(env, {});
+  assert.equal(missing.code, 2);
+  assert.match(missing.out, /「支付」，但项目配置的 relatedRepos 里没有登记这个仓库（已登记：后端）/);
+  assert.ok(!fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "state.json")));
+});
+
+test("联合需求：一个仓库的步骤失败时等另一个仓库做完再中断；继续时沿用已建的工作区，只重做失败的部分", () => {
+  const env = setup();
+  execFileSync("git", ["config", "user.email", "t@t"], { cwd: env.repo });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: env.repo });
+  const backend = backendRepo(env);
+  specHeader(env, "- 联合开发：后端");
+  const slug = path.basename(backend).toLowerCase();
+  const first = runMain(env, { steps: { [`implement@${slug}`]: { error: "agent crashed" } } });
+  assert.equal(first.code, 1, first.out);
+  assert.equal(state(env).results.implement?.status, "done");
+  assert.equal(events(env).filter((e) => e.type === "createWorktree").length, 1);
+  const from = events(env).length;
+  const second = runMain(env, {}, ["--resume"]);
+  assert.equal(second.code, 0, second.out);
+  assert.equal(events(env).filter((e) => e.type === "createWorktree").length, 1);
+  const again = starts(env, from);
+  assert.equal(again[0], `implement@${slug}`);
+  assert.ok(!again.includes("implement"));
+});

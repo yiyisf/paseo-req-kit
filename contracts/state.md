@@ -32,6 +32,7 @@
 | `handbacks` | number | 可选，1.7.0 起。测试验证把缺陷退回研发阶段的次数（`defects` 为 `handback`），上限为档位的 `defectFix` 轮数 |
 | `type` | `defect` \| `refactor` \| `assessment` \| null | 可选，1.8.0 起。spec 中"类型"对应的做法；新需求、小改动和配置关掉的类型为 null |
 | `codeBase` | object \| null | 可选，1.8.0 起。`attempt`、`commit`：这次尝试在改动任何代码之前的提交，质量门的基线和范围检查从这里比较。尝试开始时就已经写过代码的旧记录为 `commit: null` |
+| `joint` | array \| null | 可选，1.8.0 起。联合需求（spec 的 `- 联合开发：`）中其他仓库的工作区：`name`（`relatedRepos` 中的名称）、`slug`（步骤键的后缀，如 `implement@backend`）、`sourceRepo`（切出工作区的那份检出）、`repo`（工作区目录）、`workspaceId`、`branch`、`specHash`（最近一次同步过去的 spec），以及这个仓库自己的 `codeBase` 和 `gate`（格式同顶层）。见 ADR 0025 |
 | `approval` | object \| null | 可选，1.8.0 起。方案确认点：`attempt`（哪一次尝试的方案）、`status`（`waiting` / `approved`）、`at`。需求变更后的新尝试需要重新确认 |
 | `gate` | object \| null | 可选，1.8.0 起。质量门：`baseline`（`attempt`、`commit`、`at`、`results`：每项检查改动前 `pass` / `fail`），`runs`（每次运行：`key` 步骤键、`attempt`、`at`、`checks`（`name`、`result`：`pass` / `fail` / `skipped`、`failedBefore`）、`newFailures`、`fixRounds`、`passed`）。各次运行的完整输出在 `.pipeline/checks/<步骤键>/` |
 

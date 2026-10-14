@@ -142,6 +142,8 @@ export interface PreflightResult {
   specPhases: PhaseMode | null;
   /** Requirement type with its own playbook named in the spec, if any. */
   specType: RequirementType | null;
+  /** Related repositories the spec says this requirement also changes. */
+  specJoint: string[];
   /** This start begins the verify phase (the develop phase is done). */
   entersVerify: boolean;
 }
@@ -167,6 +169,14 @@ export function specType(specText: string): RequirementType | null {
   const match = /^\s*-\s*类型\s*[:：]\s*(\S+)/m.exec(specText);
   if (!match) return null;
   return TYPE_WORDS.find(([, re]) => re.test(match[1]))?.[0] ?? null;
+}
+
+/** Reads "- 联合开发：后端、支付" (related repositories this requirement also changes). */
+export function specJoint(specText: string): string[] {
+  const match = /^\s*-\s*联合开发\s*[:：]\s*(.+)$/m.exec(specText);
+  if (!match) return [];
+  const names = match[1].split(/[、,，;；\s]+/).map((n) => n.replace(/[（(].*$/, "").trim()).filter((n) => n && n !== "无");
+  return [...new Set(names)];
 }
 
 /** Whether a run has finished its develop phase, so the verify phase can start. */
@@ -292,7 +302,7 @@ export function preflight(
       throw new PreflightError("这个需求已经在这里运行过，不能再改为在新工作区中开发。请用 --resume 继续，或去掉 --worktree。");
     }
     if (!git.isRepo) throw new PreflightError("--worktree 需要 git 仓库。");
-    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), entersVerify: false };
+    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), specJoint: specJoint(specText), entersVerify: false };
   }
   // The run commits to the branch that is checked out now, and never to the default branch.
   if (git.isRepo && git.detached) {
@@ -312,7 +322,7 @@ export function preflight(
     );
   }
   const entersVerify = mode.kind === "resume-reuse" && developDone(mode.previous);
-  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), entersVerify };
+  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), specJoint: specJoint(specText), entersVerify };
 }
 
 /** Why the verify phase cannot start in this environment, or null. */

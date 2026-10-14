@@ -41,7 +41,7 @@ features:
   - icon:
       src: /icons/paseo.svg
     title: 用好 Paseo
-    details: 复用 Paseo 的 agent profile、paseo.json 服务和 worktree、定时任务与内置浏览器；几个需求可以并行，各用各的工作区和端口。
+    details: 复用 Paseo 的 agent profile、paseo.json 服务和 worktree、定时任务与内置浏览器；几个需求可以并行，前后端分仓的需求可以作为联合需求，每个仓库一个工作区同时开发。
   - icon:
       src: /icons/safe.svg
     title: 安全边界清楚

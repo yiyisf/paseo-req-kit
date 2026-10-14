@@ -29,7 +29,12 @@ export function stepTitle(type: RequirementType | null | undefined, id: StepId):
  * playbook has nothing for this step.
  */
 export function playbookSection(sources: PromptSources, type: RequirementType, id: StepId): string | null {
-  const text = readToolPrompt(sources, `types/${type}.md`);
+  return promptSections(sources, `types/${type}.md`, id);
+}
+
+/** The same section picking for any prompt file written that way (e.g. joint.md). */
+export function promptSections(sources: PromptSources, file: string, id: StepId): string | null {
+  const text = readToolPrompt(sources, file);
   const [intro, ...sections] = text.split(/^## /m);
   const picked = sections.filter((s) => {
     const heading = s.split("\n", 1)[0];

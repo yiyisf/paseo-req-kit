@@ -21,6 +21,7 @@
 | `- 档位：` | 引擎 | "快速"或"标准"（也接受 `quick` / `standard`）。没有时用配置中的 `defaultProfile` |
 | `- 执行方式：` | 引擎 | "连续"、"分阶段"或"只做研发"（也接受 `continuous` / `gated` / `develop-only`）。可以没有；没有时用配置中的 `phases.mode`，启动参数 `--phases` 优先（1.7 起） |
 | `- 类型：` | 引擎（1.8 起）、`/req` | 新需求 / 小改动 / 缺陷 / 重构 / 评估（也接受 `defect`、`bug`、`refactor`、`assessment`；"技术改进"同重构，"调研"同评估）。缺陷、重构、评估按各自的做法运行（`engine/prompts/types/`），配置 `requirementTypes` 可以关掉某个类型；其他写法按新需求处理 |
+| `- 联合开发：` | 引擎（1.8 起） | 这个需求还要改的其他仓库，写项目配置 `relatedRepos` 中的名称，最多两个，用顿号分开。可以没有。见 ADR 0025 |
 | `- 版本：` | `/req` | 从 1 开始，每次修改需求加 1 |
 | `- 格式：` | `/req`、引擎（将来） | `req-kit/spec@<n>`。没有这一行的旧 spec 按 `req-kit/spec@1` 处理 |
 

@@ -106,6 +106,7 @@ export const createRuntime: RuntimeFactory = async () => {
   const scenario: FakeScenario = scenarioFile ? JSON.parse(fs.readFileSync(scenarioFile, "utf8")) : {};
   let counter = 0;
   let scheduleCounter = 0;
+  let worktreeCounter = 0;
   const startsByKey = new Map<string, number>();
 
   const runtime: AgentRuntime = {
@@ -122,9 +123,11 @@ export const createRuntime: RuntimeFactory = async () => {
       const resultRel = contextValue(input.prompt, "结果文件");
       const featureDir = contextValue(input.prompt, "功能目录");
       const key = path.basename(resultRel, ".json");
-      const isProposal = key.startsWith("design_proposal-");
-      const isPanel = !isProposal && /-p\d+$/.test(key);
-      const stepId = isProposal ? "design_proposal" : isPanel ? "panel_review" : key.replace(/-r\d+$/, "").replace(/-s\d+$/, "");
+      // Joint requirements suffix the key with the repository: "implement@backend".
+      const bare = key.replace(/@.*$/, "");
+      const isProposal = bare.startsWith("design_proposal-");
+      const isPanel = !isProposal && /-p\d+$/.test(bare);
+      const stepId = isProposal ? "design_proposal" : isPanel ? "panel_review" : bare.replace(/-r\d+$/, "").replace(/-s\d+$/, "");
       const behavior: FakeBehavior = scenario.steps?.[key] ?? scenario.steps?.[stepId] ?? {};
       const resultAbs = path.join(input.cwd, resultRel);
       const startNumber = (startsByKey.get(key) ?? 0) + 1;
@@ -263,8 +266,9 @@ export const createRuntime: RuntimeFactory = async () => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-wt-"));
       fs.rmSync(directory, { recursive: true });
       execFileSync("git", ["worktree", "add", "-q", "-b", request.branchName, directory, request.baseRef], { cwd: request.sourceRepo, stdio: "pipe" });
+      worktreeCounter += 1;
       record({ type: "createWorktree", ...request, directory });
-      return { workspaceId: "fake-wks-1", directory: fs.realpathSync(directory) };
+      return { workspaceId: `fake-wks-${worktreeCounter}`, directory: fs.realpathSync(directory) };
     },
     async waitForWorkspaceSetup(workspaceId, timeoutMs) {
       record({ type: "waitForWorkspaceSetup", workspaceId, timeoutMs });

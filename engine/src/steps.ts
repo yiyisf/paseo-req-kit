@@ -182,7 +182,8 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "功能验证",
     role: "reviewer",
     promptFile: "09-verify.md",
-    result: { required: { result: { kind: "enum", values: ["pass", "defects_found", "blocked"] } } },
+    // defect_repos (joint requirements): where the defects are, "本仓库" or a joint repository's name.
+    result: { required: { result: { kind: "enum", values: ["pass", "defects_found", "blocked"] } }, optional: { defect_repos: { kind: "string[]" } } },
   },
   defect_fix: {
     id: "defect_fix",
@@ -198,7 +199,7 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "复验",
     role: "reviewer",
     promptFile: "10b-reverify.md",
-    result: { required: { result: { kind: "enum", values: ["pass", "defects_remaining"] } } },
+    result: { required: { result: { kind: "enum", values: ["pass", "defects_remaining"] } }, optional: { defect_repos: { kind: "string[]" } } },
   },
   report: {
     id: "report",

@@ -42,9 +42,11 @@ function resultText(record: StepRecord): string {
   return "完成";
 }
 
-function stepName(record: StepRecord, type: PipelineState["type"] = null): string {
-  const title = stepTitle(type, record.stepId);
-  const slice = /^implement-s(\d+)$/.exec(record.key);
+function stepName(record: StepRecord, state: Pick<PipelineState, "type" | "joint"> | null = null): string {
+  const [base, slug] = record.key.split("@");
+  const repo = slug ? (state?.joint ?? []).find((j) => j.slug === slug)?.name ?? slug : null;
+  const title = `${stepTitle(state?.type, record.stepId)}${repo ? `·${repo}` : ""}`;
+  const slice = /^implement-s(\d+)$/.exec(base);
   if (slice) return `${title}（第 ${slice[1]} 片）`;
   return record.round !== null ? `${title}（第 ${record.round} 轮）` : title;
 }
@@ -77,6 +79,7 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
     `开始时间：${new Date(state.startedAt).toLocaleString("zh-CN", { hour12: false })}，距今 ${duration(state.startedAt, now)}`,
   ];
   if (state.stopReason && !running) lines.push(`原因：${state.stopReason}`);
+  for (const j of state.joint ?? []) lines.push(`联合开发：${j.name} 在工作区 ${j.repo}（分支 ${j.branch}）`);
   const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证", "approval-continue": "未确认时按方案继续" } as const;
   for (const s of state.schedules ?? []) {
     if (s.kind === "watchdog" && !running) continue;
@@ -87,20 +90,20 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
   const records = state.history.filter((h) => h.attempt === state.attempt);
   const current = records.find((h) => h.outcome === "running");
   if (current && running) {
-    lines.push(`当前步骤：${stepName(current, state.type)}，已进行 ${duration(current.startedAt, now)}`);
+    lines.push(`当前步骤：${stepName(current, state)}，已进行 ${duration(current.startedAt, now)}`);
   }
   const done = records.filter((h) => h.outcome === "completed");
   if (done.length > 0) {
     lines.push("已完成的步骤：");
     done.forEach((h, i) => {
       const took = h.endedAt ? duration(h.startedAt, new Date(h.endedAt)) : "";
-      lines.push(`  ${i + 1}. ${stepName(h, state.type)}：${resultText(h)}${took ? `（用时 ${took}）` : ""}`);
+      lines.push(`  ${i + 1}. ${stepName(h, state)}：${resultText(h)}${took ? `（用时 ${took}）` : ""}`);
     });
   } else if (!current) {
     lines.push("还没有完成的步骤。");
   }
   const failed = records.filter((h) => h.outcome === "failed").at(-1);
-  if (failed && !running) lines.push(`中断在：${stepName(failed, state.type)}（${failed.error ?? "原因未知"}）`);
+  if (failed && !running) lines.push(`中断在：${stepName(failed, state)}（${failed.error ?? "原因未知"}）`);
   const gateRuns = (state.gate?.runs ?? []).filter((r) => r.attempt === state.attempt);
   const lastGate = gateRuns.at(-1);
   if (lastGate) {
@@ -209,7 +212,7 @@ export async function stopPipeline(input: StopInput): Promise<{ stopped: boolean
     }
   }
 
-  const where = interrupted.length > 0 ? `，停在「${stepName(interrupted[0], latest.type)}」` : "";
+  const where = interrupted.length > 0 ? `，停在「${stepName(interrupted[0], latest)}」` : "";
   return {
     stopped: true,
     message: wasAlive
@@ -237,7 +240,7 @@ export async function describeLiveActivity(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs).unref()),
     ]);
     if (!items || items.length === 0) continue;
-    lines.push(`「${stepName(record, state.type)}」的 agent 最近在做：`, ...describeActivity(items, now));
+    lines.push(`「${stepName(record, state)}」的 agent 最近在做：`, ...describeActivity(items, now));
   }
   return lines;
 }

@@ -26,3 +26,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0022 分阶段执行：研发阶段、闸口、测试验证阶段](0022-develop-and-verify-phases.md)
 - [0023 需求类型、质量门、按切片实现](0023-types-gate-slices.md)
 - [0024 让分歧更早暴露：验收例子、方案确认点、两个方向的评审、反复的问题变成规则](0024-confirm-early-review-axes.md)
+- [0025 联合需求：一个需求同时改几个仓库](0025-joint-requirements.md)

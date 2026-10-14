@@ -11,6 +11,7 @@ import { loadConfig, PHASE_MODE_LABELS, PROFILE_LABELS, REQUIREMENT_TYPE_LABELS 
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
 import { satisfies } from "./daemon-check.js";
 import { describeAgentProfile, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
+import { jointProblem } from "./joint.js";
 import { runPipeline } from "./pipeline.js";
 import { preflight, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
@@ -75,6 +76,8 @@ async function main(): Promise<number> {
   const type = checked.specType && config.requirementTypes.includes(checked.specType) ? checked.specType : null;
   // An assessment writes no code: there is nothing to hand over for testing.
   if (type === "assessment") phaseMode = "continuous";
+  // Joint requirement: other repositories this one also changes (an assessment only reads them).
+  const jointNames = type === "assessment" ? [] : checked.specJoint;
   const phases: RunPhases = {
     mode: phaseMode,
     environment: args.verifyEnv ?? previousState?.phases?.environment ?? config.phases.verify.environment,
@@ -91,6 +94,8 @@ async function main(): Promise<number> {
       if (verifyAtText && !verifyAt) throw new Error(`看不懂测试验证的开始时间"${verifyAtText}"`);
       if (verifyAtText && phases.mode === "develop-only") throw new Error("只做研发时没有测试验证阶段，--verify-at 不适用");
       if (type === "assessment" && (verifyAtText || args.phase === "verify")) throw new Error("评估类需求只做调研、不写代码，没有测试验证阶段");
+      const jointIssue = jointProblem(jointNames, config.relatedRepos, chatDir);
+      if (jointIssue) throw new Error(jointIssue);
       if (checked.entersVerify) {
         const problem = verifyPhaseProblem(repo, featureDir, phases.environment);
         if (problem) throw new Error(problem);
@@ -312,6 +317,7 @@ async function main(): Promise<number> {
       statusCommand: commands.status,
       verifyCommand: commands.verify,
       approveCommand: commands.approve,
+      jointNames,
       log,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });

@@ -96,9 +96,31 @@ export interface PipelineState {
   type?: RequirementType | null;
   /** Commit before the attempt's first code change; the quality gate's baseline and the scope check start here (1.8). */
   codeBase?: { attempt: number; commit: string | null } | null;
+  /**
+   * Joint requirement (1.8): other repositories this requirement also changes, each in a
+   * worktree created for it, with its own code base and quality gate. See ADR 0025.
+   */
+  joint?: JointRepo[] | null;
   /** Design confirmation point (1.8): which attempt's design is waiting or was confirmed. */
   approval?: { attempt: number; status: "waiting" | "approved"; at: string; auto?: boolean } | null;
   /** Quality gate: the checks' results before the change, and every run after a step (1.8). */
+  gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
+}
+
+export interface JointRepo {
+  /** Name in relatedRepos, e.g. "后端". */
+  name: string;
+  /** ASCII key suffix for its steps ("implement@backend"). */
+  slug: string;
+  /** The checkout the worktree was cut from. */
+  sourceRepo: string;
+  /** The worktree the steps work in. */
+  repo: string;
+  workspaceId: string;
+  branch: string;
+  /** Hash of the spec last copied there. */
+  specHash: string | null;
+  codeBase?: { attempt: number; commit: string | null } | null;
   gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
 }
 

@@ -11,9 +11,11 @@
 | `review_fix`、`defect_fix` | `status`: `done` \| `partial` |
 | `code_review` | `verdict`: `pass` \| `changes_required` |
 | `service_start` | `started`: boolean |
-| `verify` | `result`: `pass` \| `defects_found` \| `blocked` |
-| `reverify` | `result`: `pass` \| `defects_remaining` |
+| `verify` | `result`: `pass` \| `defects_found` \| `blocked`。可选（1.8 起，联合需求）：`defect_repos`: 字符串数组，缺陷所在的仓库（`本仓库` 或 `relatedRepos` 中的名称）；没有时每个仓库都做一轮缺陷修复 |
+| `reverify` | `result`: `pass` \| `defects_remaining`。可选：`defect_repos`，同上 |
 | `report` | `outcome`: `completed` \| `completed_with_issues` \| `not_completed`；`summary`: string |
 | `panel_review`（评审小组成员，键为 `<评审步骤>-r<轮次>-p<序号>`） | `status`: `done` \| `partial`；意见写在 `<功能目录>/review-panel/<键>.md` |
+
+联合需求中，其他仓库的步骤的键带 `@<仓库后缀>`（如 `implement@backend`、`code_review-r2@backend`），结果文件写在那个仓库工作区的功能目录中。
 
 字段定义以 `engine/src/steps.ts` 为准；改动时同步更新各步骤提示词末尾的"结果文件"一节。
