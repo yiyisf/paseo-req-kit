@@ -6,6 +6,13 @@ name: release
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+  # Re-run the release of an existing tag with this (current) workflow, e.g. from the
+  # GitHub web page on a phone: Actions → release → Run workflow → tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to release, e.g. 1.7.0-beta.2"
+        required: true
 
 permissions:
   contents: write   # GitHub Release with the .tgz
@@ -14,8 +21,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,7 +37,7 @@ jobs:
       - name: Tag and package.json agree
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          test "$VERSION" = "$GITHUB_REF_NAME" || { echo "package.json is $VERSION, tag is $GITHUB_REF_NAME"; exit 1; }
+          test "$VERSION" = "$TAG" || { echo "package.json is $VERSION, tag is $TAG"; exit 1; }
       - run: npm test
       - run: npm run typecheck
       - run: npm run eval:self-check
@@ -40,36 +51,37 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           NAME=$(node -p "require('./package.json').name")
-          if npm view "$NAME@$GITHUB_REF_NAME" version >/dev/null 2>&1; then
-            echo "::notice::$NAME@$GITHUB_REF_NAME is already on npm; skipping publish."
+          if npm view "$NAME@$TAG" version >/dev/null 2>&1; then
+            echo "::notice::$NAME@$TAG is already on npm; skipping publish."
             exit 0
           fi
-          case "$GITHUB_REF_NAME" in
+          case "$TAG" in
             *-*) npm publish --tag beta ;;
             *)   npm publish ;;
           esac
       # Trusted publishing covers `npm publish` only; moving a dist-tag needs a token.
       # Optional: add an NPM_TOKEN secret (automation token) to set paseo-<minor> automatically.
       - name: Tag by supported Paseo version (releases only)
-        if: ${{ !contains(github.ref_name, '-') && steps.publish.outcome == 'success' }}
+        if: ${{ !contains(env.TAG, '-') && steps.publish.outcome == 'success' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           MINOR=$(node -p "require('./package.json').reqKit.paseo.match(/>=?\s*(\d+\.\d+)/)[1]")
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::notice::No NPM_TOKEN secret: run 'npm dist-tag add paseo-req-kit@$GITHUB_REF_NAME paseo-$MINOR' by hand."
+            echo "::notice::No NPM_TOKEN secret: run 'npm dist-tag add paseo-req-kit@$TAG paseo-$MINOR' by hand."
           else
-            npm dist-tag add "paseo-req-kit@$GITHUB_REF_NAME" "paseo-$MINOR"
+            npm dist-tag add "paseo-req-kit@$TAG" "paseo-$MINOR"
           fi
       - name: Release notes from CHANGELOG.md
         run: |
-          node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8');const h='## '+process.env.GITHUB_REF_NAME+'\n';const i=s.indexOf(h);const rest=i<0?'':s.slice(i+h.length);const j=rest.search(/^## /m);require('fs').writeFileSync(process.env.RUNNER_TEMP+'/notes.md',(j<0?rest:rest.slice(0,j)).trim()+'\n')"
+          node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8');const h='## '+process.env.TAG+'\n';const i=s.indexOf(h);const rest=i<0?'':s.slice(i+h.length);const j=rest.search(/^## /m);require('fs').writeFileSync(process.env.RUNNER_TEMP+'/notes.md',(j<0?rest:rest.slice(0,j)).trim()+'\n')"
       - name: Package for offline and internal registries
         run: npm pack
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: paseo-req-kit-*.tgz
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
           body_path: ${{ runner.temp }}/notes.md
       - name: Publish to npm failed
         if: ${{ steps.publish.outcome == 'failure' }}
