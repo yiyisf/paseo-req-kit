@@ -24,3 +24,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0020 调度：用 Paseo 定时任务把消息发回对话，排队在本机进行](0020-scheduling-through-the-chat.md)
 - [0021 npm 分发：全局包是版本管理器，各版本仍装在 versions/ 下](0021-npm-version-manager.md)
 - [0022 分阶段执行：研发阶段、闸口、测试验证阶段](0022-develop-and-verify-phases.md)
+- [0023 需求类型、质量门、按切片实现](0023-types-gate-slices.md)

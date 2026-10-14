@@ -10,7 +10,7 @@ import { type PaseoJson, paseoJsonIssues } from "./paseo-json.js";
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { ConfigError, DEFAULT_CONFIG, loadConfig, type PipelineConfig, PROJECT_CONFIG_FILE } from "./config.js";
+import { ConfigError, DEFAULT_CONFIG, loadConfig, type PipelineConfig, PROJECT_CONFIG_FILE, resolveRelatedRepo } from "./config.js";
 import { checkProfile, connect, type Report, satisfies } from "./daemon-check.js";
 import { daemonVersion } from "./daemon-version.js";
 import { gitInfo } from "./git.js";
@@ -120,6 +120,26 @@ function configuration(configPath: string, repo: string | null): PipelineConfig 
     const proposals = loaded.config.designProposals;
     if (proposals.enabled) {
       report("ok", `方案提案：${proposals.members.length || "builder 和 reviewer 各"} ${proposals.members.length ? "位成员" : "一份"}，用于 ${proposals.profiles.join("、")}档`);
+    }
+    if (repo) {
+      const { checks, relatedRepos } = loaded.config;
+      if (checks.length > 0) {
+        report("ok", `质量门：${checks.length} 项检查（${checks.map((c) => c.name).join("、")}），流水线在写代码和修复的步骤之后自己运行`);
+        for (const c of checks) {
+          if (c.cwd && !fs.existsSync(path.join(repo, c.cwd))) report("warn", `检查「${c.name}」的目录 ${c.cwd} 不存在`, `修改 ${PROJECT_CONFIG_FILE} 中的 checks`);
+        }
+      } else {
+        report(
+          "warn",
+          "没有配置质量门的检查（checks）：流水线不会自己运行 lint、测试等检查，只能依靠各步骤自己的记录",
+          "在项目根目录的对话中运行 /req-setup，它会把实际跑通的检查命令写进项目配置",
+        );
+      }
+      for (const r of relatedRepos) {
+        const dir = resolveRelatedRepo(r, repo);
+        if (fs.existsSync(dir)) report("ok", `关联仓库（只读参考）：${r.name} → ${dir}`);
+        else report("warn", `关联仓库「${r.name}」不在这台机器上：${dir}`, "把它克隆到这个位置；或修改 relatedRepos 中的路径（相对项目目录，团队约定把相关仓库放在同一个上级目录最方便）");
+      }
     }
     const required = loaded.config.requiredVersion;
     if (required) {

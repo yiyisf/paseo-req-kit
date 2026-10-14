@@ -100,6 +100,52 @@ export interface PhaseSettings {
   verify: VerifyPhaseSettings;
 }
 
+/**
+ * Requirement types with their own playbook (see playbooks.ts and ADR 0023). The spec's
+ * "- 类型：" line picks one; anything else (新需求, 小改动) runs the normal flow.
+ */
+export type RequirementType = "defect" | "refactor" | "assessment";
+
+export const REQUIREMENT_TYPES: readonly RequirementType[] = ["defect", "refactor", "assessment"];
+
+export const REQUIREMENT_TYPE_LABELS: Record<RequirementType, string> = { defect: "缺陷修复", refactor: "重构", assessment: "评估" };
+
+/**
+ * One project check the engine runs itself (the quality gate): formatting, lint, type
+ * check, tests, build. Commands should read the same on every system (see /req-setup).
+ */
+export interface CheckDef {
+  /** Short name, e.g. "lint", "web 测试". */
+  name: string;
+  command: string;
+  /** Directory to run in, relative to the repository root; default the root. */
+  cwd?: string;
+  /**
+   * Run only when the change touches these paths (prefixes like "web/", or globs with *);
+   * default: `cwd` when given, otherwise always. Lets a monorepo check only changed modules.
+   */
+  paths?: string[];
+  /** Minutes before the check is stopped; default qualityGate.timeoutMinutes. */
+  timeoutMinutes?: number;
+}
+
+export interface QualityGateSettings {
+  /** How many times the step agent is asked to fix newly failing checks before the run moves on. */
+  fixAttempts: number;
+  /** Default time limit of one check. */
+  timeoutMinutes: number;
+}
+
+/** A repository the step agents may read but never change (e.g. the backend of a frontend project). */
+export interface RelatedRepo {
+  /** Name used in prompts and reports, e.g. "后端". */
+  name: string;
+  /** Path on this machine: absolute, "~/…", or relative to the project's checkout. */
+  path: string;
+  /** What it is for, e.g. "提供登录和订单接口". */
+  role?: string;
+}
+
 export interface PipelineConfig {
   daemonUrl: string;
   /** Name of the environment variable holding the daemon password, if the daemon has one. */
@@ -165,6 +211,18 @@ export interface PipelineConfig {
   watchdogMinutes: number;
   /** Develop and verify phases: continuous (default), gated, or develop-only, plus verify-phase options. */
   phases: PhaseSettings;
+  /** Requirement types whose playbook is used; a type left out runs the normal flow. */
+  requirementTypes: RequirementType[];
+  /** Project checks for the quality gate; empty: no gate. Usually in the project config, written by /req-setup. */
+  checks: CheckDef[];
+  qualityGate: QualityGateSettings;
+  /**
+   * Slice-by-slice implementation: when the design splits the work into vertical slices,
+   * each slice is implemented by a fresh agent, committed and checked on its own.
+   */
+  slices: { profiles: ProfileName[]; max: number };
+  /** Repositories the steps may read for reference, never change. */
+  relatedRepos: RelatedRepo[];
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -220,6 +278,11 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   autoResumeMax: 2,
   watchdogMinutes: 0,
   phases: { mode: "continuous", verify: { environment: "local", agents: {}, defects: "fix", serviceStart: null } },
+  requirementTypes: ["defect", "refactor", "assessment"],
+  checks: [],
+  qualityGate: { fixAttempts: 2, timeoutMinutes: 20 },
+  slices: { profiles: ["standard"], max: 6 },
+  relatedRepos: [],
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -293,6 +356,8 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
       agents: { ...base.phases.verify.agents, ...(isRecord(rawVerify.agents) ? rawVerify.agents : {}) },
     },
   };
+  merged.qualityGate = { ...base.qualityGate, ...(isRecord(raw.qualityGate) ? (raw.qualityGate as Partial<QualityGateSettings>) : {}) };
+  merged.slices = { ...base.slices, ...(isRecord(raw.slices) ? (raw.slices as Partial<PipelineConfig["slices"]>) : {}) };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
 }
@@ -342,6 +407,48 @@ function validatePhases(phases: PhaseSettings): void {
     if (role !== "builder" && role !== "reviewer") throw new ConfigError("phases.verify.agents 只能包含 builder 和 reviewer");
     validateProvider(`phases.verify.agents.${role}`, profile);
   }
+}
+
+function validateChecks(config: PipelineConfig): void {
+  if (!Array.isArray(config.requirementTypes) || !config.requirementTypes.every((t) => REQUIREMENT_TYPES.includes(t))) {
+    throw new ConfigError(`requirementTypes 只能包含 ${REQUIREMENT_TYPES.map((t) => `"${t}"`).join("、")}`);
+  }
+  if (!Array.isArray(config.checks)) throw new ConfigError('checks 必须是数组，例如 [{ "name": "test", "command": "npm test" }]');
+  const names = new Set<string>();
+  config.checks.forEach((c, i) => {
+    if (!isRecord(c) || typeof c.name !== "string" || c.name.trim() === "") throw new ConfigError(`checks[${i}].name 必须是非空字符串`);
+    if (names.has(c.name)) throw new ConfigError(`checks 中有两个检查都叫 "${c.name}"，名称不能重复`);
+    names.add(c.name);
+    if (typeof c.command !== "string" || c.command.trim() === "") throw new ConfigError(`checks[${i}].command 必须是要运行的命令`);
+    if (c.cwd !== undefined && (typeof c.cwd !== "string" || path.isAbsolute(c.cwd) || c.cwd.split(/[\\/]/).includes(".."))) {
+      throw new ConfigError(`checks[${i}].cwd 必须是仓库之内的相对路径`);
+    }
+    if (c.paths !== undefined && (!Array.isArray(c.paths) || !c.paths.every((p) => typeof p === "string" && p.trim() !== ""))) {
+      throw new ConfigError(`checks[${i}].paths 必须是路径数组，例如 ["web/"]`);
+    }
+    if (c.timeoutMinutes !== undefined && (typeof c.timeoutMinutes !== "number" || c.timeoutMinutes <= 0)) {
+      throw new ConfigError(`checks[${i}].timeoutMinutes 必须是正数`);
+    }
+  });
+  const gate = config.qualityGate;
+  if (!Number.isInteger(gate.fixAttempts) || gate.fixAttempts < 0) throw new ConfigError("qualityGate.fixAttempts 必须是不小于 0 的整数");
+  if (typeof gate.timeoutMinutes !== "number" || gate.timeoutMinutes <= 0) throw new ConfigError("qualityGate.timeoutMinutes 必须是正数");
+  if (!Array.isArray(config.slices.profiles) || !config.slices.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('slices.profiles 只能包含 "quick" 和 "standard"（空数组表示不按切片实现）');
+  }
+  if (!Number.isInteger(config.slices.max) || config.slices.max < 1) throw new ConfigError("slices.max 必须是不小于 1 的整数");
+  if (!Array.isArray(config.relatedRepos)) throw new ConfigError('relatedRepos 必须是数组，例如 [{ "name": "后端", "path": "../backend" }]');
+  config.relatedRepos.forEach((r, i) => {
+    if (!isRecord(r) || typeof r.name !== "string" || r.name.trim() === "") throw new ConfigError(`relatedRepos[${i}].name 必须是非空字符串`);
+    if (typeof r.path !== "string" || r.path.trim() === "") throw new ConfigError(`relatedRepos[${i}].path 必须是这台机器上的目录`);
+    if (r.role !== undefined && typeof r.role !== "string") throw new ConfigError(`relatedRepos[${i}].role 必须是字符串`);
+  });
+}
+
+/** Where a related repository is on this machine; relative paths start from the project's checkout. */
+export function resolveRelatedRepo(repo: RelatedRepo, projectDir: string): string {
+  if (repo.path.startsWith("~/") || repo.path.startsWith("~\\")) return path.join(os.homedir(), repo.path.slice(2));
+  return path.resolve(projectDir, repo.path);
 }
 
 function validate(config: PipelineConfig): void {
@@ -396,6 +503,7 @@ function validate(config: PipelineConfig): void {
     if (typeof config[key] !== "number" || config[key] < 0) throw new ConfigError(`${key} 必须是不小于 0 的数（0 表示关闭）`);
   }
   validatePhases(config.phases);
+  validateChecks(config);
   for (const key of ["waitChunkSeconds", "permissionPollSeconds", "serviceReadySeconds", "queuePollSeconds"] as const) {
     if (typeof config[key] !== "number" || config[key] <= 0) throw new ConfigError(`${key} 必须是正数`);
   }

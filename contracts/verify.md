@@ -36,4 +36,6 @@
 - `pnpm test` 中 `report.test.ts` 偶发超时，与需求无关
 ```
 
+其中几分钟内能跑完的检查（格式、lint、类型检查、单元测试、构建）同时写进项目配置 `.requirement-pipeline.json` 的 `checks`（1.8 起）：流水线会在写代码和修复的步骤之后自己运行它们，作为质量门。`verify.md` 写给 agent 看，`checks` 由流水线执行，两处的命令保持一致。
+
 步骤 agent 发现它过时或不准确时，会在 `service-start.md` 或 `verification.md` 的"建议写入 verify.md 的内容"一节给出实际可行的做法；`/req-setup` 再次运行时会参考这些建议更新本文件。

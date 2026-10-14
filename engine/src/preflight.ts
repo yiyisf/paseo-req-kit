@@ -9,6 +9,7 @@ import {
   PROFILE_LABELS,
   PROFILE_NAMES,
   type ProfileName,
+  type RequirementType,
   type VerifyEnvironment,
 } from "./config.js";
 import { gitInfo } from "./git.js";
@@ -137,6 +138,8 @@ export interface PreflightResult {
   specProfile: ProfileName | null;
   /** Execution mode named in the spec, if any. */
   specPhases: PhaseMode | null;
+  /** Requirement type with its own playbook named in the spec, if any. */
+  specType: RequirementType | null;
   /** This start begins the verify phase (the develop phase is done). */
   entersVerify: boolean;
 }
@@ -149,6 +152,19 @@ export function specPhases(specText: string): PhaseMode | null {
     if (match[1].startsWith(PHASE_MODE_LABELS[mode]) || match[1].toLowerCase().startsWith(mode)) return mode;
   }
   return null;
+}
+
+const TYPE_WORDS: Array<[RequirementType, RegExp]> = [
+  ["defect", /^(缺陷|bug|defect|fix|问题修复)/i],
+  ["refactor", /^(重构|技术改进|refactor)/i],
+  ["assessment", /^(评估|调研|assessment|spike)/i],
+];
+
+/** Reads "- 类型：缺陷" (缺陷 / 重构 / 评估, or the English names); 新需求 and 小改动 give null. */
+export function specType(specText: string): RequirementType | null {
+  const match = /^\s*-\s*类型\s*[:：]\s*(\S+)/m.exec(specText);
+  if (!match) return null;
+  return TYPE_WORDS.find(([, re]) => re.test(match[1]))?.[0] ?? null;
 }
 
 /** Whether a run has finished its develop phase, so the verify phase can start. */
@@ -263,7 +279,7 @@ export function preflight(
       throw new PreflightError("这个需求已经在这里运行过，不能再改为在新工作区中开发。请用 --resume 继续，或去掉 --worktree。");
     }
     if (!git.isRepo) throw new PreflightError("--worktree 需要 git 仓库。");
-    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), entersVerify: false };
+    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), entersVerify: false };
   }
   // The run commits to the branch that is checked out now, and never to the default branch.
   if (git.isRepo && git.detached) {
@@ -283,7 +299,7 @@ export function preflight(
     );
   }
   const entersVerify = mode.kind === "resume-reuse" && developDone(mode.previous);
-  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), entersVerify };
+  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), entersVerify };
 }
 
 /** Why the verify phase cannot start in this environment, or null. */

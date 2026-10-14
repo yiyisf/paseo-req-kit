@@ -7,7 +7,7 @@ import { LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand 
 import { dequeuedMessage, queuedMessage, watchdogPrompt } from "./messages.js";
 import { slotHolders, slotsDir, tryAcquireSlot } from "./queue.js";
 import { cronEvery, parseStartTime } from "./schedule-time.js";
-import { loadConfig, PHASE_MODE_LABELS, PROFILE_LABELS } from "./config.js";
+import { loadConfig, PHASE_MODE_LABELS, PROFILE_LABELS, REQUIREMENT_TYPE_LABELS } from "./config.js";
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
 import { satisfies } from "./daemon-check.js";
 import { describeAgentProfile, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
@@ -71,6 +71,10 @@ async function main(): Promise<number> {
     args.phases ?? (reuse ? previousState?.phases?.mode : null) ?? checked.specPhases ?? previousState?.phases?.mode ?? config.phases.mode;
   // --verify-at only makes sense with a gate; asking for it implies one.
   if (args.verifyAt && phaseMode === "continuous" && !args.phases) phaseMode = "gated";
+  // A playbook type the configuration turned off runs the normal flow.
+  const type = checked.specType && config.requirementTypes.includes(checked.specType) ? checked.specType : null;
+  // An assessment writes no code: there is nothing to hand over for testing.
+  if (type === "assessment") phaseMode = "continuous";
   const phases: RunPhases = {
     mode: phaseMode,
     environment: args.verifyEnv ?? previousState?.phases?.environment ?? config.phases.verify.environment,
@@ -86,6 +90,7 @@ async function main(): Promise<number> {
       const chatDir = args.sourceRepo ?? (mode.kind === "fresh" ? null : mode.previous.worktree?.sourceRepo) ?? repo;
       if (verifyAtText && !verifyAt) throw new Error(`看不懂测试验证的开始时间"${verifyAtText}"`);
       if (verifyAtText && phases.mode === "develop-only") throw new Error("只做研发时没有测试验证阶段，--verify-at 不适用");
+      if (type === "assessment" && (verifyAtText || args.phase === "verify")) throw new Error("评估类需求只做调研、不写代码，没有测试验证阶段");
       if (checked.entersVerify) {
         const problem = verifyPhaseProblem(repo, featureDir, phases.environment);
         if (problem) throw new Error(problem);
@@ -138,8 +143,11 @@ async function main(): Promise<number> {
       phase: "develop",
       verifyAt: verifyAt?.toISOString() ?? null,
       handbacks: 0,
+      type,
     };
-    log(`开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，执行方式：${PHASE_MODE_LABELS[phases.mode]}，分支 ${checked.branch ?? "无"}）`);
+    log(
+      `开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，${type ? `类型：${REQUIREMENT_TYPE_LABELS[type]}，` : ""}执行方式：${PHASE_MODE_LABELS[phases.mode]}，分支 ${checked.branch ?? "无"}）`,
+    );
   } else {
     const startOver = mode.kind !== "resume-reuse";
     const previousImplemented = Object.keys(mode.previous.results).some((k) => k === "implement") ||
@@ -170,6 +178,9 @@ async function main(): Promise<number> {
       phase: checked.entersVerify ? "verify" : startOver ? "develop" : (mode.previous.phase ?? "develop"),
       verifyAt: checked.entersVerify ? null : (verifyAt?.toISOString() ?? (startOver ? null : (mode.previous.verifyAt ?? null))),
       handbacks: mode.kind === "restart" ? 0 : (mode.previous.handbacks ?? 0),
+      type,
+      codeBase: startOver ? null : (mode.previous.codeBase ?? null),
+      gate: mode.kind === "restart" ? null : (mode.previous.gate ?? null),
     };
     if (checked.entersVerify) {
       // A develop-only run that ends with its development report gets a full report after verification.

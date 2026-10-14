@@ -46,6 +46,19 @@ export interface StepDef {
 
 const done: ResultSpec = { required: { status: { kind: "enum", values: ["done", "partial"] } } };
 
+/**
+ * Optional plan fields of the design result (1.8): the implementation slices, the files the
+ * plan expects to change (for the scope check), and for a defect whether it was reproduced.
+ */
+const PLAN_FIELDS: Pick<ResultSpec, "optional"> = {
+  optional: {
+    slices: { kind: "string[]" },
+    files: { kind: "string[]" },
+    reproduced: { kind: "boolean" },
+    questions: { kind: "string[]" },
+  },
+};
+
 /** Review steps that can run with a review panel. */
 export const PANEL_STEPS = ["design_review", "code_review"] as const;
 export type PanelStep = (typeof PANEL_STEPS)[number];
@@ -88,7 +101,14 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "方案设计",
     role: "builder",
     promptFile: "03-design.md",
-    result: { required: { has_runnable_service: { kind: "boolean" } } },
+    result: {
+      required: { has_runnable_service: { kind: "boolean" } },
+      optional: PLAN_FIELDS.optional,
+      check: (value) =>
+        value.reproduced === false && (!Array.isArray(value.questions) || value.questions.length === 0)
+          ? "reproduced 为 false 时，questions 必须是非空的字符串数组：需要需求方补充什么才能复现"
+          : null,
+    },
   },
   design_review: {
     id: "design_review",
@@ -111,7 +131,7 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "方案修订",
     role: "builder",
     promptFile: "04b-design-revise.md",
-    result: done,
+    result: { required: done.required, optional: { slices: { kind: "string[]" }, files: { kind: "string[]" } } },
   },
   implement: {
     id: "implement",

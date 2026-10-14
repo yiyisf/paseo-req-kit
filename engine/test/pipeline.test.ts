@@ -1717,3 +1717,219 @@ test("测试同事接手：自动新建工作区的需求研发完成后，同�
   assert.notEqual(refused.status, 0);
   assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).status, "failed");
 });
+
+// ---------------------------------------------------------------------------
+// 1.8: requirement types, the quality gate, slices, the scope check, related repositories
+// ---------------------------------------------------------------------------
+
+function specHeader(env: Env, line: string): void {
+  const spec = path.join(env.repo, FEATURE, "spec.md");
+  fs.writeFileSync(spec, fs.readFileSync(spec, "utf8").replace("- 需求提出人", `${line}\n- 需求提出人`));
+}
+
+/** Commits everything so far (the code base the gate and the scope check compare with). */
+function commitAll(env: Env): void {
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: env.repo, stdio: "pipe" });
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+}
+
+function prompt(env: Env, key: string): string {
+  return events(env).filter((e) => e.type === "start" && e.key === key).at(-1)?.prompt ?? "";
+}
+
+function title(env: Env, key: string): string {
+  return events(env).filter((e) => e.type === "start" && e.key === key).at(-1)?.title ?? "";
+}
+
+const CHECK_SCRIPT = 'import fs from "node:fs";\nprocess.exit(fs.existsSync("BROKEN") ? 1 : 0);\n';
+
+test("需求类型·缺陷：先复现与定位；复现不了时暂停，请需求方补充信息；补充后继续修复", () => {
+  const env = setup();
+  specHeader(env, "- 类型：缺陷");
+  const notReproduced = { has_runnable_service: false, reproduced: false, questions: ["出错时用的是哪种账号？"] };
+  const first = runMain(env, { steps: { design: { result: notReproduced } } });
+  assert.equal(first.code, 3, first.out);
+  assert.deepEqual(starts(env), ["design"]);
+  assert.equal(title(env, "design"), "[20261012-sms-login] 3-复现与定位");
+  const design = prompt(env, "design");
+  assert.match(design, /需求类型：缺陷修复/);
+  assert.match(design, /# 本需求类型的做法：缺陷修复/);
+  assert.match(design, /## 复现与定位（design）/);
+  assert.doesNotMatch(design, /## 代码实现（implement）/);
+  assert.match(notifications(env).at(-1)?.text ?? "", /没能复现这个缺陷[\s\S]*出错时用的是哪种账号？/);
+  assert.equal(state(env).status, "waiting_for_business");
+  assert.match(state(env).stopReason, /没能复现缺陷/);
+
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n补充：出错的是企业账号。\n");
+  const from = events(env).length;
+  const second = runMain(env, {}, ["--resume"]);
+  assert.equal(second.code, 0, second.out);
+  assert.deepEqual(starts(env, from), ["design", "design_review-r1", "implement", "code_review-r1", "handoff", "verify", "report"]);
+  const implement = prompt(env, "implement");
+  assert.match(implement, /## 代码实现（implement）/);
+  assert.doesNotMatch(implement, /## 复现与定位（design）/);
+  assert.match(prompt(env, "code_review-r1"), /复现测试在修复前确实失败/);
+});
+
+test("需求类型·评估：只做调研、审阅和报告，不写代码；执行方式不适用；改了代码会写进报告", () => {
+  const env = setup();
+  specHeader(env, "- 类型：评估\n- 执行方式：分阶段");
+  commitAll(env);
+  const { code, out } = runMain(env, { steps: { design: { writeFiles: { "src/x.ts": "export {};\n" } } } });
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), ["design", "design_review-r1", "report"]);
+  assert.equal(title(env, "design"), "[20261012-sms-login] 3-调研评估");
+  assert.equal(title(env, "design_review-r1"), "[20261012-sms-login] 4-评估审阅");
+  assert.equal(title(env, "report"), "[20261012-sms-login] 11-评估报告");
+  assert.match(prompt(env, "design"), /本步骤写 `assessment.md`，不写 `design.md`/);
+  assert.match(prompt(env, "report"), /评估期间改动了功能目录之外的文件.*src\/x\.ts/);
+  const s = state(env);
+  assert.equal(s.status, "completed");
+  assert.equal(s.phases.mode, "continuous");
+  assert.equal(s.type, "assessment");
+  assert.match(launch(env, ["--status"]).stdout, /类型：评估/);
+});
+
+test("需求类型·重构走自己的做法；配置关掉某个类型时按普通需求处理", () => {
+  const env = setup();
+  specHeader(env, "- 类型：重构");
+  assert.equal(runMain(env, {}).code, 0);
+  assert.equal(title(env, "design"), "[20261012-sms-login] 3-方案设计与行为锁定");
+  assert.match(prompt(env, "implement"), /特征测试/);
+  assert.match(prompt(env, "code_review-r1"), /首要问题是"行为有没有变"/);
+
+  const off = setup({ requirementTypes: ["assessment"] });
+  specHeader(off, "- 类型：缺陷");
+  assert.equal(runMain(off, {}).code, 0);
+  assert.equal(title(off, "design"), "[20261012-sms-login] 3-方案设计");
+  assert.doesNotMatch(prompt(off, "design"), /需求类型：/);
+  assert.equal(state(off).type, null);
+});
+
+test("质量门：改动前记录基线；实现后流水线自己运行检查，新失败发回同一个 agent 修复；原本就失败的不算", () => {
+  const env = setup({ checks: [{ name: "test", command: "node check.mjs" }, { name: "lint", command: "node lint.mjs" }] });
+  fs.writeFileSync(path.join(env.repo, "check.mjs"), CHECK_SCRIPT);
+  fs.writeFileSync(path.join(env.repo, "lint.mjs"), "process.exit(1);\n");
+  commitAll(env);
+  const { code, out } = runMain(env, { steps: { implement: { writeFiles: { BROKEN: "x" }, fixOnFollowUp: ["BROKEN"] } } });
+  assert.equal(code, 0, out);
+  const followUps = events(env).filter((e) => e.type === "followUp" && e.key === "implement");
+  assert.equal(followUps.length, 1);
+  assert.match(followUps[0].text ?? "", /质量门[\s\S]*### test[\s\S]*node check\.mjs[\s\S]*（lint 在改动之前就失败/);
+  assert.doesNotMatch(followUps[0].text ?? "", /### lint/);
+
+  const s = state(env);
+  assert.deepEqual(s.gate.baseline.results, { test: "pass", lint: "fail" });
+  assert.equal(s.gate.runs.length, 1);
+  assert.equal(s.gate.runs[0].key, "implement");
+  assert.equal(s.gate.runs[0].passed, true);
+  assert.equal(s.gate.runs[0].fixRounds, 1);
+  assert.ok(fs.existsSync(path.join(env.repo, FEATURE, ".pipeline", "checks", "implement", "test.log")));
+  const review = prompt(env, "code_review-r1");
+  assert.match(review, /质量门基线（改动前，流水线运行）：2 项检查，原本就失败：lint/);
+  assert.match(review, /质量门（implement 之后，流水线运行）：通过（运行 2 项，要求修复 1 次后通过）；lint 改动前就失败/);
+  assert.match(prompt(env, "implement"), /流水线会复查/);
+});
+
+test("质量门：修复次数用完仍失败时照常继续，交给评审和报告；与改动的模块无关的检查不运行", () => {
+  const env = setup({
+    checks: [
+      { name: "test", command: "node check.mjs" },
+      { name: "web 测试", command: "node ../check.mjs", cwd: "web" },
+    ],
+  });
+  fs.writeFileSync(path.join(env.repo, "check.mjs"), CHECK_SCRIPT);
+  fs.mkdirSync(path.join(env.repo, "web"));
+  fs.writeFileSync(path.join(env.repo, "web", "index.js"), "\n");
+  commitAll(env);
+  const { code, out } = runMain(env, { steps: { implement: { writeFiles: { BROKEN: "x" } } } });
+  assert.equal(code, 0, out);
+  assert.equal(events(env).filter((e) => e.type === "followUp" && e.key === "implement").length, 2);
+  const run = state(env).gate.runs[0];
+  assert.equal(run.passed, false);
+  assert.deepEqual(run.newFailures, ["test"]);
+  assert.deepEqual(
+    run.checks.map((c: { name: string; result: string }) => [c.name, c.result]),
+    [["test", "fail"], ["web 测试", "skipped"]],
+  );
+  assert.match(prompt(env, "report"), /test 改动前通过、现在失败，要求修复 2 次后仍失败；1 项与改动的模块无关，没有运行/);
+  assert.match(launch(env, ["--status"]).stdout, /质量门（流水线自己运行的检查）：test 在 implement 之后仍失败/);
+});
+
+test("质量门：项目没有配置检查时不运行，报告中说明", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  assert.equal(state(env).gate ?? null, null);
+  assert.match(prompt(env, "report"), /项目没有配置检查（checks）/);
+  assert.doesNotMatch(prompt(env, "code_review-r1"), /质量门基线|质量门（/);
+});
+
+test("按切片实现：方案分几片就逐片启动实现；中断后只重做当前片；快速档和片数上限", () => {
+  const env = setup();
+  const sliced = { has_runnable_service: false, slices: ["S1 发送验证码（AC-1.1）", "S2 验证码登录（AC-2.1）", "S3 风控（AC-3.1）"] };
+  const first = runMain(env, { steps: { design: { result: sliced }, "implement-s2": { error: "agent crashed" } } });
+  assert.equal(first.code, 1, first.out);
+  assert.deepEqual(starts(env), ["design", "design_review-r1", "implement-s1", "implement-s2"]);
+  assert.match(prompt(env, "design"), /切片上限：6 片/);
+  assert.equal(title(env, "implement-s2"), "[20261012-sms-login] 5-代码实现 第2/3片");
+  const second = prompt(env, "implement-s2");
+  assert.match(second, /# 按切片实现/);
+  assert.match(second, /你负责第 2 片：\*\*S2 验证码登录（AC-2.1）\*\*/);
+  assert.match(second, /切片：第 2 片，共 3 片（S2 验证码登录（AC-2.1））/);
+  assert.match(launch(env, ["--status"]).stdout, /代码实现（第 1 片）：完成/);
+
+  const from = events(env).length;
+  const resumed = runMain(env, { steps: { design: { result: sliced } } }, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.deepEqual(starts(env, from), ["implement-s2", "implement-s3", "code_review-r1", "handoff", "verify", "report"]);
+
+  const quick = setup();
+  specHeader(quick, "- 档位：快速");
+  assert.equal(runMain(quick, { steps: { design: { result: sliced } } }).code, 0);
+  assert.deepEqual(starts(quick).filter((k) => k.startsWith("implement")), ["implement"]);
+  assert.match(prompt(quick, "design"), /本次不按切片实现/);
+
+  const capped = setup({ slices: { max: 2 } });
+  assert.equal(runMain(capped, { steps: { design: { result: sliced } } }).code, 0);
+  assert.deepEqual(starts(capped).filter((k) => k.startsWith("implement")), ["implement-s1", "implement-s2"]);
+  assert.match(prompt(capped, "implement-s2"), /S2 验证码登录（AC-2.1）；S3 风控（AC-3.1）/);
+});
+
+test("范围检查：方案列出的文件之外的改动交给代码评审逐一说明；方案修订可以更新文件清单", () => {
+  const env = setup();
+  commitAll(env);
+  const scenario: FakeScenario = {
+    steps: {
+      design: { result: { has_runnable_service: false, files: ["src/"] } },
+      "design_review-r1": { result: { verdict: "changes_required" } },
+      // The revision adds config/app.json to the plan; docs/notes.md stays outside it.
+      "design_revise-r1": { result: { status: "done", files: ["src/", "config/app.json"] } },
+      implement: { writeFiles: { "src/a.ts": "x", "config/app.json": "{}", "docs/notes.md": "n" } },
+    },
+  };
+  const { code, out } = runMain(env, scenario);
+  assert.equal(code, 0, out);
+  assert.match(prompt(env, "code_review-r1"), /范围检查（流水线比对）：共改动 3 个文件，其中 1 个不在方案列出的范围内：docs\/notes\.md/);
+  assert.match(prompt(env, "code_review-r1"), /\*\*影响面\*\*/);
+});
+
+test("关联仓库：步骤可以只读参考登记的其他仓库，写明分支和提交；本机没有的跳过", () => {
+  const env = setup();
+  const backend = fs.mkdtempSync(path.join(os.tmpdir(), "req-backend-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: backend });
+  fs.writeFileSync(path.join(backend, "api.md"), "POST /login\n");
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: backend });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "api"], { cwd: backend });
+  fs.writeFileSync(
+    path.join(env.repo, ".requirement-pipeline.json"),
+    JSON.stringify({ relatedRepos: [{ name: "后端", path: path.relative(env.repo, backend), role: "提供登录接口" }, { name: "支付", path: "../no-such-repo" }] }),
+  );
+  const { code, out } = runMain(env, {});
+  assert.equal(code, 0, out);
+  const design = prompt(env, "design");
+  assert.match(design, new RegExp(`关联仓库（只读）：后端 → ${backend.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}（分支 main，提交 [0-9a-f]+；提供登录接口）`));
+  assert.match(design, /# 关联仓库（只读参考）/);
+  assert.doesNotMatch(design, /支付/);
+  assert.match(out, /关联仓库「支付」不在这台机器上/);
+});

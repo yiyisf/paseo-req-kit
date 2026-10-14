@@ -28,6 +28,10 @@ export interface FakeBehavior {
   transientErrors?: number;
   /** Result of the Nth agent started for this step key (falls back to `result`). */
   resultsByStart?: Array<Record<string, unknown>>;
+  /** Files (relative to the repository) the agent writes in its first turn, like a code change. */
+  writeFiles?: Record<string, string>;
+  /** Files the agent deletes when it gets a follow-up (e.g. fixing what the quality gate found). */
+  fixOnFollowUp?: string[];
 }
 
 export interface FakeScenario {
@@ -90,7 +94,9 @@ function record(event: Record<string, unknown>): void {
 }
 
 function contextValue(prompt: string, label: string): string {
-  const match = new RegExp(`^${label}：(.+)$`, "m").exec(prompt);
+  // Only the <pipeline-context> block: prompt text may start a line with the same words.
+  const block = prompt.slice(prompt.lastIndexOf("<pipeline-context>"));
+  const match = new RegExp(`^${label}：(.+)$`, "m").exec(block);
   if (!match) throw new Error(`prompt is missing "${label}" in <pipeline-context>`);
   return match[1].trim();
 }
@@ -118,7 +124,7 @@ export const createRuntime: RuntimeFactory = async () => {
       const key = path.basename(resultRel, ".json");
       const isProposal = key.startsWith("design_proposal-");
       const isPanel = !isProposal && /-p\d+$/.test(key);
-      const stepId = isProposal ? "design_proposal" : isPanel ? "panel_review" : key.replace(/-r\d+$/, "");
+      const stepId = isProposal ? "design_proposal" : isPanel ? "panel_review" : key.replace(/-r\d+$/, "").replace(/-s\d+$/, "");
       const behavior: FakeBehavior = scenario.steps?.[key] ?? scenario.steps?.[stepId] ?? {};
       const resultAbs = path.join(input.cwd, resultRel);
       const startNumber = (startsByKey.get(key) ?? 0) + 1;
@@ -160,6 +166,13 @@ export const createRuntime: RuntimeFactory = async () => {
           const artifact = path.join(input.cwd, featureDir, ARTIFACTS[stepId]);
           fs.appendFileSync(artifact, `\n## ${key}（模拟 agent，第 ${turn + 1} 个回合）\n`);
           fs.appendFileSync(path.join(input.cwd, featureDir, "progress.md"), `- ${key}：完成\n`);
+        }
+        if (turn === 0 && behavior.writeFiles) {
+          for (const [file, content] of Object.entries(behavior.writeFiles)) {
+            const abs = path.join(input.cwd, file);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, content);
+          }
         }
         if (behavior.neverWritesResult) return;
         if (turn === 0 && behavior.skipResultFirst) return;
@@ -205,6 +218,7 @@ export const createRuntime: RuntimeFactory = async () => {
           turn += 1;
           turnPending = true;
           record({ type: "followUp", agentId: id, key, text });
+          for (const file of behavior.fixOnFollowUp ?? []) fs.rmSync(path.join(input.cwd, file), { force: true });
         },
         async archive() {
           record({ type: "archive", agentId: id, key });

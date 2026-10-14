@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { DefectHandling, PhaseMode, ProfileName, VerifyEnvironment } from "./config.js";
+import type { DefectHandling, PhaseMode, ProfileName, RequirementType, VerifyEnvironment } from "./config.js";
 import type { AgentUsage } from "./usage.js";
 import type { StepId } from "./steps.js";
 
@@ -90,6 +90,35 @@ export interface PipelineState {
   verifyAt?: string | null;
   /** How many times the verify phase handed defects back to development (defects "handback"). */
   handbacks?: number;
+  /** Requirement type with its own playbook, from the spec's "类型" line; absent: the normal flow (1.8). */
+  type?: RequirementType | null;
+  /** Commit before the attempt's first code change; the quality gate's baseline and the scope check start here (1.8). */
+  codeBase?: { attempt: number; commit: string | null } | null;
+  /** Quality gate: the checks' results before the change, and every run after a step (1.8). */
+  gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
+}
+
+export type CheckOutcome = "pass" | "fail";
+
+export interface GateBaseline {
+  attempt: number;
+  commit: string | null;
+  at: string;
+  results: Record<string, CheckOutcome>;
+}
+
+export interface GateRun {
+  /** Step key the checks ran after, e.g. "implement-s2", "review_fix-r1". */
+  key: string;
+  attempt: number;
+  at: string;
+  /** Checks that applied to the change; "skipped" ones did not touch their paths. */
+  checks: Array<{ name: string; result: CheckOutcome | "skipped"; failedBefore: boolean }>;
+  /** Checks that pass before the change and fail after it: these block. */
+  newFailures: string[];
+  /** Times the step agent was asked to fix them. */
+  fixRounds: number;
+  passed: boolean;
 }
 
 export interface IncrementalInfo {

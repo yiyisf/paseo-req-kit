@@ -12,13 +12,17 @@ export function blockedMessage(input: {
   resumeCommand: string;
   /** A reminder is scheduled after this many hours without an answer. */
   reminderHours?: number | null;
+  /** "reproduce": the defect could not be reproduced (defect playbook); default: the design review. */
+  source?: "design_review" | "reproduce";
 }): string {
   const list = input.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
   return [
     HEADER,
     "",
     `功能目录：${input.featureDir}`,
-    "情况：方案审核发现有问题必须由需求方决定，否则可能做出错误的东西。流水线已暂停，还没有开始写代码。",
+    input.source === "reproduce"
+      ? "情况：复现与定位这一步没能复现这个缺陷，需要需求方补充信息（复现步骤、环境、账号或数据、截图或报错）。流水线已暂停，还没有修改代码。"
+      : "情况：方案审核发现有问题必须由需求方决定，否则可能做出错误的东西。流水线已暂停，还没有开始写代码。",
     "",
     "需要用户决定的问题：",
     list,
@@ -126,6 +130,29 @@ export function resultFollowUp(input: { resultFile: string; problem: string }): 
     `流水线没有拿到本步骤的有效结果：${input.problem}。`,
     `如果本步骤的工作还没有完成，请先完成它；然后按照"本步骤任务"中"结果文件"一节的要求，把结果写入 ${input.resultFile}（只含一个 JSON 对象），再结束。`,
   ].join("\n");
+}
+
+/** Sent to the step agent when checks that passed before its change now fail (the quality gate). */
+export function gateFollowUp(input: {
+  failures: Array<{ name: string; command: string; cwd: string | null; logFile: string; tail: string }>;
+  round: number;
+  max: number;
+  /** Checks that already failed before this requirement's change: not this step's problem. */
+  preexisting: string[];
+}): string {
+  const parts = [
+    `流水线在你这一步结束后运行了项目的检查（质量门），以下检查在改动之前通过、现在失败（第 ${input.round} 次要求修复，最多 ${input.max} 次）：`,
+    "",
+  ];
+  for (const f of input.failures) {
+    parts.push(`### ${f.name}`, "", `命令：\`${f.command}\`${f.cwd ? `（在 ${f.cwd} 目录）` : ""}`, `完整输出：${f.logFile}`, "", "最后的输出：", "", "```text", f.tail, "```", "");
+  }
+  if (input.preexisting.length > 0) parts.push(`（${input.preexisting.join("、")} 在改动之前就失败，不算本次引入，不需要处理。）`, "");
+  parts.push(
+    "请找到原因并修复，让这些检查重新通过；修复要针对原因，不要删除、跳过或放宽检查和测试。修完自己运行一遍这些命令确认通过，提交，并在本步骤的产物里记一笔（哪个检查、原因、怎么修的）；结果文件按需要更新。",
+    "确实修不了的（例如需要环境或权限），在产物里写明原因后照常结束，流水线会把它带进评审和报告。",
+  );
+  return parts.join("\n");
 }
 
 export function milestoneMessage(text: string): string {

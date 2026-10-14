@@ -29,11 +29,11 @@ features:
   - icon:
       src: /icons/agents.svg
     title: 后台 agent 流水线
-    details: 方案设计、实现（适合时 TDD）、评审、验证、报告依次由不同的 agent 完成，每一步作为子 agent 挂在你的对话下。
+    details: 方案设计、实现、评审、验证、报告依次由不同的 agent 完成；缺陷先复现再修、重构先锁住行为、评估只调研不写代码，大需求按切片逐片实现。
   - icon:
       src: /icons/review.svg
-    title: 交叉评审，如实报告
-    details: 做事的和检查的分开，评审小组可以并行审核；结论只看结果文件和证据，遗留问题如实写进报告。
+    title: 质量门，如实报告
+    details: 流水线自己运行项目的 lint、测试、构建，改坏了发回修复；做事的和检查的分开，结论只看结果文件和证据，遗留问题如实写进报告。
   - icon:
       src: /icons/phases.svg
     title: 分阶段提测

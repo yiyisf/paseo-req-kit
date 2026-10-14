@@ -82,3 +82,30 @@ test("通知模块：路径相对声明它的配置文件，\"~/\" 为用户目�
   const bad = files({ agents, notifiers: [{ module: "x.mjs", events: ["sometimes"] }] });
   assert.throws(() => loadConfig(bad.machinePath), /notifiers\[0\]\.events 只能包含/);
 });
+
+test("质量门、切片、关联仓库、需求类型的配置：项目可以写检查；按键合并；写错时说明哪里不对", async () => {
+  const { resolveRelatedRepo } = await import("../src/config.js");
+  const { machinePath, repo } = files(
+    { agents, qualityGate: { fixAttempts: 1 } },
+    undefined,
+    { checks: [{ name: "test", command: "npm test" }, { name: "web", command: "npm test", cwd: "web" }], slices: { max: 4 } },
+  );
+  const { config } = loadConfig(machinePath, repo);
+  assert.equal(config.checks.length, 2);
+  assert.deepEqual(config.qualityGate, { fixAttempts: 1, timeoutMinutes: 20 });
+  assert.deepEqual(config.slices, { profiles: ["standard"], max: 4 });
+  assert.deepEqual(config.requirementTypes, ["defect", "refactor", "assessment"]);
+  assert.equal(resolveRelatedRepo({ name: "后端", path: "../backend" }, "/work/web"), path.resolve("/work/backend"));
+  assert.equal(resolveRelatedRepo({ name: "后端", path: "~/code/backend" }, "/work/web"), path.join(os.homedir(), "code/backend"));
+
+  const bad = (project: object, pattern: RegExp) => {
+    const f = files({ agents }, undefined, project);
+    assert.throws(() => loadConfig(f.machinePath, f.repo), pattern);
+  };
+  bad({ checks: [{ name: "t", command: "a" }, { name: "t", command: "b" }] }, /名称不能重复/);
+  bad({ checks: [{ name: "t", command: "a", cwd: "../other" }] }, /仓库之内的相对路径/);
+  bad({ checks: [{ name: "t" }] }, /checks\[0\]\.command/);
+  bad({ requirementTypes: ["urgent"] }, /requirementTypes 只能包含/);
+  bad({ relatedRepos: [{ name: "后端" }] }, /relatedRepos\[0\]\.path/);
+  bad({ slices: { max: 0 } }, /slices\.max/);
+});

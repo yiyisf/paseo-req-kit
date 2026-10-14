@@ -30,6 +30,9 @@
 | `phase` | `develop` \| `verify` | 可选，1.7.0 起。当前阶段。用字符串而不是编号，以后增加阶段不用改格式 |
 | `verifyAt` | string \| null | 可选，1.7.0 起。`--verify-at`：研发完成后在这个时间开始测试验证 |
 | `handbacks` | number | 可选，1.7.0 起。测试验证把缺陷退回研发阶段的次数（`defects` 为 `handback`），上限为档位的 `defectFix` 轮数 |
+| `type` | `defect` \| `refactor` \| `assessment` \| null | 可选，1.8.0 起。spec 中"类型"对应的做法；新需求、小改动和配置关掉的类型为 null |
+| `codeBase` | object \| null | 可选，1.8.0 起。`attempt`、`commit`：这次尝试在改动任何代码之前的提交，质量门的基线和范围检查从这里比较。尝试开始时就已经写过代码的旧记录为 `commit: null` |
+| `gate` | object \| null | 可选，1.8.0 起。质量门：`baseline`（`attempt`、`commit`、`at`、`results`：每项检查改动前 `pass` / `fail`），`runs`（每次运行：`key` 步骤键、`attempt`、`at`、`checks`（`name`、`result`：`pass` / `fail` / `skipped`、`failedBefore`）、`newFailures`、`fixRounds`、`passed`）。各次运行的完整输出在 `.pipeline/checks/<步骤键>/` |
 
 `schedules[].kind` 在 1.7.0 起还可能是 `verify-start`（`--verify-at` 预约的测试验证开始）。`history` 中每条步骤记录在 1.7.0 起有可选的 `phase`（`develop` / `verify`），用于按阶段统计用时与用量；没有时按研发阶段统计。
 
