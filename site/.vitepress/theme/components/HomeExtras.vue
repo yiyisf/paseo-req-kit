@@ -131,9 +131,10 @@ const verify = ["服务启动", "功能验证", "缺陷修复 ⇄ 复验", "完�
 </template>
 
 <style scoped>
+/* Same width as VitePress's feature grid above: a 1152px container inside the page padding. */
 .rk-home {
   margin: 0 auto;
-  max-width: 1152px;
+  max-width: 1280px;
   padding: 0 24px 96px;
 }
 @media (min-width: 640px) {

@@ -129,6 +129,7 @@ if [ -z "$SOURCE" ]; then
   else
     die "需要 curl 或 wget 来下载安装包"
   fi
+  # shellcheck disable=SC2016 # the single-quoted text is JavaScript for node, not shell
   PICK=$(printf '%s' "$RELEASES" | WANT="$VERSION" CHANNEL="$CHANNEL" node -e '
     let text = "";
     process.stdin.on("data", (c) => (text += c)).on("end", () => {
@@ -183,7 +184,9 @@ step "启用这个版本，安装 /req 等 skill"
 CONFIG="${REQ_KIT_HOME:-$HOME/.req-kit}/config.json"
 if ! run_req setup; then
   # On a new machine setup ends with "fill in the agents" (✗), which the wizard below does.
-  [ -f "$CONFIG" ] && grep -q "CHANGE-ME" "$CONFIG" 2>/dev/null || die "req setup 没有完成（见上面的输出）。修复后可以重新运行这个脚本"
+  if ! { [ -f "$CONFIG" ] && grep -q "CHANGE-ME" "$CONFIG" 2>/dev/null; }; then
+    die "req setup 没有完成（见上面的输出）。修复后可以重新运行这个脚本"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
