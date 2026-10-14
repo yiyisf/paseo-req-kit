@@ -6,6 +6,7 @@
 // Paseo daemon, and the current project with its pipelines.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { type PaseoJson, windowsPaseoJsonIssues } from "./paseo-json.js";
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -297,7 +298,7 @@ function paseoJson(repo: string, isRepo: boolean): void {
     info("没有 paseo.json。可选：/req-setup 可以生成它，让 Paseo 在新建 worktree 时自动安装依赖，并由 Paseo 管理服务和端口（几个需求同时验证也不会端口冲突）");
     return;
   }
-  let raw: { worktree?: { setup?: unknown }; scripts?: Record<string, { type?: string; command?: string; port?: number }> };
+  let raw: PaseoJson;
   try {
     raw = JSON.parse(fs.readFileSync(file, "utf8")) as typeof raw;
   } catch (error) {
@@ -314,6 +315,9 @@ function paseoJson(repo: string, isRepo: boolean): void {
     if (s.port === undefined && !String(s.command ?? "").includes("PASEO_PORT")) {
       report("warn", `paseo.json 中的服务 ${name} 没有使用 $PASEO_PORT，几个工作区同时运行时会端口冲突`, `让启动命令监听 $PASEO_PORT，例如 "npm run dev -- --port $PASEO_PORT"`);
     }
+  }
+  if (process.platform === "win32") {
+    for (const issue of windowsPaseoJsonIssues(raw)) report("warn", issue.text, issue.fix);
   }
   if (!isRepo) return;
   try {

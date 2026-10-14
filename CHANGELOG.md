@@ -2,6 +2,10 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 未发布
+
+- **Windows 上的 paseo.json**：Paseo 在 Windows 上用 PowerShell 执行 `worktree.setup`、用 cmd.exe 运行脚本和服务，按 macOS / Linux 写的命令（`$PASEO_PORT`、`[ -f … ] && cp …`）在那里会失败。`/req-setup` 现在先确认系统再按对应写法生成，团队混用时改用各系统一样的写法；`/req-doctor` 在 Windows 上会指出 bash 写法的命令。
+
 ## 1.7.0-beta.2
 
 分阶段执行：研发和测试验证可以分开进行。
