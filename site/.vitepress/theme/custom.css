@@ -1,41 +1,191 @@
-/* Brand: blue to teal, like the logo. */
+/* Brand: modern royal blue to emerald teal */
 :root {
-  --vp-c-brand-1: #3563c9;
-  --vp-c-brand-2: #4a77d8;
-  --vp-c-brand-3: #5b86e0;
-  --vp-c-brand-soft: rgba(63, 111, 216, 0.14);
+  --vp-c-brand-1: #2563eb;
+  --vp-c-brand-2: #3b82f6;
+  --vp-c-brand-3: #60a5fa;
+  --vp-c-brand-soft: rgba(37, 99, 235, 0.12);
   --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #3f6fd8 20%, #1fb5a3 80%);
-  --vp-home-hero-image-background-image: linear-gradient(-45deg, #3f6fd8 40%, #1fb5a3 60%);
-  --vp-home-hero-image-filter: blur(56px);
+  --vp-home-hero-name-background: linear-gradient(135deg, #2563eb 0%, #06b6d4 100%);
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #3b82f6 30%, #10b981 70%);
+  --vp-home-hero-image-filter: blur(64px);
   --rk-panel: var(--vp-c-bg-soft);
-}
-.dark {
-  --vp-c-brand-1: #7aa2f7;
-  --vp-c-brand-2: #5f8ff0;
-  --vp-c-brand-3: #4a77d8;
-  --vp-c-brand-soft: rgba(122, 162, 247, 0.16);
-}
-@media (min-width: 640px) {
-  :root { --vp-home-hero-image-filter: blur(64px); }
-}
-@media (min-width: 960px) {
-  :root { --vp-home-hero-image-filter: blur(80px); }
+
+  /* Role & state colors */
+  --rk-builder: #2563eb;
+  --rk-builder-bg: rgba(37, 99, 235, 0.1);
+  --rk-reviewer: #8b5cf6;
+  --rk-reviewer-bg: rgba(139, 92, 246, 0.1);
+  --rk-gate: #059669;
+  --rk-gate-bg: rgba(5, 150, 105, 0.1);
+  --rk-warn: #d97706;
+  --rk-warn-bg: rgba(217, 119, 6, 0.1);
 }
 
-/* Generated pages: where the text comes from. */
+.dark {
+  --vp-c-brand-1: #60a5fa;
+  --vp-c-brand-2: #3b82f6;
+  --vp-c-brand-3: #2563eb;
+  --vp-c-brand-soft: rgba(96, 165, 250, 0.16);
+  --vp-home-hero-name-background: linear-gradient(135deg, #60a5fa 0%, #2dd4bf 100%);
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #60a5fa 30%, #34d399 70%);
+
+  --rk-builder: #60a5fa;
+  --rk-builder-bg: rgba(96, 165, 250, 0.15);
+  --rk-reviewer: #a78bfa;
+  --rk-reviewer-bg: rgba(167, 139, 250, 0.15);
+  --rk-gate: #34d399;
+  --rk-gate-bg: rgba(52, 211, 153, 0.15);
+  --rk-warn: #fbbf24;
+  --rk-warn-bg: rgba(251, 191, 36, 0.15);
+}
+
+@media (min-width: 640px) {
+  :root { --vp-home-hero-image-filter: blur(72px); }
+}
+@media (min-width: 960px) {
+  :root { --vp-home-hero-image-filter: blur(88px); }
+}
+
+/* ==========================================================================
+   Typography & Content Enhancements
+   ========================================================================== */
+.vp-doc {
+  line-height: 1.75;
+  letter-spacing: 0.01em;
+}
+
+.vp-doc h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.vp-doc h2 {
+  font-weight: 700;
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid var(--vp-c-divider);
+  letter-spacing: -0.01em;
+}
+
+.vp-doc h3 {
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Modern Table Styling (Card-like with hover & zebra effects)
+   ========================================================================== */
+.vp-doc table {
+  width: 100%;
+  display: table;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 20px 0 28px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--vp-c-divider);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.vp-doc th {
+  background-color: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  font-weight: 600;
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 2px solid var(--vp-c-divider);
+  font-size: 14px;
+}
+
+.vp-doc td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vp-c-divider);
+  font-size: 14px;
+  line-height: 1.6;
+  transition: background-color 0.15s ease;
+}
+
+.vp-doc tr:last-child td {
+  border-bottom: none;
+}
+
+.vp-doc tr:nth-child(even) td {
+  background-color: rgba(125, 125, 125, 0.02);
+}
+
+.vp-doc tr:hover td {
+  background-color: var(--vp-c-brand-soft);
+}
+
+/* ==========================================================================
+   Callouts & Custom Containers
+   ========================================================================== */
+.vp-doc .custom-block {
+  border-radius: 12px;
+  border-left-width: 4px;
+  padding: 16px 20px;
+  margin: 20px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+}
+
+.vp-doc .custom-block.tip {
+  border-left-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+}
+
+.vp-doc .custom-block.info {
+  border-left-color: #06b6d4;
+  background: rgba(6, 182, 212, 0.08);
+}
+
+.vp-doc .custom-block.warning {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+/* ==========================================================================
+   Badges & Tags
+   ========================================================================== */
+.rk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  line-height: 1.4;
+  font-family: var(--vp-font-family-mono);
+}
+
+.rk-badge.builder {
+  color: var(--rk-builder);
+  background: var(--rk-builder-bg);
+  border: 1px solid currentColor;
+}
+
+.rk-badge.reviewer {
+  color: var(--rk-reviewer);
+  background: var(--rk-reviewer-bg);
+  border: 1px solid currentColor;
+}
+
+.rk-badge.gate {
+  color: var(--rk-gate);
+  background: var(--rk-gate-bg);
+  border: 1px solid currentColor;
+}
+
+.rk-badge.warn {
+  color: var(--rk-warn);
+  background: var(--rk-warn-bg);
+  border: 1px solid currentColor;
+}
+
+/* Generated pages footer note */
 .source-note {
   margin-top: 48px;
   padding-top: 16px;
   border-top: 1px solid var(--vp-c-divider);
   font-size: 13px;
   color: var(--vp-c-text-3);
-}
-
-/* Home: install command under the hero actions. */
-.VPHome .rk-install {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
 }

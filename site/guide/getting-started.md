@@ -1,8 +1,13 @@
 # 快速开始
 
-从安装到第一个需求，大约 15 分钟。安装只需在**运行 Paseo daemon 的那台机器**上做一次。
+从环境安装到跑通你的第一个需求，大约只需 15 分钟。
+安装只需在**运行 Paseo daemon 的那台机器**上执行一次即可，后续所有同事和工作区均可直接受益。
 
-## 1. 安装
+---
+
+## 第一步：一键环境安装
+
+选择与你操作系统匹配的安装命令：
 
 ::: code-group
 
@@ -20,74 +25,80 @@ curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.s
 
 :::
 
-安装脚本会依次：
+### 安装脚本全自动执行事项：
+1. **基础依赖环境核验**：自动检测 Node.js 22+、npm 和 git 运行环境；
+2. **下载与布局**：自动安装 `paseo-req-kit` 全局或隔离运行时（当 npm 全局目录不可写时自动安装至 `~/.req-kit/npm`，免除 sudo 权限困扰）；
+3. **注册 Skill 指令**：执行 `req setup`，为系统中的 Claude Code、Codex 等自动挂载 `/req`、`/req-setup`、`/req-doctor` 等 Skill；
+4. **模型角色向导**：触发交互式向导 `req configure`，分别为 **实现者 (Builder)** 和 **评审者 (Reviewer)** 选择对应的 Agent 模型。
 
-1. 检查 Node.js 22+、npm 和 git；
-2. 安装 `paseo-req-kit`（npm 上有就从 npm 安装，否则用 GitHub Release 的安装包；npm 全局目录不可写时装到 `~/.req-kit/npm`，不需要 sudo）；
-3. 运行 `req setup`：把这个版本装到 `~/tools/req-kit/versions/<版本>`，并为 Claude Code、Codex 等安装 `/req` 等 skill；
-4. 运行配置向导 `req configure`，为"实现"（builder）和"评审"（reviewer）各选一个 agent——建议选两个不同的模型。
-
-再次运行同一条命令即升级。常用选项：
-
+::: tip 离线或特定版本安装
+如需体验包含最新特性的测试版本，只需追加参数：
 ```sh
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --beta             # 包括 beta 版
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --version 1.7.0-beta.3
+curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --beta
 ```
-
-::: tip 不能用一键脚本时
-也可以手工安装，或者在公司内网用离线安装包，见 [安装与升级](./install)。
+内网或离线安装详情，请查看 [安装与升级指南](./install)。
 :::
 
-## 2. 体检
+---
+
+## 第二步：运行环境体检
+
+安装完成后，在终端运行体检命令：
 
 ```sh
 req doctor
 ```
 
-它检查安装、配置、Paseo daemon、agent 的模式（必须是免确认模式）和额度。全部是 ✓ 或只有 ⚠ 即可继续；✗ 的项按提示处理。
+体检工具将快速校验：安装路径完整性、模型免确认交互模式、Paseo daemon 通信状态以及模型额度。如果检查结果均为 `✓`（或仅包含温和的 `⚠` 警告），说明环境已准备就绪。
 
-::: details Windows 上 `req` 命令被执行策略拦住？
-在 PowerShell 中改用 `req.cmd doctor`，或在 cmd 窗口中运行。
+::: details Windows PowerShell 执行策略提示
+若在 PowerShell 中被脚本策略拦截，请改用 `req.cmd doctor`，或在标准 CMD 控制台窗口中执行。
 :::
 
-## 3. 接入项目（每个项目一次）
+---
 
-在 Paseo 中打开项目主目录（最好在主分支上），新开对话，输入：
+## 第三步：项目接入（每个项目仅需执行一次）
+
+在 Paseo 中打开你想要接入的本地项目主目录（推荐在 `main` 主分支），开启新会话并输入：
 
 ```text
 /req-setup
 ```
 
-agent 会读项目、只问读不出来的事、把安装依赖/测试/启动服务的命令实际跑一遍，然后生成并请你确认这些文件：
+Agent 会自动分析项目结构，实际运行依赖安装、构建测试及常驻服务启动命令，并在测试通过后自动生成以下规范配置文件：
 
-| 文件 | 作用 |
-| --- | --- |
-| `.requirement-pipeline/project-notes.md` | 项目约定：包管理工具、不能改的目录、提交格式 |
-| `.requirement-pipeline/verify.md` | 验证方法：实际跑通的安装、测试、启动命令 |
-| `paseo.json` | 新建工作区时自动准备环境；服务由 Paseo 托管，每个工作区独立端口 |
+| 生成配置文件 | 核心作用与价值 |
+| :--- | :--- |
+| `.requirement-pipeline/project-notes.md` | 固化项目工程约定：包管理工具、受保护目录、Commit 格式 |
+| `.requirement-pipeline/verify.md` | 沉淀跑通的真实指令：依赖安装、测试运行、服务启停脚本 |
+| `paseo.json` | 配合 Paseo 实现新工作区环境全自动初始化及端口隔离托管 |
 
-## 4. 提第一个需求
+---
 
-在项目的 Paseo 对话中输入 `/req` 和一句话：
+## 第四步：发起你的第一个真实需求
+
+在项目的 Paseo 对话中，输入 `/req` 配合一句话简要需求：
 
 ```text
 /req 登录页增加短信验证码登录
 ```
 
-接下来：
+接下来感受顺畅的自动化开发交付之旅：
 
-1. AI 复述理解，一次问一个问题；拿不准时说"你定"。
-2. 标准档会请另一个模型独立审阅需求说明，把发现的问题逐个问你。
-3. 确认需求说明后，选择现在开始或预约时间（例如今晚 10 点）。
-4. 开发在后台进行，每一步都出现在对话的子 agent 列表中；你会收到几句进展。
-5. 完成后收到结论和报告，说"我要验收"，按验收标准逐条核对。
+1. **结构化访谈**：AI 复述其理解，一次只抛出一个澄清问题并给出专业推荐项；
+2. **独立模型审阅**：标准档将调动第二个独立模型审阅生成的 `spec.md`，把潜藏漏洞逐一提示给你；
+3. **确认开工**：核对验收标准后确认，可选择立即执行或预约时间（如 `--verify-at 22:00`）；
+4. **后台流水线**：所有子任务作为子 Agent 挂载在主对话下，方案、代码、评审透明可见；
+5. **从严验收结单**：完成后自动汇报包含完整执行证据的验收报告，你只需说一句“我要验收”，AI 将带你逐条把关交付！
 
-::: tip 从一个小需求开始
-第一次建议用一个范围很小的改动（例如改一段文案），走快速档，十几分钟就能看到完整的流程。
+::: tip 首次体验小建议
+初次上手建议挑选一个轻量改动（例如修改一段展示文案或添加简单表单校验），走快速档，只需十几分钟即可完整领略多 Agent 流水线交付的魅力。
 :::
 
-## 下一步
+---
 
-- [使用者指南](./user)：过程中可以说什么、会收到哪些通知、怎么验收。
-- [工作原理](./how-it-works)：流水线的每一步做什么、产物在哪里。
-- [项目定制与运行规则](./project)：档位、评审小组、分阶段执行、通知等配置。
+## 接下来，继续深入探索：
+
+- 📖 **[使用者指南](./user)**：学习日常对话技巧、状态查询与终验指南；
+- ⚙️ **[工作原理](./how-it-works)**：深入了解 9 个步骤机制与规范产物结构；
+- 🎛️ **[项目定制与运行规则](./project)**：掌握评审小组、分阶段提测与企业 IM 机器人配置。
