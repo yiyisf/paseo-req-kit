@@ -34,6 +34,8 @@ jobs:
       # publish, add an NPM_TOKEN secret (or publish the Release .tgz by hand once).
       # A version already on npm (a re-run) is skipped, so the Release can still be made.
       - name: Publish
+        id: publish
+        continue-on-error: true   # the Release with the .tgz is still made; the job fails at the end
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -49,7 +51,7 @@ jobs:
       # Trusted publishing covers `npm publish` only; moving a dist-tag needs a token.
       # Optional: add an NPM_TOKEN secret (automation token) to set paseo-<minor> automatically.
       - name: Tag by supported Paseo version (releases only)
-        if: ${{ !contains(github.ref_name, '-') }}
+        if: ${{ !contains(github.ref_name, '-') && steps.publish.outcome == 'success' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -69,3 +71,8 @@ jobs:
           files: paseo-req-kit-*.tgz
           prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: ${{ runner.temp }}/notes.md
+      - name: Publish to npm failed
+        if: ${{ steps.publish.outcome == 'failure' }}
+        run: |
+          echo "::error::npm publish failed. The GitHub Release and its .tgz were created; install with npm i -g <the .tgz URL>. See docs/guide/维护者指南.md (npm 发布的一次性设置)."
+          exit 1
