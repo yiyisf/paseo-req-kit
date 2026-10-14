@@ -9,7 +9,7 @@
 | `version` | number | 格式版本。没有这个字段的文件按 1 处理 |
 | `repo` | string | 仓库目录（绝对路径） |
 | `featureDir` | string | 功能目录（相对路径，`/` 分隔） |
-| `status` | `running` \| `waiting_for_business` \| `failed` \| `completed` \| `phase_done` | 当前状态。`waiting_for_business` 表示等待需求方决定；`phase_done`（1.7.0 起）表示研发阶段已完成、停在闸口等待测试验证。1.7 之前的引擎把 `phase_done` 当作可以继续的中断，继续时沿用研发结果、直接做验证 |
+| `status` | `running` \| `waiting_for_business` \| `failed` \| `completed` \| `phase_done` \| `waiting_for_approval` | 当前状态。`waiting_for_business` 表示等待需求方决定；`phase_done`（1.7.0 起）表示研发阶段已完成、停在闸口等待测试验证；`waiting_for_approval`（1.8.0 起）表示方案已通过审核、等待需求方确认 `preview.md`，`--approve` 继续。旧引擎把不认识的状态当作可以继续的中断：`phase_done` 继续时直接做验证，`waiting_for_approval` 继续时不经确认直接写代码 |
 | `attempt` | number | 第几次从方案设计开始 |
 | `specHash` | string | 启动时 spec.md 的 sha256 |
 | `originAgentId` | string \| null | 发起对话的 agent，通知发往这里 |
@@ -32,9 +32,10 @@
 | `handbacks` | number | 可选，1.7.0 起。测试验证把缺陷退回研发阶段的次数（`defects` 为 `handback`），上限为档位的 `defectFix` 轮数 |
 | `type` | `defect` \| `refactor` \| `assessment` \| null | 可选，1.8.0 起。spec 中"类型"对应的做法；新需求、小改动和配置关掉的类型为 null |
 | `codeBase` | object \| null | 可选，1.8.0 起。`attempt`、`commit`：这次尝试在改动任何代码之前的提交，质量门的基线和范围检查从这里比较。尝试开始时就已经写过代码的旧记录为 `commit: null` |
+| `approval` | object \| null | 可选，1.8.0 起。方案确认点：`attempt`（哪一次尝试的方案）、`status`（`waiting` / `approved`）、`at`。需求变更后的新尝试需要重新确认 |
 | `gate` | object \| null | 可选，1.8.0 起。质量门：`baseline`（`attempt`、`commit`、`at`、`results`：每项检查改动前 `pass` / `fail`），`runs`（每次运行：`key` 步骤键、`attempt`、`at`、`checks`（`name`、`result`：`pass` / `fail` / `skipped`、`failedBefore`）、`newFailures`、`fixRounds`、`passed`）。各次运行的完整输出在 `.pipeline/checks/<步骤键>/` |
 
-`schedules[].kind` 在 1.7.0 起还可能是 `verify-start`（`--verify-at` 预约的测试验证开始）。`history` 中每条步骤记录在 1.7.0 起有可选的 `phase`（`develop` / `verify`），用于按阶段统计用时与用量；没有时按研发阶段统计。
+`schedules[].kind` 在 1.7.0 起还可能是 `verify-start`（`--verify-at` 预约的测试验证开始），1.8.0 起还可能是 `approval-continue`（方案确认超时后按方案继续，`designApproval.autoContinueHours`）。`history` 中每条步骤记录在 1.7.0 起有可选的 `phase`（`develop` / `verify`），用于按阶段统计用时与用量；没有时按研发阶段统计。
 
 ## 迁移
 

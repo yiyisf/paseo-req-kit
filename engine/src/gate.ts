@@ -33,6 +33,17 @@ export function changedFiles(repo: string, base: string | null): string[] | null
   return [...files].sort();
 }
 
+/**
+ * Which of `files` changed since `commit` (committed or not); null when the commit is not
+ * in this repository. Used to tell whether acceptance tests committed first were changed later.
+ */
+export function changedSince(repo: string, commit: string, files: string[]): string[] | null {
+  if (git(repo, ["rev-parse", "--verify", "--quiet", `${commit}^{commit}`]) === null) return null;
+  const out = git(repo, ["diff", "--name-only", commit, "--", ...files]);
+  if (out === null) return null;
+  return out.split("\n").map((f) => f.trim()).filter(Boolean).sort();
+}
+
 function globToRegExp(pattern: string): RegExp {
   let re = "";
   for (let i = 0; i < pattern.length; i++) {

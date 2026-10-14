@@ -53,6 +53,8 @@
 | `slices` | 标准档，最多 6 片 | 按切片实现：`profiles` 哪些档位，`max` 最多几片 |
 | `requirementTypes` | 缺陷、重构、评估 | 哪些需求类型按自己的做法运行；去掉的按新需求处理 |
 | `relatedRepos` | `[]` | 只读参考的其他仓库，`[{ "name", "path", "role"? }]`，`path` 相对项目目录 |
+| `designApproval` | 界面改动，标准档 | 方案确认点：`mode`（`ui` / `always` / `off`）、`profiles`、`autoContinueHours`（超时按方案继续，0 一直等） |
+| `reviewAxes` | 开启，标准档 | 第一轮代码评审由规格评审和规范评审并行，再汇总：`enabled`、`profiles` |
 
 ## Paseo 能力
 

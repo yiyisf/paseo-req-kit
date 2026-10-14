@@ -46,6 +46,8 @@ function setup(configOverrides: Record<string, unknown> = {}, specStatus = "已�
     permissionPollSeconds: 0.01,
     // Most tests count notifications; milestone notes have their own test.
     notifyMilestones: false,
+    // Most tests count steps; the two review axes have their own test.
+    reviewAxes: { enabled: false, profiles: ["standard"] },
     ...configOverrides,
   };
   const configPath = path.join(repo, "..", `${path.basename(repo)}.config.json`);
@@ -1932,4 +1934,175 @@ test("关联仓库：步骤可以只读参考登记的其他仓库，写明分�
   assert.match(design, /# 关联仓库（只读参考）/);
   assert.doesNotMatch(design, /支付/);
   assert.match(out, /关联仓库「支付」不在这台机器上/);
+});
+
+test("方案确认点：界面改动在方案审核通过后停下，请需求方确认；--approve 才继续写代码", () => {
+  const env = setup();
+  const ui = { steps: { design: { result: { has_runnable_service: false, ui_change: true } } } };
+  const first = runMain(env, ui);
+  assert.equal(first.code, 3, first.out);
+  assert.deepEqual(starts(env), ["design", "design_review-r1"]);
+  assert.match(prompt(env, "design"), /方案确认点：界面改动时开启/);
+  assert.equal(state(env).status, "waiting_for_approval");
+  const note = notifications(env).at(-1)?.text ?? "";
+  assert.match(note, /请确认方案/);
+  assert.match(note, /preview\.md/);
+  assert.match(note, /--approve/);
+  assert.ok(events(env).some((e) => e.type === "scheduleMessage" && /等待确认方案/.test(String((e as { name?: string }).name))));
+  assert.match(launch(env, ["--status"]).stdout, /等待需求方确认方案/);
+
+  const refused = runMain(env, ui, ["--resume"]);
+  assert.notEqual(refused.code, 0);
+  assert.match(refused.out, /方案正在等待需求方确认[\s\S]*--approve/);
+
+  const from = events(env).length;
+  const approved = runMain(env, ui, ["--approve"]);
+  assert.equal(approved.code, 0, approved.out);
+  assert.deepEqual(starts(env, from), ["implement", "code_review-r1", "handoff", "verify", "report"]);
+  assert.equal(state(env).approval.status, "approved");
+  assert.match(prompt(env, "implement"), /需求方已经确认过它和 `prototype\/` 中的原型/);
+});
+
+test("方案确认点：确认时提出修改，更新需求说明后重新设计并再确认一次；没有等待时 --approve 被拒绝", () => {
+  const env = setup();
+  const ui = { steps: { design: { result: { has_runnable_service: false, ui_change: true } } } };
+  assert.equal(runMain(env, ui).code, 3);
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n补充：按钮放在输入框右侧。\n");
+  const from = events(env).length;
+  const changed = runMain(env, ui, ["--resume"]);
+  assert.equal(changed.code, 3, changed.out);
+  assert.deepEqual(starts(env, from), ["design", "design_review-r1"]);
+  assert.equal(state(env).attempt, 2);
+  assert.equal(state(env).approval.attempt, 2);
+  assert.match(prompt(env, "design"), /方案确认时需求方提出了修改/);
+
+  const other = setup();
+  assert.equal(runMain(other, {}).code, 0);
+  const wrong = runMain(other, {}, ["--approve"]);
+  assert.notEqual(wrong.code, 0);
+  assert.match(wrong.out, /没有等待确认的方案/);
+});
+
+test("方案确认点：快速档、非界面改动不停；always 总是停；off 从不停；可以设置超时后按方案继续", () => {
+  const ui = { steps: { design: { result: { has_runnable_service: false, ui_change: true } } } };
+  const quick = setup();
+  specHeader(quick, "- 档位：快速");
+  assert.equal(runMain(quick, ui).code, 0);
+
+  const noUi = setup();
+  assert.equal(runMain(noUi, { steps: { design: { result: { has_runnable_service: false, ui_change: false } } } }).code, 0);
+
+  const always = setup({ designApproval: { mode: "always", autoContinueHours: 4 } });
+  assert.equal(runMain(always, {}).code, 3);
+  assert.match(prompt(always, "design"), /方案确认点：开启/);
+  const auto = events(always).find((e) => e.type === "scheduleMessage" && /方案确认超时/.test(String((e as { name?: string }).name)));
+  assert.ok(auto, "没有预约超时后按方案继续");
+  assert.match(auto.prompt ?? "", /--approve/);
+  assert.match(notifications(always).at(-1)?.text ?? "", /仍没有确认时，会按这个方案继续开发/);
+
+  const off = setup({ designApproval: { mode: "off" } });
+  assert.equal(runMain(off, ui).code, 0);
+  assert.doesNotMatch(prompt(off, "design"), /^方案确认点：/m);
+});
+
+test("评审分两个方向：标准档第一轮代码评审由规格评审和规范评审并行，再由评审者汇总；之后的轮次、快速档和评审小组不用", () => {
+  const env = setup({ reviewAxes: { enabled: true, profiles: ["standard"] } });
+  const { code, out } = runMain(env, { steps: { code_review: { resultsByStart: [{ verdict: "changes_required" }] }, "code_review-r2": { result: { verdict: "pass" } } } });
+  assert.equal(code, 0, out);
+  assert.deepEqual(starts(env), [
+    "design",
+    "design_review-r1",
+    "implement",
+    "code_review-r1-p1",
+    "code_review-r1-p2",
+    "code_review-r1",
+    "review_fix-r1",
+    "code_review-r2",
+    "handoff",
+    "verify",
+    "report",
+  ]);
+  assert.equal(title(env, "code_review-r1-p1"), "[20261012-sms-login] 6-代码评审 评审小组·规格评审");
+  assert.match(prompt(env, "code_review-r1-p1"), /# 你的评审方向：规格/);
+  assert.doesNotMatch(prompt(env, "code_review-r1-p1"), /# 你的评审方向：规范/);
+  assert.match(prompt(env, "code_review-r1-p2"), /# 你的评审方向：规范/);
+  assert.match(prompt(env, "code_review-r1"), /# 评审小组的意见[\s\S]*由 2 位评审者各自独立评审/);
+  assert.doesNotMatch(prompt(env, "code_review-r2"), /# 评审小组的意见/);
+  const roles = events(env).filter((e) => e.type === "start" && /-p\d$/.test(e.key ?? "")).map((e) => e.provider);
+  assert.deepEqual(roles, ["codex/test-model", "codex/test-model"]);
+
+  const quick = setup({ reviewAxes: { enabled: true, profiles: ["standard"] } });
+  specHeader(quick, "- 档位：快速");
+  assert.equal(runMain(quick, {}).code, 0);
+  assert.ok(!starts(quick).some((k) => /-p\d$/.test(k)));
+
+  const panel = setup({
+    reviewAxes: { enabled: true, profiles: ["standard"] },
+    reviewPanel: { enabled: true, steps: ["code_review"], profiles: ["standard"], members: [{ provider: "claude/a", name: "安全" }, { provider: "pi/x/b", name: "性能" }, { provider: "codex/c" }] },
+  });
+  assert.equal(runMain(panel, {}).code, 0);
+  assert.deepEqual(starts(panel).filter((k) => /-p\d$/.test(k)), ["code_review-r1-p1", "code_review-r1-p2", "code_review-r1-p3"]);
+  assert.match(title(panel, "code_review-r1-p1"), /评审小组·安全/);
+});
+
+test("验收测试锁定：先提交的验收测试后来被改了，流水线在代码评审前列出，交给评审确认有没有依据", () => {
+  const env = setup();
+  fs.mkdirSync(path.join(env.repo, "test"));
+  fs.writeFileSync(path.join(env.repo, "test", "a.test.js"), "// AC-1.1\n");
+  fs.writeFileSync(path.join(env.repo, "test", "b.test.js"), "// AC-1.2\n");
+  commitAll(env);
+  const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: env.repo, encoding: "utf8" }).trim();
+  const result = { status: "done", acceptance_tests: ["test/a.test.js", "test/b.test.js"], acceptance_tests_commit: commit };
+  const { code, out } = runMain(env, { steps: { implement: { result, writeFiles: { "test/a.test.js": "// AC-1.1 放宽了\n" } } } });
+  assert.equal(code, 0, out);
+  assert.match(prompt(env, "code_review-r1"), new RegExp(`验收测试锁定（流水线比对）：以下验收测试在提交 ${commit} 之后被修改：test/a\\.test\\.js$`, "m"));
+  assert.match(prompt(env, "report"), /验收测试锁定/);
+  assert.match(prompt(env, "implement"), /把这些验收测试单独提交一次/);
+
+  const bogus = setup();
+  const r2 = { status: "done", acceptance_tests: ["test/x.test.js"], acceptance_tests_commit: "deadbeef" };
+  assert.equal(runMain(bogus, { steps: { implement: { result: r2 } } }).code, 0);
+  assert.match(prompt(bogus, "code_review-r1"), /记录的提交 deadbeef 不在仓库中/);
+});
+
+test("反复出现的问题：几个需求的 lessons.tsv 中同一类问题出现两次以上，需求总览提示变成规则；已处理的类别不再提示", async () => {
+  const env = setup();
+  const header = "category\tfinding\tsource\trule\tlayer\n";
+  const write = (name: string, rows: string) => {
+    const dir = path.join(env.repo, "docs", "features", name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "spec.md"), `# ${name}\n\n- 状态：已确认（2026-10-15）\n`);
+    fs.writeFileSync(path.join(dir, "lessons.tsv"), header + rows);
+  };
+  write("20261001-a", "SQL 拼接\t订单查询拼接了 SQL\tCR-2\tlint 规则禁止模板字符串拼接 SQL\tlint\n时间处理\t测试用了当前时间\tCR-4\t测试统一注入时钟\t测试\n");
+  write("20261005-b", "SQL 拼接\t导出接口拼接了 SQL\tCR-1\tlint 规则禁止模板字符串拼接 SQL\tlint\n");
+  write("20261008-c", "SQL 拼接\t报表拼接了 SQL\t质量门 lint\t\tlint\n输入校验\t分页参数没有上限\tCR-3\t\t测试\n");
+  const { listFeatures } = await import("../src/features.js");
+  const { digestText } = await import("../src/digest.js");
+  const { handledCategories, recurringLessons } = await import("../src/lessons.js");
+  const lessons = recurringLessons(listFeatures(env.repo), handledCategories(env.repo));
+  assert.deepEqual(lessons.map((l) => [l.category, l.features.length]), [["SQL 拼接", 3]]);
+  assert.match(digestText("shop", listFeatures(env.repo), new Date(), 7, lessons), /反复出现的问题[\s\S]*- SQL 拼接：3 个需求（20261001-a、20261005-b、20261008-c）；建议：lint 规则禁止模板字符串拼接 SQL/);
+
+  fs.mkdirSync(path.join(env.repo, ".requirement-pipeline"), { recursive: true });
+  fs.writeFileSync(path.join(env.repo, ".requirement-pipeline", "lessons-handled.txt"), "SQL 拼接  # 2026-10-15 已加 lint 规则\n");
+  assert.deepEqual(recurringLessons(listFeatures(env.repo), handledCategories(env.repo)), []);
+  assert.match(fs.readFileSync(path.join(ROOT, "engine", "prompts", "11-report.md"), "utf8"), /## 记录可以变成规则的问题（`lessons\.tsv`）/);
+});
+
+test("方案确认点：测试验证退回研发修缺陷时，不再请需求方确认一次", () => {
+  const env = setup({ phases: { mode: "continuous", verify: { defects: "handback" } } });
+  const scenario: FakeScenario = {
+    steps: {
+      design: { result: { has_runnable_service: false, ui_change: true } },
+      verify: { resultsByStart: [{ result: "defects_found" }, { result: "pass" }] },
+    },
+  };
+  assert.equal(runMain(env, scenario).code, 3);
+  const approved = runMain(env, scenario, ["--approve"]);
+  assert.equal(approved.code, 0, approved.out);
+  const s = state(env);
+  assert.equal(s.status, "completed");
+  assert.equal(s.attempt, 2);
+  assert.deepEqual(s.approval.attempt, 2);
 });

@@ -21,6 +21,7 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req status [需求]            查看进度；只有一个需求运行过时可以不写
   req stop <需求>              停止流水线（之后可以继续）
   req resume <需求>            从上次中断处继续；需求改过时只处理变化的部分
+  req approve <需求>           需求方确认了方案（方案确认点，见 preview.md），继续开发
   req verify <需求> [--verify-env local|deployed] [--defects fix|handback|report]
                                研发完成后开始测试验证（分阶段执行时）
   req start <需求> [--profile quick|standard] [--phases gated] [--at 22:00]
@@ -125,6 +126,9 @@ switch (command) {
     break;
   case "verify":
     code = node([launcher, "--phase", "verify", ...feature(rest, true)]);
+    break;
+  case "approve":
+    code = node([launcher, "--approve", ...feature(rest, true)]);
     break;
   case "start":
     code = node([launcher, ...feature(rest, true)]);

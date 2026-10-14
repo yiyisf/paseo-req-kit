@@ -58,6 +58,8 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
       ? "已中断（后台进程意外退出，可以继续）"
       : state.status === "waiting_for_business"
         ? "已暂停，等待需求方决定"
+        : state.status === "waiting_for_approval"
+          ? "已暂停，等待需求方确认方案（做完后会看到什么，见功能目录中的 preview.md）"
         : state.status === "phase_done"
           ? "研发完成，待测试验证（提测说明见功能目录中的 handoff.md）"
         : state.status === "failed"
@@ -75,7 +77,7 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
     `开始时间：${new Date(state.startedAt).toLocaleString("zh-CN", { hour12: false })}，距今 ${duration(state.startedAt, now)}`,
   ];
   if (state.stopReason && !running) lines.push(`原因：${state.stopReason}`);
-  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证" } as const;
+  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证", "approval-continue": "未确认时按方案继续" } as const;
   for (const s of state.schedules ?? []) {
     if (s.kind === "watchdog" && !running) continue;
     const when = s.at ? `${new Date(s.at).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} ` : "";

@@ -12,6 +12,7 @@ metadata:
 | 文件 | 内容 | 谁读 |
 | --- | --- | --- |
 | `.requirement-pipeline/project-notes.md` | 本项目的约定：包管理工具、目录结构、不能改的地方、提交信息格式、已知的坑 | 流水线每个步骤、`/req` 访谈前 |
+| `GLOSSARY.md` | 术语表（推荐）：业务词、含义、代码中的名字。访谈和方案设计会继续补充 | `/req` 访谈、流水线每个步骤 |
 | `.requirement-pipeline/verify.md` | 验证方法：安装依赖、启动服务、运行测试、准备测试数据，命令都实际跑过 | 实现、修复、服务启动、验证、复验步骤 |
 | `paseo.json` | Paseo 的工作区设置（推荐）：新建 worktree 时自动安装依赖、复制本地配置；把常驻服务定义为由 Paseo 管理的服务，每个 worktree 分到独立的端口 | Paseo；流水线在服务启动和验证前通过 Paseo 启动这些服务 |
 | `.requirement-pipeline.json` | 项目配置：**质量门的检查命令**（`checks`，推荐）、关联仓库（`relatedRepos`，有就写）；本项目用的 agent、默认档位、轮数、超时（需要时） | 流水线 |
@@ -72,7 +73,8 @@ metadata:
 ## 5. 写文件并展示
 
 - `verify.md`：按 `{{REQ_KIT_ROOT}}/contracts/verify.md` 的结构，第一行之后写"最后核对：<日期>（/req-setup，<全部命令已运行 / 哪些没能运行>）"。只写实际跑通的命令；跑不通的写在"已知问题"。
-- `project-notes.md`：一条一行，只写对做需求有影响的约定。例如"包管理用 pnpm，不要用 npm""数据库变更必须写成 migrations/ 下的迁移脚本""不要改动 legacy/ 目录""提交信息用 Conventional Commits 格式"。
+- `project-notes.md`：一条一行，只写对做需求有影响的约定。例如"包管理用 pnpm，不要用 npm""数据库变更必须写成 migrations/ 下的迁移脚本""不要改动 legacy/ 目录""提交信息用 Conventional Commits 格式"。再加一节**范例文件**：各类代码（接口、页面、数据访问、测试、迁移脚本等）在项目里写得最好的一个文件，例如"接口：`src/api/orders.ts`；单元测试：`test/api/orders.test.ts`"。方案设计会让每个任务照着范例写，代码更像项目原有的样子。只列你读过、确认写得规范的文件。
+- `GLOSSARY.md`（仓库根目录）：项目还没有术语表时，从代码、文档和界面文字中整理主要的业务词，每条写含义和代码中的名字（类名、字段、接口路径或表名），格式见 `{{REQ_KIT_ROOT}}/skills/requirement-interview/SKILL.md` 的"术语"一节。已有的只补充"代码中的名字"等缺失的部分，不改别人写的含义。拿不准含义的不要写，留给访谈时问。
 - `paseo.json`（Paseo 读取，格式见 Paseo 文档的 Git worktrees 一节）。它会提交、整个团队共用，而团队成员的电脑可能是 macOS、Linux 或 Windows，Paseo 在各系统上用不同的 shell 执行其中的命令（macOS/Linux：bash 和 sh；Windows：准备命令用 PowerShell、脚本用 cmd.exe）。所以**命令一律写成各系统都一样的形式**：只调用程序本身（`npm`、`pnpm`、`node`、`python` 等），不用 shell 的语法——不写 `$变量`、`%变量%`、`$env:变量`，不用 `&&`、`||`、`cp`、`[ -f … ]`、`Copy-Item`。需要读环境变量或判断文件的逻辑交给下面两个脚本：
   - 把 `{{REQ_KIT_ROOT}}/skills/req-setup/templates/paseo/` 中的 `with-port.mjs` 和 `copy-local-files.mjs` 复制到项目的 `scripts/paseo/`（已有就比较，内容相同不动），和 `paseo.json` 一起提交。它们只依赖 Node.js（req-kit 本来就需要）。
   - `worktree.setup`：写成数组，一行一条命令。通常是安装依赖（用锁文件对应的命令，例如 `npm ci`、`pnpm install --frozen-lockfile`），以及复制不提交的本地配置：`node scripts/paseo/copy-local-files.mjs .env config/local.json`（来源目录里没有的文件会跳过，不会报错）。
@@ -111,6 +113,6 @@ metadata:
 
 ## 6. 确认后提交
 
-用户确认后，只提交这几个文件（以及 `scripts/paseo/` 和 `.gitignore` 的改动）。`paseo.json` 必须提交：Paseo 新建 worktree 时读取的是基准分支上已提交的版本，提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
+用户确认后，只提交这几个文件（以及 `GLOSSARY.md`、`scripts/paseo/` 和 `.gitignore` 的改动）。`paseo.json` 必须提交：Paseo 新建 worktree 时读取的是基准分支上已提交的版本，提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
 
 最后告诉用户：之后项目的构建、测试或启动方式有变化时，再运行一次 `/req-setup`；也可以直接编辑这些文件。可以运行 `/req-doctor` 确认项目检查全部正常。

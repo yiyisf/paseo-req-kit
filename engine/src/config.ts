@@ -223,6 +223,19 @@ export interface PipelineConfig {
   slices: { profiles: ProfileName[]; max: number };
   /** Repositories the steps may read for reference, never change. */
   relatedRepos: RelatedRepo[];
+  /**
+   * Design confirmation point (1.8): after the design review, show the requester what they
+   * will get (preview.md, a prototype for UI changes) and wait for "yes" before writing code.
+   * mode "ui": only when the design says the change is visible in the UI; "always"; "off".
+   * autoContinueHours > 0: carry on with the design after that long without an answer.
+   */
+  designApproval: { mode: "off" | "ui" | "always"; profiles: ProfileName[]; autoContinueHours: number };
+  /**
+   * Code review in two axes (1.8): the first round runs a spec reviewer (is every AC done, is
+   * anything outside the scope) and a standards reviewer (project conventions, tests, security)
+   * in parallel; the reviewer consolidates. A configured review panel takes precedence.
+   */
+  reviewAxes: { enabled: boolean; profiles: ProfileName[] };
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -283,6 +296,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   qualityGate: { fixAttempts: 2, timeoutMinutes: 20 },
   slices: { profiles: ["standard"], max: 6 },
   relatedRepos: [],
+  designApproval: { mode: "ui", profiles: ["standard"], autoContinueHours: 0 },
+  reviewAxes: { enabled: true, profiles: ["standard"] },
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -358,6 +373,11 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
   };
   merged.qualityGate = { ...base.qualityGate, ...(isRecord(raw.qualityGate) ? (raw.qualityGate as Partial<QualityGateSettings>) : {}) };
   merged.slices = { ...base.slices, ...(isRecord(raw.slices) ? (raw.slices as Partial<PipelineConfig["slices"]>) : {}) };
+  merged.designApproval = {
+    ...base.designApproval,
+    ...(isRecord(raw.designApproval) ? (raw.designApproval as Partial<PipelineConfig["designApproval"]>) : {}),
+  };
+  merged.reviewAxes = { ...base.reviewAxes, ...(isRecord(raw.reviewAxes) ? (raw.reviewAxes as Partial<PipelineConfig["reviewAxes"]>) : {}) };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
 }
@@ -437,6 +457,18 @@ function validateChecks(config: PipelineConfig): void {
     throw new ConfigError('slices.profiles 只能包含 "quick" 和 "standard"（空数组表示不按切片实现）');
   }
   if (!Number.isInteger(config.slices.max) || config.slices.max < 1) throw new ConfigError("slices.max 必须是不小于 1 的整数");
+  const approval = config.designApproval;
+  if (!["off", "ui", "always"].includes(approval.mode)) throw new ConfigError('designApproval.mode 只能是 "off"、"ui" 或 "always"');
+  if (!Array.isArray(approval.profiles) || !approval.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('designApproval.profiles 只能包含 "quick" 和 "standard"');
+  }
+  if (typeof approval.autoContinueHours !== "number" || approval.autoContinueHours < 0) {
+    throw new ConfigError("designApproval.autoContinueHours 必须是不小于 0 的数（0 表示一直等待确认）");
+  }
+  if (typeof config.reviewAxes.enabled !== "boolean") throw new ConfigError("reviewAxes.enabled 必须是 true 或 false");
+  if (!Array.isArray(config.reviewAxes.profiles) || !config.reviewAxes.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('reviewAxes.profiles 只能包含 "quick" 和 "standard"');
+  }
   if (!Array.isArray(config.relatedRepos)) throw new ConfigError('relatedRepos 必须是数组，例如 [{ "name": "后端", "path": "../backend" }]');
   config.relatedRepos.forEach((r, i) => {
     if (!isRecord(r) || typeof r.name !== "string" || r.name.trim() === "") throw new ConfigError(`relatedRepos[${i}].name 必须是非空字符串`);

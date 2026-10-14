@@ -333,3 +333,62 @@ export function verifyStartPrompt(input: { featureDir: string; statusCommand: st
     "3. 其他情况（已经开始、已完成、用户已经手动处理过）：什么也不做，也不要回复用户。",
   ].join("\n");
 }
+
+/** The design waits at the confirmation point (designApproval). */
+export function approvalMessage(input: {
+  featureDir: string;
+  previewPath: string;
+  /** The prototype (UI changes), when the design made one. */
+  prototypePath: string | null;
+  approveCommand: string;
+  resumeCommand: string;
+  reminderHours?: number | null;
+  /** The run carries on with the design at this time (text) without an answer. */
+  autoContinueAt?: string | null;
+}): string {
+  return [
+    `${HEADER.replace("【需求开发流水线通知】", "【需求开发流水线通知 · 请确认方案】")}`,
+    "",
+    `功能目录：${input.featureDir}`,
+    "情况：方案已经通过审核，还没有开始写代码。开发前请需求方确认\"做完之后会看到什么\"，这时调整的成本最低。",
+    `- 做完后你会看到什么：${input.previewPath}`,
+    ...(input.prototypePath ? [`- 界面原型：${input.prototypePath}（静态页面，可以在浏览器中打开）`] : []),
+    "",
+    "请这样处理：",
+    "1. 读 preview.md，用几句话把要点讲给用户：会看到的变化、主要的假设（尤其是影响界面、数据、权限的），有原型就告诉用户在哪里看。",
+    "2. 问用户：按这个做，还是有要改的地方？",
+    `3. 用户确认后，执行下面的命令继续开发：\n\n${input.approveCommand}`,
+    "4. 用户要改的：按需求对齐时的方式问清楚，把结论记入 alignment.md，更新 spec.md（顶部\"版本\"加 1，在 changes.md 中记一节，原因写\"方案确认时的修改\"），请用户再次确认需求说明，然后执行下面的命令，流水线会从方案设计开始按修改后的需求调整方案，再请用户确认一次：",
+    "",
+    input.resumeCommand,
+    ...(input.reminderHours ? ["", `（如果 ${input.reminderHours} 小时内还没有确认，会在这个对话里提醒一次。）`] : []),
+    ...(input.autoContinueAt ? ["", `（按团队设置，到 ${input.autoContinueAt} 仍没有确认时，会按这个方案继续开发。）`] : []),
+  ].join("\n");
+}
+
+export function approvalReminderMessage(input: { featureDir: string; hours: number; previewPath: string; approveCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的提醒，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `这个需求的方案等待需求方确认已经超过 ${input.hours} 小时，开发一直暂停着（要确认的内容：${input.previewPath}）。`,
+    "",
+    "请先执行查看进度的命令确认：仍然是\"等待需求方确认方案\"时，在用户下次说话时提醒他看一下并确认；已经确认、开发已经继续或停止时，忽略这条提醒，不要打扰用户。",
+    `用户确认后继续开发的命令是：${input.approveCommand}`,
+  ].join("\n");
+}
+
+export function approvalContinuePrompt(input: { featureDir: string; hours: number; statusCommand: string; approveCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的自动继续，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `这个需求的方案等待确认已经 ${input.hours} 小时。按团队的设置，超时没有确认时按方案继续开发。`,
+    "",
+    "请这样处理：",
+    `1. 先执行查看进度的命令：${input.statusCommand}`,
+    "2. 仍然是\"等待需求方确认方案\"时，执行下面的命令，然后用一句话告诉用户：方案一直没有确认，已按方案继续开发，之后仍可以修改需求：",
+    `   ${input.approveCommand}`,
+    "3. 其他情况（已经确认、需求已修改、已经停止）：什么也不做，也不要回复用户。",
+  ].join("\n");
+}

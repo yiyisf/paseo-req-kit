@@ -25,6 +25,7 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `req status [需求]` | 查看进度；只有一个需求运行过时可以不写 |
 | `req stop <需求>` | 停止流水线（之后可以继续）；同时取消预约的开始、提醒、自动继续 |
 | `req resume <需求>` | 从上次中断处继续；需求改过时只处理变化的部分 |
+| `req approve <需求>` | 需求方看过 `preview.md` 并确认后，从方案确认点继续开发 |
 | `req verify <需求> [--verify-env local\|deployed] [--defects fix\|handback\|report]` | 研发完成后开始测试验证（分阶段执行时） |
 | `req start <需求> [--profile quick\|standard] [--phases gated] [--at 22:00]` | 启动流水线（通常由 `/req` 在对话中启动） |
 | `req digest [--notify]` | 项目的需求总览；`--notify` 同时发到外部通知 |
@@ -57,6 +58,7 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `--resume` / `--restart` | 从中断处继续 / 丢弃结果从零开始 |
 | `--profile quick\|standard` | 档位；不传时读需求说明中的"档位"，再用配置的 `defaultProfile` |
 | `--phases continuous\|gated\|develop-only` | 执行方式；不传时读需求说明中的"执行方式"，再用配置的 `phases.mode` |
+| `--approve` | 方案确认点：需求方确认了方案，继续开发（等待确认时单独的 `--resume` 会被拒绝；要修改就先更新需求说明再 `--resume`） |
 | `--phase verify` | 开始（或继续）测试验证阶段；研发完成、待测试时单独的 `--resume` 效果相同 |
 | `--verify-env local\|deployed`、`--defects fix\|handback\|report` | 开始测试验证时临时指定环境和缺陷处理方式 |
 | `--verify-at <时间>` | 分阶段时，研发完成后在这个时间自动开始测试验证 |

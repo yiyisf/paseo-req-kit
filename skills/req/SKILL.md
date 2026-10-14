@@ -74,6 +74,7 @@ metadata:
 | 查看进度 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --status` |
 | 暂停 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --stop` |
 | 继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --resume` |
+| 确认方案后继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --approve`（只在方案确认点、用户确认之后用） |
 | 从头重来 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --restart` |
 | 列出需求 | `node "{{PIPELINE_LAUNCHER}}" --list` |
 
@@ -89,6 +90,7 @@ metadata:
 2. 按通知类型处理：
    - **进展**（标题带"进展"）：一句话转告，例如"方案已经定了，开始写代码"。
    - **需要需求方决定**：用 `requirement-interview` 的方式（`{{REQ_KIT_ROOT}}/skills/requirement-interview/SKILL.md`）逐个提问，把答案记入 `alignment.md` 并更新 `spec.md`（版本加 1，在 `changes.md` 中记一节，原因写"方案审核提出的问题"；缺陷复现不了时写"补充复现信息"），请用户再次确认，然后执行通知中给出的继续命令。
+   - **请确认方案**（方案确认点）：按通知中的做法，把 `preview.md` 的要点讲给用户（会看到的变化、需要确认的假设；有界面原型的告诉用户在哪里看），问"按这个做，还是有要改的地方"。用户确认后执行通知中的确认命令（`--approve`）；要改的，问清楚后更新需求说明（`changes.md` 中原因写"方案确认时的修改"），请用户确认，再执行继续命令（`--resume`）。不要替用户确认。
    - **等待权限批准**：告诉用户打开通知中提到的 agent 处理批准。
    - **流水线中断**：说明发生了什么、日志在哪里。用户能处理的（例如环境没启动）告诉他怎么做；问题解决后执行通知中给出的继续命令。涉及配置或代码的，请开发同事处理。
    - **需求说明审阅完成**：按通知中的做法核对问题、逐个问用户，再请用户确认需求说明。

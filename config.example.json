@@ -115,5 +115,18 @@
     ],
     "max": 6
   },
-  "relatedRepos": []
+  "relatedRepos": [],
+  "designApproval": {
+    "mode": "ui",
+    "profiles": [
+      "standard"
+    ],
+    "autoContinueHours": 0
+  },
+  "reviewAxes": {
+    "enabled": true,
+    "profiles": [
+      "standard"
+    ]
+  }
 }

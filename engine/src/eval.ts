@@ -199,7 +199,7 @@ export function evaluateCase(
         const rounds = (id: string) => Math.max(0, ...history.filter((h) => h.stepId === id).map((h) => h.round ?? 0));
         result.reviewRounds = { design: rounds("design_review"), code: rounds("code_review"), defectFix: rounds("defect_fix") };
         result.resultFollowUps = history.reduce((sum, h) => sum + (h.followUps ?? 0), 0);
-        result.humanInterventions = state.status === "waiting_for_business" || state.status === "failed" ? 1 : 0;
+        result.humanInterventions = ["waiting_for_business", "waiting_for_approval", "failed"].includes(state.status ?? "") ? 1 : 0;
       } else if (!result.error) {
         result.error = "流水线没有留下状态文件，见 .pipeline/eval-run.log";
       }

@@ -10,9 +10,12 @@ import {
   resolveRelatedRepo,
   type ReviewPanelMember,
 } from "./config.js";
-import { changedFiles, checkApplies, headCommit, logName, matchesPath, runCheck, tail } from "./gate.js";
+import { changedFiles, changedSince, checkApplies, headCommit, logName, matchesPath, runCheck, tail } from "./gate.js";
 import { playbookSection, stepTitle } from "./playbooks.js";
 import {
+  approvalContinuePrompt,
+  approvalMessage,
+  approvalReminderMessage,
   autoResumePrompt,
   blockedMessage,
   gateFollowUp,
@@ -48,6 +51,8 @@ export interface PipelineContext {
   statusCommand?: string;
   /** Command that starts the verify phase (gated runs). */
   verifyCommand?: string;
+  /** Command that confirms a design waiting at the confirmation point. */
+  approveCommand?: string;
   log: (message: string) => void;
   sleep: (ms: number) => Promise<void>;
   /** Paseo-managed services of this run (filled in by the pipeline). */
@@ -58,13 +63,21 @@ export interface PipelineContext {
   related?: Array<{ name: string; dir: string; role: string | null; ref: string | null }>;
 }
 
-export type PipelineOutcome = "completed" | "waiting_for_business" | "failed" | "phase_done";
+export type PipelineOutcome = "completed" | "waiting_for_business" | "failed" | "phase_done" | "waiting_for_approval";
 
 /** The develop phase is done and the run stops at the gate (phases.mode "gated"). */
 class PhaseGate extends Error {
   constructor() {
     super("研发完成，待测试验证");
     this.name = "PhaseGate";
+  }
+}
+
+/** The design waits for the requester's confirmation before any code is written (designApproval). */
+class ApprovalNeeded extends Error {
+  constructor() {
+    super("方案等待需求方确认");
+    this.name = "ApprovalNeeded";
   }
 }
 
@@ -83,6 +96,10 @@ function phaseOf(ctx: PipelineContext): PhaseName {
 
 function verifyCommandOf(ctx: PipelineContext): string {
   return ctx.verifyCommand ?? `${ctx.resumeCommand} --phase verify`;
+}
+
+function approveCommandOf(ctx: PipelineContext): string {
+  return ctx.approveCommand ?? ctx.resumeCommand.replace(/ --resume$/, " --approve");
 }
 
 /** Ends the run early; the message is what the user-facing notification explains. */
@@ -216,6 +233,14 @@ function buildPrompt(
       ctx.config.slices.profiles.includes(profile) && ctx.config.slices.max >= 2
         ? `切片上限：${ctx.config.slices.max} 片（实施计划分成多片时，按片逐个实现）`
         : "切片：本次不按切片实现，实施计划按任务列出即可",
+    );
+  }
+  const approval = approvalMode(ctx);
+  if (approval && (def.id === "design" || def.id === "design_revise" || def.id === "design_review")) {
+    lines.push(
+      approval === "always"
+        ? "方案确认点：开启。方案审核通过后，需求方先看 preview.md 再决定是否开始写代码"
+        : "方案确认点：界面改动时开启。结果文件写 ui_change；为 true 时写 preview.md 和界面原型，方案审核通过后需求方先确认再开始写代码",
     );
   }
   const related = relatedRepos(ctx);
@@ -650,24 +675,23 @@ async function stopManagedServices(ctx: PipelineContext): Promise<void> {
 }
 
 /** A Paseo schedule that reminds the chat about unanswered questions; returns the hours, or null. */
-async function scheduleReminder(ctx: PipelineContext, questions: string[] | null): Promise<number | null> {
+async function scheduleReminder(ctx: PipelineContext, what: string[] | "phase" | "approval"): Promise<number | null> {
   const hours = ctx.config.waitingReminderHours;
   const origin = ctx.state.originAgentId;
   if (hours <= 0 || !origin) return null;
   const at = new Date(Date.now() + hours * 3600_000);
+  const shown = shownFeatureDir(ctx);
   try {
     const id = await ctx.runtime.scheduleMessage({
       agentId: origin,
       at,
-      name: `req-kit 提醒：${featureName(ctx.featureDir)} ${questions ? "等待回答" : "待测试验证"}`,
-      prompt: questions
-        ? waitingReminderMessage({ featureDir: shownFeatureDir(ctx), hours, questions, resumeCommand: ctx.resumeCommand })
-        : phaseWaitingReminderMessage({
-            featureDir: shownFeatureDir(ctx),
-            hours,
-            handoffPath: `${shownFeatureDir(ctx)}/handoff.md`,
-            verifyCommand: verifyCommandOf(ctx),
-          }),
+      name: `req-kit 提醒：${featureName(ctx.featureDir)} ${what === "phase" ? "待测试验证" : what === "approval" ? "等待确认方案" : "等待回答"}`,
+      prompt:
+        what === "phase"
+          ? phaseWaitingReminderMessage({ featureDir: shown, hours, handoffPath: `${shown}/handoff.md`, verifyCommand: verifyCommandOf(ctx) })
+          : what === "approval"
+            ? approvalReminderMessage({ featureDir: shown, hours, previewPath: `${shown}/preview.md`, approveCommand: approveCommandOf(ctx) })
+            : waitingReminderMessage({ featureDir: shown, hours, questions: what, resumeCommand: ctx.resumeCommand }),
     });
     if (!id) return null;
     ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "reminder", at: at.toISOString() }];
@@ -708,6 +732,35 @@ async function scheduleVerifyStart(ctx: PipelineContext): Promise<string | null>
     return shortTime(at);
   } catch (error) {
     ctx.log(`预约测试验证失败：${(error as Error).message}`);
+    return null;
+  }
+}
+
+/** designApproval.autoContinueHours: a Paseo schedule that has the chat approve the design if nobody did; returns the time, or null. */
+async function scheduleApprovalContinue(ctx: PipelineContext): Promise<string | null> {
+  const hours = ctx.config.designApproval.autoContinueHours;
+  const origin = ctx.state.originAgentId;
+  if (hours <= 0 || !origin) return null;
+  const at = new Date(Date.now() + hours * 3600_000);
+  try {
+    const id = await ctx.runtime.scheduleMessage({
+      agentId: origin,
+      at,
+      name: `req-kit 方案确认超时：${featureName(ctx.featureDir)}`,
+      prompt: approvalContinuePrompt({
+        featureDir: shownFeatureDir(ctx),
+        hours,
+        statusCommand: ctx.statusCommand ?? ctx.resumeCommand.replace(/ --resume$/, " --status"),
+        approveCommand: approveCommandOf(ctx),
+      }),
+    });
+    if (!id) return null;
+    ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "approval-continue", at: at.toISOString() }];
+    save(ctx);
+    ctx.log(`已预约 ${hours} 小时后仍未确认时按方案继续（Paseo 定时任务 ${id}）`);
+    return shortTime(at);
+  } catch (error) {
+    ctx.log(`预约按方案继续失败：${(error as Error).message}`);
     return null;
   }
 }
@@ -791,8 +844,16 @@ function memberName(member: ReviewPanelMember, index: number): string {
  * (relative to the repository) of the members that finished; a member that fails
  * is logged and left out. Fails only when no member finishes.
  */
-async function runPanel(ctx: PipelineContext, step: PanelStep, round: number, shared: string[] = []): Promise<string[]> {
-  const members = ctx.config.reviewPanel.members;
+/** A reviewer of a panel; `section` is extra guidance for this member only (review axes). */
+type PanelMember = ReviewPanelMember & { section?: string };
+
+async function runPanel(
+  ctx: PipelineContext,
+  step: PanelStep,
+  round: number,
+  shared: string[] = [],
+  members: PanelMember[] = ctx.config.reviewPanel.members,
+): Promise<string[]> {
   const title = stepDef(ctx, step).title;
   const runs = members.map((member, i) => {
     const key = `${step}-r${round}-p${i + 1}`;
@@ -805,11 +866,13 @@ async function runPanel(ctx: PipelineContext, step: PanelStep, round: number, sh
       ...shared,
     ];
     if (member.focus) contextLines.push(`你的关注重点：${member.focus}`);
+    const { section, ...profile } = member;
     return runStep(ctx, "panel_review", round, null, {
       key,
       title: `${STEPS[step].number}-${title} 评审小组·${name}`,
-      profile: member,
+      profile,
       contextLines,
+      sections: section ? [section] : undefined,
       criteriaFile: STEPS[step].promptFile,
       additionsFor: step,
     }).then(() => findings);
@@ -921,12 +984,28 @@ async function runReview(
   maxRounds: number,
   contextLines: string[] = [],
 ): Promise<Record<string, unknown>> {
-  if (!panelApplies(ctx, step, round)) return runStep(ctx, step, round, maxRounds, { contextLines });
-  const findings = await runPanel(ctx, step, round, contextLines);
+  const members = panelApplies(ctx, step, round) ? ctx.config.reviewPanel.members : axesApply(ctx, step, round) ? axisMembers(ctx) : null;
+  if (!members) return runStep(ctx, step, round, maxRounds, { contextLines });
+  const findings = await runPanel(ctx, step, round, contextLines, members);
   return runStep(ctx, step, round, maxRounds, {
     contextLines,
-    sections: [consolidationSection(step, findings, ctx.config.reviewPanel.members.length)],
+    sections: [consolidationSection(step, findings, members.length)],
   });
+}
+
+/** Code review in two axes: the first round of a standard run, unless a review panel is configured. */
+function axesApply(ctx: PipelineContext, step: PanelStep, round: number): boolean {
+  const axes = ctx.config.reviewAxes;
+  return step === "code_review" && round === 1 && axes.enabled && axes.profiles.includes(ctx.state.profile);
+}
+
+/** The spec reviewer and the standards reviewer, both with the configured reviewer agent. */
+function axisMembers(ctx: PipelineContext): PanelMember[] {
+  const sources = { ...ctx.prompts, repo: ctx.repo };
+  return [
+    { ...ctx.config.agents.reviewer, name: "规格评审", section: readToolPrompt(sources, "review-axis-spec.md") },
+    { ...ctx.config.agents.reviewer, name: "规范评审", section: readToolPrompt(sources, "review-axis-standards.md") },
+  ];
 }
 
 /** Runs one step outside the pipeline's flow (the spec review started from the chat). */
@@ -1077,10 +1156,11 @@ function gateLines(ctx: PipelineContext): string[] {
 }
 
 /** The latest plan of this attempt: the design's slices and files, as revised. */
-function currentPlan(ctx: PipelineContext): { slices: string[]; files: string[] } {
-  const plan = { slices: [] as string[], files: [] as string[] };
+function currentPlan(ctx: PipelineContext): { slices: string[]; files: string[]; uiChange: boolean | null } {
+  const plan = { slices: [] as string[], files: [] as string[], uiChange: null as boolean | null };
   const take = (r: Record<string, unknown> | undefined) => {
     if (!r) return;
+    if (typeof r.ui_change === "boolean") plan.uiChange = r.ui_change;
     if (Array.isArray(r.slices)) plan.slices = (r.slices as string[]).map((s) => s.trim()).filter(Boolean);
     if (Array.isArray(r.files)) plan.files = (r.files as string[]).map((s) => s.trim()).filter(Boolean);
   };
@@ -1139,6 +1219,50 @@ function scopeLines(ctx: PipelineContext): string[] {
   return [`范围检查（流水线比对）：共改动 ${changed.length} 个文件，其中 ${extra.length} 个不在方案列出的范围内：${shown}${extra.length > 30 ? " 等" : ""}`];
 }
 
+/** The confirmation point setting that applies to this requirement, or null. */
+function approvalMode(ctx: PipelineContext): "ui" | "always" | null {
+  const a = ctx.config.designApproval;
+  if (a.mode === "off" || !a.profiles.includes(ctx.state.profile) || ctx.state.type === "assessment") return null;
+  return a.mode;
+}
+
+/**
+ * Design confirmation point: after the design review, the requester sees what they will get
+ * (preview.md, a prototype for UI changes) and says "yes" before any code is written. The run
+ * stops here once per attempt; --approve continues, a changed spec starts over from design.
+ */
+function confirmDesign(ctx: PipelineContext): void {
+  const mode = approvalMode(ctx);
+  if (!mode) return;
+  const uiChange = currentPlan(ctx).uiChange;
+  if (mode === "ui" && uiChange !== true) return;
+  const approval = ctx.state.approval;
+  if (approval?.attempt === ctx.state.attempt && approval.status === "approved") return;
+  ctx.state.approval = { attempt: ctx.state.attempt, status: "waiting", at: new Date().toISOString() };
+  save(ctx);
+  throw new ApprovalNeeded();
+}
+
+/** Acceptance tests committed before the code (implement results): were they changed afterwards? */
+function acceptanceLines(ctx: PipelineContext): string[] {
+  const lines: string[] = [];
+  const keys = Object.keys(ctx.state.results)
+    .filter((k) => k === "implement" || /^implement-s\d+$/.test(k))
+    .sort((a, b) => Number(a.slice(11) || 0) - Number(b.slice(11) || 0));
+  for (const key of keys) {
+    const r = ctx.state.results[key];
+    const files = Array.isArray(r.acceptance_tests) ? (r.acceptance_tests as string[]).map((f) => f.trim()).filter(Boolean) : [];
+    const commit = typeof r.acceptance_tests_commit === "string" ? r.acceptance_tests_commit.trim() : "";
+    if (files.length === 0 || !commit) continue;
+    const changed = changedSince(ctx.repo, commit, files);
+    const where = key === "implement" ? "" : `（${key}）`;
+    if (changed === null) lines.push(`验收测试锁定（流水线比对）${where}：记录的提交 ${commit} 不在仓库中，没能核对 ${files.length} 个验收测试是否被改过`);
+    else if (changed.length === 0) lines.push(`验收测试锁定（流水线比对）${where}：${files.length} 个验收测试文件自提交 ${commit} 之后没有被修改`);
+    else lines.push(`验收测试锁定（流水线比对）${where}：以下验收测试在提交 ${commit} 之后被修改：${changed.join("、")}`);
+  }
+  return lines;
+}
+
 /** Assessment: read-only research → assessment.md → independent review ⇄ revise. */
 async function assessmentPhase(ctx: PipelineContext): Promise<void> {
   const rounds = ctx.config.profiles[ctx.state.profile].rounds;
@@ -1182,6 +1306,7 @@ async function developPhase(ctx: PipelineContext): Promise<Record<string, unknow
     // the implementer reads both the review and the revision record.
     await runStep(ctx, "design_revise", r, rounds.designReview);
   }
+  confirmDesign(ctx);
   const slices = implementationSlices(ctx);
   await milestone(
     ctx,
@@ -1204,7 +1329,7 @@ async function developPhase(ctx: PipelineContext): Promise<Record<string, unknow
   }
 
   for (let r = 1; r <= rounds.codeReview; r++) {
-    const review = await runReview(ctx, "code_review", r, rounds.codeReview, [...gateLines(ctx), ...scopeLines(ctx)]);
+    const review = await runReview(ctx, "code_review", r, rounds.codeReview, [...gateLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx)]);
     if (review.verdict === "pass") break;
     await runStep(ctx, "review_fix", r, rounds.codeReview, { gate: true });
   }
@@ -1282,6 +1407,8 @@ async function handBack(ctx: PipelineContext): Promise<void> {
   ctx.state.results = {};
   ctx.state.milestones = [];
   ctx.state.phase = "develop";
+  // Fixing defects does not change what the requester confirmed: no second confirmation.
+  if (ctx.state.approval?.status === "approved") ctx.state.approval = { ...ctx.state.approval, attempt: ctx.state.attempt };
   save(ctx);
   ctx.log(`测试验证发现缺陷，第 ${n} 次退回研发阶段（第 ${ctx.state.attempt} 次尝试）`);
   const text = `测试验证发现了缺陷，按设置退回研发阶段修复（第 ${n} 次）：从方案设计开始只处理这些缺陷，修完经过代码评审后${runPhases(ctx.state).mode === "gated" ? "重新提测" : "再次验证"}。`;
@@ -1304,7 +1431,7 @@ function usageLines(ctx: PipelineContext): string[] {
 
 /** What the report is told about this attempt: usage, the quality gate, the scope check. */
 function reportLines(ctx: PipelineContext): string[] {
-  const lines = [...usageLines(ctx), ...gateLines(ctx), ...scopeLines(ctx)];
+  const lines = [...usageLines(ctx), ...gateLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx)];
   if (ctx.config.checks.length === 0 && ctx.state.type !== "assessment") {
     lines.push("质量门：项目没有配置检查（checks），流水线没有自己运行检查，以各步骤记录的检查结果为准");
   }
@@ -1398,7 +1525,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       save(ctx);
       await stopManagedServices(ctx);
       const verifyAt = await scheduleVerifyStart(ctx);
-      const reminderHours = verifyAt ? null : await scheduleReminder(ctx, null);
+      const reminderHours = verifyAt ? null : await scheduleReminder(ctx, "phase");
       await notifyOrigin(
         ctx,
         phaseDoneMessage({
@@ -1419,6 +1546,32 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         handbacks: ctx.state.handbacks ?? 0,
       });
       return "phase_done";
+    }
+    if (error instanceof ApprovalNeeded) {
+      ctx.state.status = "waiting_for_approval";
+      ctx.state.stopReason = null;
+      save(ctx);
+      const autoContinueAt = await scheduleApprovalContinue(ctx);
+      const reminderHours = await scheduleReminder(ctx, "approval");
+      const prototype = path.join(ctx.repo, ctx.featureDir, "prototype");
+      await notifyOrigin(
+        ctx,
+        approvalMessage({
+          featureDir: shownFeatureDir(ctx),
+          previewPath: `${shownFeatureDir(ctx)}/preview.md`,
+          prototypePath: fs.existsSync(prototype) ? `${shownFeatureDir(ctx)}/prototype/` : null,
+          approveCommand: approveCommandOf(ctx),
+          resumeCommand: ctx.resumeCommand,
+          reminderHours,
+          autoContinueAt,
+        }),
+      );
+      await notifyExternal(ctx, "approval", `方案已通过审核，请需求方确认"做完后会看到什么"再开始写代码：${ctx.featureDir}/preview.md`, {
+        previewPath: `${ctx.featureDir}/preview.md`,
+        approveCommand: approveCommandOf(ctx),
+        resumeCommand: ctx.resumeCommand,
+      });
+      return "waiting_for_approval";
     }
     if (error instanceof BusinessDecisionNeeded) {
       const reproduce = error.source === "reproduce";

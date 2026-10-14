@@ -369,6 +369,10 @@ function project(repo: string): void {
   paseoJson(repo, git.isRepo);
   if (!fs.existsSync(path.join(repo, "GLOSSARY.md")) && fs.existsSync(path.join(repo, "CONTEXT.md"))) {
     report("ok", "术语表为旧名 CONTEXT.md：会继续读取，新术语写入 GLOSSARY.md");
+  } else if (fs.existsSync(path.join(repo, "GLOSSARY.md"))) {
+    report("ok", "术语表：GLOSSARY.md");
+  } else {
+    report("warn", "没有术语表 GLOSSARY.md：需求方的说法和代码里的叫法对不上时容易做偏", "在项目根目录的对话中运行 /req-setup，它会整理主要的业务词和代码中的名字");
   }
 
   const featuresDir = path.join(repo, "docs", "features");
@@ -399,6 +403,9 @@ function project(repo: string): void {
       case "running":
         if (raw.pid && isAlive(raw.pid)) report("ok", `${label}：运行中（进程 ${raw.pid}）${migrate}`);
         else report("warn", `${label}：状态为运行中，但进程已不在${migrate}`, `在该需求的对话中对 /req 说"继续开发"，或执行 start-pipeline --feature ${label} --resume`);
+        break;
+      case "waiting_for_approval":
+        report("warn", `${label}：方案等待需求方确认${migrate}`, "在该需求的对话中看 preview.md 并确认（或修改需求）");
         break;
       case "waiting_for_business":
         report("warn", `${label}：等待需求方决定${migrate}`, "在该需求的对话中回答问题、更新 spec 后继续");

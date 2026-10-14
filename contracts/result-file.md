@@ -4,10 +4,11 @@
 
 | 步骤 ID | 字段 |
 | --- | --- |
-| `design` | `has_runnable_service`: boolean。可选（1.8 起）：`slices`: 字符串数组（实施计划的切片，按实现顺序；两片以上时按片逐个实现）；`files`: 字符串数组（预计改动的文件和目录，目录以 `/` 结尾，可用 `*`，用于范围检查）；缺陷类型的 `reproduced`: boolean，为 `false` 时 `questions`: 非空字符串数组（需要需求方补充的信息） |
+| `design` | `has_runnable_service`: boolean。可选（1.8 起）：`slices`: 字符串数组（实施计划的切片，按实现顺序；两片以上时按片逐个实现）；`files`: 字符串数组（预计改动的文件和目录，目录以 `/` 结尾，可用 `*`，用于范围检查）；缺陷类型的 `reproduced`: boolean，为 `false` 时 `questions`: 非空字符串数组（需要需求方补充的信息）；`ui_change`: boolean（改动是否改变使用者看到的界面或操作方式，方案确认点按它决定是否停下） |
 | `design_review` | `verdict`: `approved` \| `changes_required` \| `blocked`；为 `blocked` 时 `questions`: 非空字符串数组 |
-| `design_revise` | `status`: `done` \| `partial`。可选（1.8 起）：`slices`、`files`，修订改变了切片或文件清单时写完整的新列表 |
-| `implement`、`review_fix`、`defect_fix` | `status`: `done` \| `partial`。按切片实现时，每片的键为 `implement-s<序号>` |
+| `design_revise` | `status`: `done` \| `partial`。可选（1.8 起）：`slices`、`files`、`ui_change`，修订改变了它们时写新的值 |
+| `implement` | `status`: `done` \| `partial`。按切片实现时，每片的键为 `implement-s<序号>`。可选（1.8 起）：`acceptance_tests`: 字符串数组（从验收标准的例子写出、先单独提交的测试文件），`acceptance_tests_commit`: string（那次提交）；代码评审前引擎核对它们之后有没有被改过 |
+| `review_fix`、`defect_fix` | `status`: `done` \| `partial` |
 | `code_review` | `verdict`: `pass` \| `changes_required` |
 | `service_start` | `started`: boolean |
 | `verify` | `result`: `pass` \| `defects_found` \| `blocked` |

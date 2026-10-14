@@ -3,7 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand } from "./cli-args.js";
+import { approveCommand, LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand } from "./cli-args.js";
 import { dequeuedMessage, queuedMessage, watchdogPrompt } from "./messages.js";
 import { slotHolders, slotsDir, tryAcquireSlot } from "./queue.js";
 import { cronEvery, parseStartTime } from "./schedule-time.js";
@@ -180,6 +180,13 @@ async function main(): Promise<number> {
       handbacks: mode.kind === "restart" ? 0 : (mode.previous.handbacks ?? 0),
       type,
       codeBase: startOver ? null : (mode.previous.codeBase ?? null),
+      // --approve: the requester confirmed the design that was waiting at the confirmation point.
+      approval:
+        args.approve && mode.previous.status === "waiting_for_approval"
+          ? { attempt: mode.previous.attempt, status: "approved", at: now }
+          : startOver
+            ? null
+            : (mode.previous.approval ?? null),
       gate: mode.kind === "restart" ? null : (mode.previous.gate ?? null),
     };
     if (checked.entersVerify) {
@@ -187,7 +194,14 @@ async function main(): Promise<number> {
       delete state.results.report;
       log(`开始测试验证阶段（${phases.environment === "deployed" ? "已部署的测试环境" : "本地"}，缺陷处理：${phases.defects}）`);
     }
-    const why = mode.kind === "resume-from-design" ? mode.reason : mode.kind === "restart" ? "按 --restart 从头开始" : "从中断处继续，已完成的步骤沿用结果";
+    const why =
+      mode.kind === "resume-from-design"
+        ? mode.reason
+        : mode.kind === "restart"
+          ? "按 --restart 从头开始"
+          : args.approve
+            ? "需求方已确认方案，开始写代码"
+            : "从中断处继续，已完成的步骤沿用结果";
     log(`继续流水线：${featureDir}（第 ${state.attempt} 次尝试，${PROFILE_LABELS[profile]}档）—— ${why}`);
   }
   writeState(stateFile, state);
@@ -209,6 +223,7 @@ async function main(): Promise<number> {
     resume: resumeCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
     status: statusCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
     verify: verifyCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
+    approve: approveCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
   };
   const notify = async (text: string) => {
     log(`通知：\n${text}`);
@@ -296,11 +311,12 @@ async function main(): Promise<number> {
       resumeCommand: commands.resume,
       statusCommand: commands.status,
       verifyCommand: commands.verify,
+      approveCommand: commands.approve,
       log,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
     log(`流水线结束：${outcome}`);
-    return outcome === "completed" || outcome === "phase_done" ? 0 : outcome === "waiting_for_business" ? 3 : 1;
+    return outcome === "completed" || outcome === "phase_done" ? 0 : outcome === "waiting_for_business" || outcome === "waiting_for_approval" ? 3 : 1;
   } finally {
     // The run ended by itself: the watchdog has nothing left to watch.
     if (watchdog) {

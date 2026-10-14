@@ -10,6 +10,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.js";
 import { type FeatureSummary, listFeatures } from "./features.js";
+import { handledCategories, type RecurringLesson, recurringLessons } from "./lessons.js";
 import { defaultConfigPath, KIT_ROOT, kitVersion } from "./locations.js";
 import { dispatchNotifiers } from "./notifiers.js";
 import { resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
@@ -18,7 +19,7 @@ import { loadRuntimeFactory } from "./runtime-loader.js";
 const GROUPS: Array<{ title: string; match: (stage: string) => boolean }> = [
   {
     title: "需要处理",
-    match: (s) => s.startsWith("等待需求方决定") || s.startsWith("已中断") || s.startsWith("验收未通过") || s.startsWith("研发完成，待测试验证"),
+    match: (s) => s.startsWith("等待需求方决定") || s.startsWith("等待确认方案") || s.startsWith("已中断") || s.startsWith("验收未通过") || s.startsWith("研发完成，待测试验证"),
   },
   { title: "待验收", match: (s) => s.startsWith("待验收") || s.startsWith("开发结束") },
   { title: "开发中", match: (s) => s === "开发中" },
@@ -26,7 +27,7 @@ const GROUPS: Array<{ title: string; match: (stage: string) => boolean }> = [
   { title: "已验收", match: (s) => s === "已验收" },
 ];
 
-export function digestText(project: string, features: FeatureSummary[], now = new Date(), days = 7): string {
+export function digestText(project: string, features: FeatureSummary[], now = new Date(), days = 7, lessons: RecurringLesson[] = []): string {
   const since = now.getTime() - days * 24 * 3600_000;
   const recent = features.filter((f) => new Date(f.updatedAt).getTime() >= since);
   const lines = [`【req-kit 需求总览】${project}（${now.toLocaleDateString("zh-CN")}）`];
@@ -39,6 +40,12 @@ export function digestText(project: string, features: FeatureSummary[], now = ne
     lines.push("", `${group.title}${group.title === "已验收" ? `（最近 ${days} 天）` : ""}：`);
     for (const f of items) {
       lines.push(`- ${f.title}（${f.name}）：${f.stage}${f.branch ? `，分支 ${f.branch}` : ""}${f.usage ? `；${f.usage}` : ""}`);
+    }
+  }
+  if (lessons.length > 0) {
+    lines.push("", "反复出现的问题（建议变成项目的规则，可以运行 /req-retro）：");
+    for (const l of lessons.slice(0, 5)) {
+      lines.push(`- ${l.category}：${l.features.length} 个需求（${l.features.join("、")}）${l.rules.length > 0 ? `；建议：${l.rules[0]}` : ""}`);
     }
   }
   return lines.join("\n");
@@ -89,7 +96,8 @@ async function main(): Promise<number> {
   }
 
   const features = listFeatures(repo);
-  const text = digestText(path.basename(repo), features, new Date(), Number(values.days) || 7);
+  const lessons = recurringLessons(features, handledCategories(repo));
+  const text = digestText(path.basename(repo), features, new Date(), Number(values.days) || 7, lessons);
   console.log(text);
   if (!values.notify) return 0;
   if (config.notifiers.length === 0) {
@@ -112,6 +120,7 @@ async function main(): Promise<number> {
       text,
       details: {
         features: features.map((f) => ({ name: f.name, title: f.title, stage: f.stage, branch: f.branch, updatedAt: f.updatedAt, usage: f.usage })),
+        recurringLessons: lessons,
       },
     },
     (message) => {

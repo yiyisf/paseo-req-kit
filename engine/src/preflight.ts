@@ -52,6 +52,8 @@ export interface LaunchArgs {
   verifyEnv: VerifyEnvironment | null;
   /** --defects: what the verify phase does with defects (overrides phases.verify.defects). */
   defects: DefectHandling | null;
+  /** --approve: the requester confirmed the design waiting at the confirmation point. Implies --resume. */
+  approve: boolean;
 }
 
 export class PreflightError extends Error {
@@ -238,6 +240,17 @@ export function preflight(
         ? "这个需求的流水线已经完成。如需重新完整运行，请加 --restart。"
         : `这个需求已有运行记录（状态：${previous.status}）。从中断处继续请加 --resume，从头开始请加 --restart。`;
     throw new PreflightError(hint);
+  } else if (args.approve && previous.status !== "waiting_for_approval") {
+    throw new PreflightError(`这个需求没有等待确认的方案（状态：${previous.status}），不需要 --approve。继续开发请用 --resume。`);
+  } else if (previous.status === "waiting_for_approval" && currentSpecHash(specPath) !== previous.specHash) {
+    mode = { kind: "resume-from-design", previous, reason: "方案确认时需求方提出了修改，需求说明已更新，从方案设计开始增量处理" };
+  } else if (previous.status === "waiting_for_approval") {
+    if (!args.approve) {
+      throw new PreflightError(
+        "方案正在等待需求方确认（见功能目录中的 preview.md）。需求方确认后用 --approve 继续开发；要修改的话，先更新并重新确认需求说明，再用 --resume。",
+      );
+    }
+    mode = { kind: "resume-reuse", previous };
   } else if (args.phase === "verify" && !developDone(previous) && previous.phase !== "verify") {
     throw new PreflightError(
       previous.status === "completed"

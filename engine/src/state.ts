@@ -10,8 +10,10 @@ import type { StepId } from "./steps.js";
  * "phase_done": the develop phase is done and the run stopped at the gate, waiting for
  * someone to start the verify phase (phases.mode "gated"). Engines before 1.7 treat an
  * unknown status as an interrupted run, which continues into verification: acceptable.
+ * "waiting_for_approval" (1.8): the design waits for the requester's confirmation
+ * (designApproval); older engines continue as after an interruption, i.e. without it.
  */
-export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed" | "phase_done";
+export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed" | "phase_done" | "waiting_for_approval";
 
 /** Phase names are strings so later phases need no format change. */
 export type PhaseName = "develop" | "verify";
@@ -77,7 +79,7 @@ export interface PipelineState {
    */
   worktree?: { workspaceId: string; sourceRepo: string } | null;
   /** Paseo schedules this run created (reminders, automatic continuation, watchdog); cancelled by the next run. */
-  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog" | "verify-start"; at: string | null }>;
+  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog" | "verify-start" | "approval-continue"; at: string | null }>;
   /** Automatic continuations used in this attempt. */
   autoResumes?: { attempt: number; count: number } | null;
   /** Set while waiting for a free slot (maxConcurrentPipelines). */
@@ -94,6 +96,8 @@ export interface PipelineState {
   type?: RequirementType | null;
   /** Commit before the attempt's first code change; the quality gate's baseline and the scope check start here (1.8). */
   codeBase?: { attempt: number; commit: string | null } | null;
+  /** Design confirmation point (1.8): which attempt's design is waiting or was confirmed. */
+  approval?: { attempt: number; status: "waiting" | "approved"; at: string; auto?: boolean } | null;
   /** Quality gate: the checks' results before the change, and every run after a step (1.8). */
   gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
 }

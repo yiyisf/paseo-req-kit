@@ -56,6 +56,7 @@ const PLAN_FIELDS: Pick<ResultSpec, "optional"> = {
     files: { kind: "string[]" },
     reproduced: { kind: "boolean" },
     questions: { kind: "string[]" },
+    ui_change: { kind: "boolean" },
   },
 };
 
@@ -131,7 +132,7 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "方案修订",
     role: "builder",
     promptFile: "04b-design-revise.md",
-    result: { required: done.required, optional: { slices: { kind: "string[]" }, files: { kind: "string[]" } } },
+    result: { required: done.required, optional: { slices: { kind: "string[]" }, files: { kind: "string[]" }, ui_change: { kind: "boolean" } } },
   },
   implement: {
     id: "implement",
@@ -139,7 +140,9 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "代码实现",
     role: "builder",
     promptFile: "05-implement.md",
-    result: done,
+    // acceptance_tests: test files written from the AC examples, committed first (in
+    // acceptance_tests_commit); the engine tells the code review when they changed later.
+    result: { required: done.required, optional: { acceptance_tests: { kind: "string[]" }, acceptance_tests_commit: { kind: "string" } } },
   },
   code_review: {
     id: "code_review",
