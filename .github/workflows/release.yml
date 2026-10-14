@@ -1,4 +1,13 @@
-# Publishes req-kit to npm when a version tag (no "v" prefix, e.g. 1.7.0 or 1.7.0-beta.1) is pushed.
+# Publishes req-kit to npm and creates the GitHub Release for a version tag (no "v" prefix,
+# e.g. 1.7.0 or 1.7.0-beta.1).
+#
+# Tags come from either side:
+# - pushed by a person (git push origin 1.8.0), or
+# - made here: when main gets a package.json whose version has no tag yet, the "tag" job
+#   tags that commit and the release follows in the same run. (A tag pushed with the
+#   workflow's own token starts no other workflow, so both happen in this one file, which
+#   is also the file npm trusted publishing is set up for.)
+#
 # Setup once (see docs/guide/维护者指南.md): on npmjs.com, add this repository and this workflow
 # file as a trusted publisher of the package. No npm token is stored anywhere.
 name: release
@@ -6,6 +15,8 @@ name: release
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+    branches: [main]
+    paths: ["package.json", ".github/workflows/release.yml"]
   # Re-run the release of an existing tag with this (current) workflow, e.g. from the
   # GitHub web page on a phone: Actions → release → Run workflow → tag.
   workflow_dispatch:
@@ -15,18 +26,54 @@ on:
         required: true
 
 permissions:
-  contents: write   # GitHub Release with the .tgz
+  contents: write   # the tag, and the GitHub Release with the .tgz
   id-token: write   # npm trusted publishing (OIDC) and provenance
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # Which tag to release; on a push to main, tags package.json's version when it is new.
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+              echo "::notice::$VERSION is already tagged; nothing to release."
+              echo "tag=" >> "$GITHUB_OUTPUT"
+            else
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a "$VERSION" -m "req-kit $VERSION"
+              git push origin "refs/tags/$VERSION"
+              echo "::notice::Tagged $GITHUB_SHA as $VERSION."
+              echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
   release:
+    needs: tag
+    if: ${{ needs.tag.outputs.tag != '' }}
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      TAG: ${{ needs.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: refs/tags/${{ needs.tag.outputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
