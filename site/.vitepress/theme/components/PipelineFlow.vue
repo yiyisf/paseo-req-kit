@@ -4,7 +4,7 @@ import { ref } from "vue";
 const activeTab = ref<"all" | "dev" | "verify">("all");
 
 interface StepItem {
-  no: string;
+  id: string;
   name: string;
   role: "builder" | "reviewer" | "gate";
   roleName: string;
@@ -15,82 +15,82 @@ interface StepItem {
 
 const devSteps: StepItem[] = [
   {
-    no: "01",
+    id: "design",
     name: "方案设计",
     role: "builder",
-    roleName: "Builder (实现者)",
+    roleName: "实现者 (builder)",
     output: "design.md",
-    desc: "深入分析需求，制定技术方案与模块拆解；可配置多个模型并行提案对比",
+    desc: "分析需求，编写技术方案；开启方案提案时先由几个 agent 各提一份",
   },
   {
-    no: "02",
+    id: "design-review",
     name: "方案审核 ⇄ 确认",
     role: "reviewer",
-    roleName: "Reviewer ⇄ 你",
+    roleName: "检查者 ⇄ 需求方",
     output: "design-review.md, preview.md",
-    desc: "独立模型审核方案；界面变动时生成 preview.md，请你在编码前确认预期效果",
-    extra: "界面改动提前确认",
+    desc: "独立模型审核方案；界面变动时生成 preview.md，写代码之前请你确认",
+    extra: "界面改动开工前确认",
   },
   {
-    no: "03",
+    id: "implement",
     name: "代码实现 (切片)",
     role: "builder",
-    roleName: "Builder (实现者)",
+    roleName: "实现者 (builder)",
     output: "代码、implementation.md",
-    desc: "按方案编写代码；支持 TDD 驱动；标准档大方案自动拆分切片（slices）逐片实现",
+    desc: "编写代码；适合时用 TDD；标准档方案若拆分了切片则逐片实现，每片一个新的 agent",
   },
   {
-    no: "04",
-    name: "双轴代码评审 ⇄ 修复",
+    id: "code-review",
+    name: "代码评审 ⇄ 修复",
     role: "reviewer",
-    roleName: "Reviewer (检查者)",
+    roleName: "检查者 (reviewer)",
     output: "code-review.md",
-    desc: "规格评审与规范评审双轴并行；支持专家评审小组会审，发现缺陷闭环修复",
+    desc: "规格评审和规范评审并行，再汇总；开启评审小组时由小组成员并行，发现问题返工修复",
     extra: "双轴并行评审",
   },
   {
-    no: "05",
+    id: "handoff",
     name: "提测说明",
     role: "builder",
-    roleName: "Builder (实现者)",
+    roleName: "实现者 (builder)",
     output: "handoff.md",
-    desc: "研发完成交付：明确改动范围、启动方法、自测证据、测试建议与注意事项",
+    desc: "研发阶段最后一步：列出改动范围、启动方法、自测证据、测试建议与准备",
   },
 ];
 
 const verifySteps: StepItem[] = [
   {
-    no: "06",
+    id: "service-start",
     name: "服务启动",
     role: "builder",
-    roleName: "Builder (实现者)",
+    roleName: "实现者 (builder)",
     output: "service-start.md",
-    desc: "按项目配置拉起依赖服务与前后台端口，并进行健康探测",
+    desc: "项目有常驻服务、档位开启时，按配置启动依赖服务与端口并检查状态",
   },
   {
-    no: "07",
+    id: "verify",
     name: "功能验证",
     role: "reviewer",
-    roleName: "Reviewer (检查者)",
+    roleName: "检查者 (reviewer)",
     output: "verification.md",
-    desc: "由独立检查者按需求说明中的验收标准逐条执行，必须提供执行证据，不改产品代码",
+    desc: "按验收标准逐条核对，给出真实命令输出或截图等证据，不改产品代码",
   },
   {
-    no: "08",
+    id: "defect-fix",
     name: "缺陷修复 ⇄ 复验",
     role: "builder",
-    roleName: "Builder ⇄ Reviewer",
+    roleName: "实现者 ⇄ 检查者",
     output: "verification.md",
-    desc: "验证发现问题当场修复并复验；或记录为缺陷退回研发，保证闭环",
+    desc: "验证发现缺陷时原地修复并复验；或记录缺陷退回研发阶段，最多 3 轮",
     extra: "最多 3 轮",
   },
   {
-    no: "09",
+    id: "report",
     name: "完成报告",
     role: "builder",
     roleName: "总结输出",
     output: "report.md",
-    desc: "从严汇总：所有验收标准必须有证据支持才能判定完成，遗留问题如实披露",
+    desc: "从严判定：所有验收标准都有通过证据才能判定完成，遗留问题如实记录",
   },
 ];
 
@@ -102,9 +102,9 @@ const selectedStep = ref<StepItem>(devSteps[0]);
     <!-- Header Controls -->
     <div class="pf-header">
       <div class="pf-legend">
-        <span class="pf-legend-item"><span class="dot builder"></span> Builder (做事/实现)</span>
-        <span class="pf-legend-item"><span class="dot reviewer"></span> Reviewer (独立检查/把关)</span>
-        <span class="pf-legend-item"><span class="dot gate"></span> 闸口 (阶段交接)</span>
+        <span class="pf-legend-item"><span class="dot builder"></span> 实现者 (builder)</span>
+        <span class="pf-legend-item"><span class="dot reviewer"></span> 检查者 (reviewer)</span>
+        <span class="pf-legend-item"><span class="dot gate"></span> 阶段闸口</span>
       </div>
       <div class="pf-tabs">
         <button :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">全流程</button>
@@ -119,23 +119,22 @@ const selectedStep = ref<StepItem>(devSteps[0]);
       <div v-if="activeTab === 'all' || activeTab === 'dev'" class="pf-group dev-group">
         <div class="pf-group-title">
           <span class="title-text">研发阶段</span>
-          <span class="tag">方案设计到交付提测</span>
+          <span class="tag">方案设计到提测说明</span>
         </div>
         <div class="pf-steps">
           <div
             v-for="s in devSteps"
-            :key="s.no"
+            :key="s.id"
             class="pf-step-card"
-            :class="[s.role, { active: selectedStep.no === s.no }]"
+            :class="[s.role, { active: selectedStep.id === s.id }]"
             @click="selectedStep = s"
           >
             <div class="pf-card-head">
-              <span class="pf-card-no">{{ s.no }}</span>
               <span class="pf-card-badge">{{ s.roleName.split(' ')[0] }}</span>
+              <span v-if="s.extra" class="pf-card-extra">{{ s.extra }}</span>
             </div>
             <div class="pf-card-name">{{ s.name }}</div>
             <div class="pf-card-file">📄 {{ s.output }}</div>
-            <div v-if="s.extra" class="pf-card-extra">{{ s.extra }}</div>
           </div>
         </div>
       </div>
@@ -144,30 +143,29 @@ const selectedStep = ref<StepItem>(devSteps[0]);
       <div v-if="activeTab === 'all'" class="pf-gate-node">
         <div class="gate-icon">⚖️</div>
         <div class="gate-title">阶段闸口</div>
-        <div class="gate-desc">分阶段模式停下<br>等待提测确认</div>
+        <div class="gate-desc">分阶段模式停下<br>等待提测与验证</div>
       </div>
 
       <!-- Verify Phase -->
       <div v-if="activeTab === 'all' || activeTab === 'verify'" class="pf-group verify-group">
         <div class="pf-group-title">
           <span class="title-text">测试验证阶段</span>
-          <span class="tag">独立验证与结论报告</span>
+          <span class="tag">独立验证到完成报告</span>
         </div>
         <div class="pf-steps">
           <div
             v-for="s in verifySteps"
-            :key="s.no"
+            :key="s.id"
             class="pf-step-card"
-            :class="[s.role, { active: selectedStep.no === s.no }]"
+            :class="[s.role, { active: selectedStep.id === s.id }]"
             @click="selectedStep = s"
           >
             <div class="pf-card-head">
-              <span class="pf-card-no">{{ s.no }}</span>
               <span class="pf-card-badge">{{ s.roleName.split(' ')[0] }}</span>
+              <span v-if="s.extra" class="pf-card-extra">{{ s.extra }}</span>
             </div>
             <div class="pf-card-name">{{ s.name }}</div>
             <div class="pf-card-file">📄 {{ s.output }}</div>
-            <div v-if="s.extra" class="pf-card-extra">{{ s.extra }}</div>
           </div>
         </div>
       </div>
@@ -176,14 +174,13 @@ const selectedStep = ref<StepItem>(devSteps[0]);
     <!-- Active Step Detail Preview -->
     <div class="pf-detail">
       <div class="pf-detail-title">
-        <span class="no">{{ selectedStep.no }}</span>
         <span class="name">{{ selectedStep.name }}</span>
         <span class="role-chip" :class="selectedStep.role">{{ selectedStep.roleName }}</span>
       </div>
       <p class="pf-detail-desc">{{ selectedStep.desc }}</p>
       <div class="pf-detail-meta">
-        <div class="meta-item"><strong>产物交付：</strong><code>{{ selectedStep.output }}</code></div>
-        <div v-if="selectedStep.extra" class="meta-item"><strong>执行限制：</strong>{{ selectedStep.extra }}</div>
+        <div class="meta-item"><strong>产物：</strong><code>{{ selectedStep.output }}</code></div>
+        <div v-if="selectedStep.extra" class="meta-item"><strong>特点：</strong>{{ selectedStep.extra }}</div>
       </div>
     </div>
   </div>
@@ -192,11 +189,11 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 <style scoped>
 .pf-container {
   border: 1px solid var(--vp-c-divider);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--vp-c-bg-soft);
-  padding: 24px;
-  margin: 28px 0;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  padding: 20px;
+  margin: 24px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03);
 }
 
 .pf-header {
@@ -204,9 +201,9 @@ const selectedStep = ref<StepItem>(devSteps[0]);
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--vp-c-divider);
 }
 
@@ -234,9 +231,9 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 
 .pf-tabs {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   background: var(--vp-c-bg);
-  padding: 4px;
+  padding: 3px;
   border-radius: 8px;
   border: 1px solid var(--vp-c-divider);
 }
@@ -258,7 +255,7 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 .pf-flow {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 @media (min-width: 960px) {
@@ -273,38 +270,38 @@ const selectedStep = ref<StepItem>(devSteps[0]);
   background: var(--vp-c-bg);
   border: 1px solid var(--vp-c-divider);
   border-radius: 12px;
-  padding: 16px;
+  padding: 14px;
 }
 
 .pf-group-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .title-text {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .tag {
   font-size: 11px;
   background: var(--vp-c-bg-soft);
   color: var(--vp-c-text-3);
-  padding: 2px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
 }
 
 .pf-steps {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .pf-step-card {
-  padding: 12px 14px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   border: 1px solid var(--vp-c-divider);
   background: var(--vp-c-bg-soft);
   cursor: pointer;
@@ -312,9 +309,9 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 }
 
 .pf-step-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   border-color: var(--vp-c-brand-1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.04);
 }
 
 .pf-step-card.active {
@@ -328,12 +325,6 @@ const selectedStep = ref<StepItem>(devSteps[0]);
   align-items: center;
   font-size: 11px;
   margin-bottom: 4px;
-}
-
-.pf-card-no {
-  font-family: var(--vp-font-family-mono);
-  font-weight: 700;
-  color: var(--vp-c-text-3);
 }
 
 .pf-card-badge {
@@ -354,9 +345,9 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 }
 
 .pf-card-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .pf-card-file {
@@ -366,9 +357,8 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 }
 
 .pf-card-extra {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--rk-warn);
-  margin-top: 4px;
 }
 
 .pf-gate-node {
@@ -379,13 +369,13 @@ const selectedStep = ref<StepItem>(devSteps[0]);
   text-align: center;
   background: var(--rk-gate-bg);
   border: 1px dashed var(--rk-gate);
-  border-radius: 12px;
-  padding: 16px 14px;
+  border-radius: 10px;
+  padding: 14px 12px;
 }
 
 .gate-icon {
-  font-size: 24px;
-  margin-bottom: 6px;
+  font-size: 22px;
+  margin-bottom: 4px;
 }
 
 .gate-title {
@@ -402,10 +392,10 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 }
 
 .pf-detail {
-  margin-top: 18px;
-  padding: 16px 20px;
+  margin-top: 16px;
+  padding: 14px 18px;
   background: var(--vp-c-bg);
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--vp-c-divider);
 }
 
@@ -413,17 +403,11 @@ const selectedStep = ref<StepItem>(devSteps[0]);
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
-}
-
-.pf-detail-title .no {
-  font-family: var(--vp-font-family-mono);
-  font-weight: 800;
-  color: var(--vp-c-brand-1);
+  margin-bottom: 6px;
 }
 
 .pf-detail-title .name {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -445,17 +429,17 @@ const selectedStep = ref<StepItem>(devSteps[0]);
 }
 
 .pf-detail-desc {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--vp-c-text-1);
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   line-height: 1.6;
 }
 
 .pf-detail-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
-  font-size: 13px;
+  gap: 16px;
+  font-size: 12px;
   color: var(--vp-c-text-2);
 }
 

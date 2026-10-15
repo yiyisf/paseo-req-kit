@@ -34,7 +34,7 @@ const steps = [
   {
     title: "4. 从严验证与完工报告",
     userMsg: "查看最新进展",
-    aiReply: "流水线全部步骤已完成！\n\n【验收结论】全部完成，可以验收。\n• 验收标准 1-6：全部通过并附带 curl 证据与终端录屏\n• 代码变更：已在本地提交 3 个 commit，无多余未暂存改动\n• 完整报告已生成：docs/features/20261012-sms-login/report.md",
+    aiReply: "流水线全部步骤已完成！\n\n【验收结论】全部完成，可以验收。\n• 验收标准 1-6：全部通过，附带执行命令输出与截图等证据\n• 代码变更：已在本地提交 3 个 commit，无多余未暂存改动\n• 完整报告已生成：docs/features/20261012-sms-login/report.md",
     statusBadge: "可验收",
     pipelineState: "阶段 2/2: 验证完毕",
     agentName: "report-summarizer",
@@ -54,7 +54,7 @@ const steps = [
           <span class="light green"></span>
         </div>
         <div class="sim-window-title">
-          <span class="app-icon">⚡</span> Paseo 会话体验：从一句话到完整功能交付
+          <span class="app-icon">⚡</span> Paseo 会话流程示意（非真实截图）
         </div>
         <div class="sim-step-tabs">
           <button

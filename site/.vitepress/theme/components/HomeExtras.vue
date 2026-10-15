@@ -3,7 +3,6 @@ import { ref } from "vue";
 import { withBase } from "vitepress";
 import PaseoSimWindow from "./PaseoSimWindow.vue";
 import PipelineFlow from "./PipelineFlow.vue";
-import ProblemCompare from "./ProblemCompare.vue";
 
 const installs = [
   {
@@ -33,25 +32,25 @@ const stages = [
     no: "01",
     title: "对话对齐需求",
     icon: "💬",
-    text: "在 Paseo 中输入 /req 和一句话。AI 先复述理解，结构化访谈明确细节与异常，独立审阅后生成规范需求说明（spec.md）。",
+    text: "在 Paseo 中输入 /req 和一句话。AI 先复述理解，一次问一个问题、给出选项和推荐，最后写成一份需求说明（spec.md）请你确认。",
   },
   {
     no: "02",
-    title: "后台 Agent 开发",
+    title: "后台开发",
     icon: "⚡",
-    text: "方案设计、方案审核、代码实现、交叉评审与修复由独立 Agent 协作完成。每一步作为子 Agent 挂载在主对话中，实时透明可见。",
+    text: "方案设计、方案审核、代码实现、代码评审、修复，由一组 agent 在后台完成。每一步都挂在你的对话下，可以随时点开看。",
   },
   {
     no: "03",
-    title: "提测与独立验证",
+    title: "提测与验证",
     icon: "🛡️",
-    text: "研发完成自动生成 handoff.md 提测说明。可自动拉起服务执行验证，也可在闸口停下通知测试同事接手或部署指定测试环境。",
+    text: "研发完成写好提测说明。可以接着自动验证，也可以停下来交给测试同事，在测试环境里验证。",
   },
   {
     no: "04",
-    title: "如实报告与逐条验收",
+    title: "逐条验收",
     icon: "📋",
-    text: "生成附带完整执行证据的验收报告。AI 带你按验收标准逐条核对确认。只做本地安全提交，合并与上线由人最终把控。",
+    text: "收到结论和报告后，AI 按验收标准一条一条带你核对，记录结果。合并上线仍然由人决定。",
   },
 ];
 </script>
@@ -60,17 +59,17 @@ const stages = [
   <div class="rk-home">
     <!-- Live Interactive Experience Preview -->
     <section class="rk-section">
-      <div class="section-badge">实时交互演示</div>
-      <h2 class="rk-title">不仅是对话，更是端到端交付工作台</h2>
-      <p class="rk-lead">体验非专职开发同事如何在 Paseo 中通过一句简单指令，驱动后台多 Agent 流水线协同作业：</p>
+      <div class="section-badge">流程示意</div>
+      <h2 class="rk-title">对话与后台流水线协同示意</h2>
+      <p class="rk-lead">在 Paseo 中用对话把需求谈清楚，后台由一组 agent 完成方案设计、实现、评审和验证：</p>
       <PaseoSimWindow />
     </section>
 
     <!-- Four Stages with visual flair -->
     <section class="rk-section">
-      <div class="section-badge">端到端闭环</div>
+      <div class="section-badge">四个阶段</div>
       <h2 class="rk-title">一个需求，四个阶段</h2>
-      <p class="rk-lead">你负责把需求讲清楚并做最后验收，中间所有繁琐的方案、编码、代码审查与证据收集全部交给 Agent：</p>
+      <p class="rk-lead">你负责把需求讲清楚和最后验收，中间的工作交给 agent：</p>
       <div class="rk-stages">
         <div v-for="s in stages" :key="s.no" class="rk-stage">
           <div class="rk-stage-top">
@@ -85,28 +84,20 @@ const stages = [
 
     <!-- Comprehensive Pipeline Flow -->
     <section class="rk-section">
-      <div class="section-badge">多 Agent 严谨分工</div>
-      <h2 class="rk-title">做检分离的后台流水线</h2>
+      <div class="section-badge">流水线</div>
+      <h2 class="rk-title">后台流水线</h2>
       <p class="rk-lead">
-        实现（Builder）与评审（Reviewer）各司其职，步骤之间只通过功能目录中的规范文件交接，不依赖模糊上下文；任何审核不通过均触发受控返工：
+        做事的和检查的是不同的 agent，每一步只看文件、不靠记忆；审核、评审、验证不通过就返工，遗留问题如实写进报告：
       </p>
       <PipelineFlow />
-      <p class="rk-more"><a :href="withBase('/guide/how-it-works')">深入了解流水线工作原理 →</a></p>
-    </section>
-
-    <!-- Problem & Solution Comparison -->
-    <section class="rk-section">
-      <div class="section-badge">为什么需要体系</div>
-      <h2 class="rk-title">告别单 Agent 的偷懒与失控</h2>
-      <p class="rk-lead">直接让单一编码模型“去写个功能”，往往面临理解偏差、自圆其说、虚假通过等隐患。req-kit 从机制上彻底解决这些痛点：</p>
-      <ProblemCompare />
+      <p class="rk-more"><a :href="withBase('/guide/how-it-works')">了解工作原理 →</a></p>
     </section>
 
     <!-- Installation Terminal -->
     <section class="rk-section">
-      <div class="section-badge">一键起步</div>
-      <h2 class="rk-title">一键安装与升级</h2>
-      <p class="rk-lead">在运行 Paseo daemon 的机器上执行对应命令，自动完成环境检测、核心引擎安装与 Agent Skill 注册：</p>
+      <div class="section-badge">安装</div>
+      <h2 class="rk-title">安装与升级</h2>
+      <p class="rk-lead">在运行 Paseo daemon 的机器上执行对应命令，自动检查环境、安装并配置 skill：</p>
       
       <div class="rk-terminal-box">
         <div class="terminal-bar">
@@ -141,16 +132,16 @@ const stages = [
         </div>
       </div>
       
-      <p class="rk-more"><a :href="withBase('/guide/getting-started')">查阅详细 15 分钟快速入门指南 →</a></p>
+      <p class="rk-more"><a :href="withBase('/guide/getting-started')">快速开始 →</a></p>
     </section>
 
     <!-- Final Call to Action -->
     <section class="rk-section rk-cta">
       <div class="cta-card">
         <h2 class="cta-title">给测试、产品、项目经理用的需求开发体系</h2>
-        <p class="cta-desc">不用读深奥的代码，也能把一个想法从“我想要……”扎实推进到“通过全部验收并交付”。所有成果物公开透明留在你的仓库中。</p>
+        <p class="cta-desc">不用读代码，也能把一个需求从“我想要……”推进到“可以验收”。每一步的产物都在仓库里，可以随时查看、亲自核对。</p>
         <div class="rk-cta-actions">
-          <a class="rk-button brand" :href="withBase('/guide/getting-started')">立即开始使用</a>
+          <a class="rk-button brand" :href="withBase('/guide/getting-started')">开始使用</a>
           <a class="rk-button" :href="withBase('/guide/user')">阅读使用者指南</a>
         </div>
       </div>
@@ -179,8 +170,6 @@ const stages = [
   display: inline-block;
   font-size: 12px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--vp-c-brand-1);
   background: var(--vp-c-brand-soft);
   padding: 3px 10px;
@@ -189,19 +178,19 @@ const stages = [
 }
 
 .rk-title {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   line-height: 1.3;
   margin: 0;
   border: none;
 }
 @media (min-width: 640px) {
-  .rk-title { font-size: 32px; }
+  .rk-title { font-size: 30px; }
 }
 
 .rk-lead {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   max-width: 780px;
   font-size: 15px;
   color: var(--vp-c-text-2);
@@ -211,8 +200,8 @@ const stages = [
 /* Four Stages Grid */
 .rk-stages {
   display: grid;
-  gap: 18px;
-  margin-top: 28px;
+  gap: 16px;
+  margin-top: 24px;
   grid-template-columns: 1fr;
 }
 @media (min-width: 640px) {
@@ -224,35 +213,35 @@ const stages = [
 
 .rk-stage {
   border: 1px solid var(--vp-c-divider);
-  border-radius: 14px;
-  padding: 24px 20px;
+  border-radius: 12px;
+  padding: 22px 18px;
   background: var(--vp-c-bg-soft);
-  transition: all 0.25s ease;
+  transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
 }
 
 .rk-stage:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   border-color: var(--vp-c-brand-1);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
 }
 
 .rk-stage-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .rk-stage-icon {
-  font-size: 24px;
+  font-size: 22px;
 }
 
 .rk-no {
   font-family: var(--vp-font-family-mono);
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--vp-c-brand-1);
   background: var(--vp-c-brand-soft);
   padding: 2px 8px;
@@ -260,9 +249,9 @@ const stages = [
 }
 
 .rk-stage h3 {
-  margin: 0 0 10px;
-  font-size: 17px;
-  font-weight: 700;
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .rk-stage p {
@@ -273,7 +262,7 @@ const stages = [
 }
 
 .rk-more {
-  margin-top: 18px;
+  margin-top: 16px;
   font-size: 14px;
   font-weight: 600;
 }
@@ -290,12 +279,12 @@ const stages = [
 
 /* Terminal Box */
 .rk-terminal-box {
-  margin-top: 24px;
-  border-radius: 14px;
+  margin-top: 20px;
+  border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--vp-c-divider);
   background: #18181b;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
 }
 
 .terminal-bar {
@@ -313,8 +302,8 @@ const stages = [
 }
 
 .t-dot {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
 }
 .t-red { background: #ef4444; }
@@ -342,7 +331,7 @@ const stages = [
 }
 
 .terminal-body {
-  padding: 20px;
+  padding: 18px;
 }
 
 .terminal-code-row {
@@ -367,7 +356,7 @@ const stages = [
 }
 
 .rk-copy-btn {
-  padding: 6px 14px;
+  padding: 5px 12px;
   border-radius: 6px;
   background: #3b82f6;
   color: #fff;
@@ -387,37 +376,37 @@ const stages = [
 }
 
 .terminal-note {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   font-size: 12px;
   color: #a1a1aa;
 }
 
 /* Call to Action */
 .rk-cta {
-  padding-top: 80px;
+  padding-top: 72px;
 }
 
 .cta-card {
-  padding: 48px 32px;
-  border-radius: 20px;
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(6, 182, 212, 0.08) 100%);
+  padding: 40px 28px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.06) 0%, rgba(6, 182, 212, 0.06) 100%);
   border: 1px solid var(--vp-c-brand-soft);
   text-align: center;
 }
 
 .cta-title {
-  font-size: 26px;
-  font-weight: 800;
+  font-size: 24px;
+  font-weight: 700;
   margin: 0;
 }
 @media (min-width: 640px) {
-  .cta-title { font-size: 30px; }
+  .cta-title { font-size: 28px; }
 }
 
 .cta-desc {
   max-width: 680px;
-  margin: 14px auto 28px;
-  font-size: 15px;
+  margin: 12px auto 24px;
+  font-size: 14px;
   color: var(--vp-c-text-2);
   line-height: 1.7;
 }
@@ -425,12 +414,12 @@ const stages = [
 .rk-cta-actions {
   display: flex;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
   flex-wrap: wrap;
 }
 
 .rk-button {
-  padding: 10px 22px;
+  padding: 9px 20px;
   border-radius: 8px;
   font-size: 14px;
   font-weight: 600;

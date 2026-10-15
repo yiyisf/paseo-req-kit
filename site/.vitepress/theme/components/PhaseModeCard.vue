@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-const activeMode = ref<"continuous" | "gated" | "develop-only">("gated");
+const activeMode = ref<"continuous" | "gated" | "develop-only">("continuous");
 
 const modes = [
   {
     id: "continuous",
     name: "连续执行 (默认)",
-    badge: "自动直达",
+    badge: "默认模式",
     tagline: "研发完成后不等待，直接启动本地服务并跑通自动化验证",
     fit: "适合本地能够完全闭环验证的前后端小需求或工具链开发",
     flow: [
@@ -20,22 +20,22 @@ const modes = [
   {
     id: "gated",
     name: "分阶段提测",
-    badge: "推荐协作模式",
+    badge: "测试环境/人工接手",
     tagline: "研发完成后停在闸口，生成提测说明，通知测试同事或等待测试环境准备",
-    fit: "适合团队正规研发流程：有专门测试人员、需要部署联调环境、或需要准备特定测试数据",
+    fit: "适合有专门测试人员、需要先部署测试环境、或需要准备特定测试数据的项目",
     flow: [
       { name: "研发阶段", desc: "方案 ➜ 实现 ➜ 提测说明", state: "done" },
-      { name: "闸口停滞", desc: "通知使用者/测试同事", state: "gate" },
+      { name: "闸口", desc: "通知使用者/测试同事", state: "gate" },
       { name: "指定环境验证", desc: "本地服务 或 已部署环境", state: "done" },
-      { name: "多方验收", desc: "缺陷退回研发 或 闭环完成", state: "done" },
+      { name: "逐条验收", desc: "缺陷退回研发 或 闭环完成", state: "done" },
     ],
   },
   {
     id: "develop-only",
     name: "只做研发",
-    badge: "人工接管",
-    tagline: "仅完成代码编写与代码评审，交付详细 handoff.md 提测说明后即刻结束",
-    fit: "测试必须完全由人工在专有业务平台（如硬件设备、私有审批流）上操作的场景",
+    badge: "测试由人完成",
+    tagline: "写完提测说明和研发报告后结束，测试由人完成",
+    fit: "适合测试必须完全由人工完成的场景",
     flow: [
       { name: "方案与评审", desc: "方案设计 ➜ 交叉评审", state: "done" },
       { name: "代码实现", desc: "代码落地 ➜ 单元测试", state: "done" },
