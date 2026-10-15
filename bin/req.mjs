@@ -40,6 +40,11 @@ const HELP = `req-kit ${version}（${kitRoot}）
                                本机记录的需求（Paseo 插件据此找到所有需求）；1.9 之前运行过的用 --rebuild 补登
   req api <命令> …             给程序用的 JSON 输出（见 contracts/cli-json.md）
 
+Paseo 插件（在 Paseo 中查看和管理需求）：
+  req plugin install [--yes]   安装或更新插件；需要时会询问是否打开 Paseo 的插件总开关
+  req plugin status            插件是否在运行
+  req plugin remove            从 Paseo 移除插件
+
 本机维护：
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
   req configure                配置向导：选择 builder 和 reviewer 用的 agent
@@ -174,6 +179,9 @@ switch (command) {
     break;
   case "api":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "api.ts"), ...rest]) : 1;
+    break;
+  case "plugin":
+    code = node([path.join(kitRoot, "bin", "req-plugin.mjs"), ...rest]);
     break;
   case "notify-test":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "notify-test.ts"), ...rest]) : 1;

@@ -26,7 +26,8 @@ curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 2. 安装 `paseo-req-kit`（npm 上有就从 npm 安装，否则用 GitHub Release 的安装包；npm 全局目录不可写时装到 `~/.req-kit/npm`，不需要 sudo）；
 3. 检查 Paseo：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行（`@getpaseo/cli`），开启它自带的网页界面并启动 daemon；已有 Paseo 时核对版本、开启网页界面（不会自动重启正在运行的 daemon）。之后浏览器打开 `http://localhost:6767/` 就是 Paseo；
 4. 运行 `req setup`：把这个版本装到 `~/tools/req-kit/versions/<版本>`，并为 Claude Code、Codex 等安装 `/req` 等 skill；
-5. 运行配置向导 `req configure`，为"实现"（builder）和"评审"（reviewer）各选一个 agent——建议选两个不同的模型。
+5. 运行配置向导 `req configure`，为"实现"（builder）和"评审"（reviewer）各选一个 agent——建议选两个不同的模型；
+6. 最后询问是否安装 req-kit 的 Paseo 插件：在 Paseo 的界面里看需求总览、进度和文档，并确认方案、停止、继续（会先征得同意再打开 Paseo 的插件总开关）。
 
 再次运行同一条命令即升级。常用选项：
 

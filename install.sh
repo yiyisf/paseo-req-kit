@@ -10,6 +10,8 @@
 #                        (default: npm, falling back to the Release when npm does not have it)
 #   --no-configure       skip the agent configuration wizard
 #   --skip-paseo         do not check, install or start Paseo
+#   --with-plugin        install the req-kit plugin for Paseo without asking (turns on Paseo's plugins)
+#   --no-plugin          do not offer the plugin
 #   --help
 #
 # What it does: checks Node.js 22+, installs the paseo-req-kit package globally with npm
@@ -30,6 +32,7 @@ CHANNEL="latest"
 FROM="auto"
 CONFIGURE=1
 PASEO_STEP=1
+PLUGIN_STEP=ask
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -49,6 +52,8 @@ usage() {
   --from npm|release   从 npm 安装，或从 GitHub Release 的安装包安装（默认先 npm，没有再用 Release）
   --no-configure       不运行选择 agent 的配置向导
   --skip-paseo         不检查、不安装、不启动 Paseo
+  --with-plugin        不询问，直接安装 Paseo 的 req-kit 插件（会打开 Paseo 的插件总开关）
+  --no-plugin          不安装、也不询问 Paseo 插件
   -h, --help           显示这段说明
 
 没有 Paseo 时会安装 Paseo 的命令行版本（@getpaseo/cli），开启它自带的网页界面并启动 daemon。
@@ -74,6 +79,8 @@ while [ $# -gt 0 ]; do
     --from=*) FROM="${1#--from=}" ;;
     --no-configure) CONFIGURE=0 ;;
     --skip-paseo) PASEO_STEP=0 ;;
+    --with-plugin) PLUGIN_STEP=yes ;;
+    --no-plugin) PLUGIN_STEP=no ;;
     -h | --help)
       usage
       exit 0
@@ -217,7 +224,8 @@ daemon_version() {
   node -e 'fetch(process.argv[1] + "/api/status", { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).then((j) => console.log(j.version || ""), () => console.log(""))' "$DAEMON_URL" 2>/dev/null
 }
 web_ui() {
-  if paseo_ daemon config get features.webUi.enabled 2>/dev/null | grep -q true; then
+  # Prints {"source": …, "path": …, "set": true, "value": …}: only "value" says whether it is on.
+  if paseo_ daemon config get features.webUi.enabled 2>/dev/null | grep -Eq '"value": *true'; then
     ok "Paseo 网页界面已开启"
     return 1
   fi
@@ -320,6 +328,30 @@ if [ "$CONFIGURE" = "1" ] && [ -f "$CONFIG" ] && grep -q "CHANGE-ME" "$CONFIG" 2
     fi
   else
     warn "没有可交互的终端，跳过配置向导。之后运行：req configure"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# The req-kit plugin for Paseo: the overview, progress and actions in Paseo's web UI and app.
+# Already installed: req setup above refreshed it. Its own command asks about Paseo's plugin switch.
+PLUGIN_DIR="${REQ_KIT_HOME:-$HOME/.req-kit}/paseo-plugin"
+if [ "$PLUGIN_STEP" != "no" ] && [ ! -f "$PLUGIN_DIR/paseo-plugin.json" ] && { [ -n "$PASEO_CMD" ] || [ "$PLUGIN_STEP" = "yes" ]; }; then
+  step "Paseo 插件"
+  say "  req-kit 插件在 Paseo（网页端、桌面版、手机）中显示需求总览、进度和文档，并可以确认方案、停止、继续。"
+  plugin_run() {
+    if [ -n "$PASEO_CMD" ]; then REQ_KIT_PASEO_BIN="$PASEO_CMD" run_req plugin install "$@"; else run_req plugin install "$@"; fi
+  }
+  if [ "$PLUGIN_STEP" = "yes" ]; then
+    plugin_run --yes || warn "插件没有装好（见上面的输出），之后可以运行 req plugin install"
+  elif [ -r /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
+    printf '  安装 req-kit 插件？[Y/n] '
+    read -r ANSWER </dev/tty || ANSWER=n
+    case "$ANSWER" in
+      n | N | no | NO) say "  跳过。之后可以运行 req plugin install" ;;
+      *) plugin_run </dev/tty || warn "插件没有装好（见上面的输出），之后可以运行 req plugin install" ;;
+    esac
+  else
+    say "  没有可交互的终端，跳过。之后运行：req plugin install"
   fi
 fi
 

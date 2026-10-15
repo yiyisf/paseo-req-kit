@@ -74,6 +74,8 @@ irm https://paseo-req-kit.vercel.app/install.ps1 | iex
 2. 在项目的 Paseo 对话中运行 `/req-setup` —— 接入项目（每个项目一次）；
 3. 在 Paseo 对话中输入 `/req 我想……` —— 开始第一个需求。
 
+想在 Paseo 的界面（网页端、桌面版、手机）里看需求总览和进度、确认方案或停止继续，运行 `req plugin install` 安装 req-kit 的 Paseo 插件。
+
 其他安装方式（npm、离线安装包、git）、各 agent 的配置写法和升级回滚，见 [安装与升级](docs/guide/安装与升级.md)。
 
 ## 工作原理

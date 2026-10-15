@@ -28,3 +28,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0024 让分歧更早暴露：验收例子、方案确认点、两个方向的评审、反复的问题变成规则](0024-confirm-early-review-axes.md)
 - [0025 联合需求：一个需求同时改几个仓库](0025-joint-requirements.md)
 - [0026 本机的需求索引、使用记录和 req api](0026-machine-records-and-api.md)
+- [0027 Paseo 插件：随 req-kit 一起发布，只通过 req api 工作](0027-paseo-plugin.md)

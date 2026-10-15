@@ -43,6 +43,14 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `req index [--prune]` | 本机记录的需求；`--prune` 移除目录已不在的 |
 | `req api <命令> …` | 给程序用的 JSON 输出，见 [req api](./contracts/cli-json) |
 
+### Paseo 插件
+
+| 命令 | 作用 |
+| --- | --- |
+| `req plugin install [--yes]` | 安装或更新 req-kit 的 Paseo 插件；需要时询问是否打开 Paseo 的插件总开关 |
+| `req plugin status` | 插件是否在运行 |
+| `req plugin remove` | 从 Paseo 移除插件 |
+
 `<需求>` 可以写功能目录（`docs/features/20261012-sms-login`）、目录名，或名称中能唯一确定的一部分（`sms-login`）。
 
 ### 本机维护
@@ -86,4 +94,4 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | macOS、Linux、Git Bash、WSL | `curl -fsSL https://paseo-req-kit.vercel.app/install.sh \| sh` |
 | Windows PowerShell | `irm https://paseo-req-kit.vercel.app/install.ps1 \| iex` |
 
-`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.8.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。
+`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）、`--with-plugin`（直接安装 Paseo 插件）、`--no-plugin`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.8.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`、`$ReqKitPlugin = "yes"`（或 `"no"`）。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。

@@ -911,6 +911,9 @@ if (values.check) {
   if (active && path.resolve(active.root) !== path.resolve(KIT_ROOT)) ok(`已从 ${active.version} 切换到 ${VERSION}`);
   else ok(`已启用 ${VERSION}`);
   writeShims();
+  // The Paseo plugin, when installed, follows the active version (bin/req-plugin.mjs).
+  const { refreshPlugin } = await import("./bin/req-plugin.mjs");
+  refreshPlugin({ kitRoot: KIT_ROOT, log: (message) => ok(message) });
 }
 checkLegacyLeftovers(roots);
 

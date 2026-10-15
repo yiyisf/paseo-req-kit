@@ -187,12 +187,24 @@ test("一键安装：已有 Paseo 时不重装；版本不匹配时提醒；daem
     assert.match(r.stdout, /网页界面要在重启后生效：paseo daemon restart/);
     assert.ok(!paseoCalls(home).some((c) => c[0] === "daemon" && (c[1] === "start" || c[1] === "restart")));
 
-    // Second run: already on, daemon running, nothing to do.
-    const again = runWithPaseo(home, paseoEnv(home, { ...base, REQ_KIT_PASEO_BIN: bin }));
+    // No terminal: the plugin is offered but not installed.
+    assert.match(r.stdout, /==> Paseo 插件[\s\S]*没有可交互的终端，跳过。之后运行：req plugin install/);
+
+    // Second run: already on, daemon running, nothing to do; --with-plugin installs the plugin.
+    const again = runWithPaseo(home, paseoEnv(home, { ...base, REQ_KIT_PASEO_BIN: bin }), "--with-plugin");
     assert.equal(again.status, 0, again.stdout + again.stderr);
     assert.match(again.stdout, /Paseo 0\.11\.2/);
     assert.match(again.stdout, /Paseo 网页界面已开启/);
     assert.match(again.stdout, /Paseo daemon 正在运行/);
+    assert.match(again.stdout, /req-kit 插件已安装，正在运行/);
+    const paseoState = JSON.parse(fs.readFileSync(path.join(home, "paseo-config.json"), "utf8"));
+    assert.equal(paseoState.pluginsEnabled, true);
+    assert.deepEqual(paseoState.plugins.map((p: { id: string }) => p.id), ["req-kit"]);
+    assert.ok(fs.existsSync(path.join(home, ".req-kit", "paseo-plugin", "paseo-plugin.json")));
+    // Installed already: not offered again (req setup keeps it up to date).
+    const third = runWithPaseo(home, paseoEnv(home, { ...base, REQ_KIT_PASEO_BIN: bin }));
+    assert.doesNotMatch(third.stdout, /==> Paseo 插件/);
+    assert.match(third.stdout, /Paseo 插件已更新到这个版本/);
 
     // No paseo command, but a daemon answers: the desktop app's. Nothing is installed.
     const desktop = runWithPaseo(home, paseoEnv(home, { ...base, REQ_KIT_PASEO_BIN: "" }));

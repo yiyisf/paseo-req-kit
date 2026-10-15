@@ -9,6 +9,7 @@
 #   $ReqKitFrom = "release"     # npm | release (default: npm, falling back to the Release)
 #   $ReqKitNoConfigure = $true  # skip the agent configuration wizard
 #   $ReqKitSkipPaseo = $true    # do not check, install or start Paseo
+#   $ReqKitPlugin = "yes"       # yes: install the req-kit plugin for Paseo without asking; no: do not offer it
 #
 # Same steps as install.sh: check Node.js 22+, npm install -g paseo-req-kit (from npm or the
 # GitHub Release .tgz); make sure Paseo is there (install the Paseo CLI in the range req-kit
@@ -26,6 +27,9 @@
   $From = [string](Get-Variable -Name ReqKitFrom -ValueOnly -ErrorAction SilentlyContinue)
   $NoConfigure = [bool](Get-Variable -Name ReqKitNoConfigure -ValueOnly -ErrorAction SilentlyContinue)
   $SkipPaseo = [bool](Get-Variable -Name ReqKitSkipPaseo -ValueOnly -ErrorAction SilentlyContinue)
+  $PluginStep = [string](Get-Variable -Name ReqKitPlugin -ValueOnly -ErrorAction SilentlyContinue)
+  if (-not $PluginStep) { $PluginStep = "ask" }
+  $paseo = $null
   if (-not $From) { $From = "auto" }
   $Version = $Version.TrimStart("v")
 
@@ -130,7 +134,7 @@
         if ($v.StartsWith("$minor.")) { Ok "Paseo $v" } else { Warn "Paseo 是 $v，这个版本的 req-kit 支持 $range。请换成匹配的 Paseo，或用 req upgrade 选择支持它的 req-kit" }
       }
       $changed = $false
-      if ((& $paseo daemon config get features.webUi.enabled 2>$null) -match "true") { Ok "Paseo 网页界面已开启" }
+      if ((& $paseo daemon config get features.webUi.enabled 2>$null) -match '"value":\s*true') { Ok "Paseo 网页界面已开启" }
       else {
         & $paseo daemon config set features.webUi.enabled true *> $null
         if ($LASTEXITCODE -eq 0) { Ok "已开启 Paseo 自带的网页界面（features.webUi.enabled）"; $changed = $true }
@@ -167,6 +171,21 @@
     Step "选择 agent"
     & node $reqMjs configure
     if ($LASTEXITCODE -eq 0) { & node $reqMjs check } else { Warn "配置向导没有完成，之后可以运行 req configure" }
+  }
+
+  # The req-kit plugin for Paseo. Already installed: req setup above refreshed it.
+  $kitHomeDir = if ($env:REQ_KIT_HOME) { $env:REQ_KIT_HOME } else { Join-Path $HOME ".req-kit" }
+  if ($PluginStep -ne "no" -and -not (Test-Path (Join-Path $kitHomeDir "paseo-plugin\paseo-plugin.json")) -and ($paseo -or $PluginStep -eq "yes")) {
+    Step "Paseo 插件"
+    Write-Host "  req-kit 插件在 Paseo（网页端、桌面版、手机）中显示需求总览、进度和文档，并可以确认方案、停止、继续。"
+    if ($paseo) { $env:REQ_KIT_PASEO_BIN = $paseo }
+    if ($PluginStep -eq "yes") { & node $reqMjs plugin install --yes }
+    else {
+      $answer = Read-Host "  安装 req-kit 插件？[Y/n]"
+      if ($answer -match '^(n|no)$') { Write-Host "  跳过。之后可以运行 req plugin install" } else { & node $reqMjs plugin install }
+    }
+    if ($LASTEXITCODE -ne 0) { Warn "插件没有装好（见上面的输出），之后可以运行 req plugin install" }
+    Remove-Item Env:REQ_KIT_PASEO_BIN -ErrorAction SilentlyContinue
   }
 
   Step "完成"
