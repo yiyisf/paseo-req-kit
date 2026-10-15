@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { DefectHandling, PhaseMode, ProfileName, VerifyEnvironment } from "./config.js";
+import type { DefectHandling, PhaseMode, ProfileName, RequirementType, VerifyEnvironment } from "./config.js";
+import type { ExternalRecord } from "./integrations.js";
+import { registerRequirement } from "./records.js";
 import type { AgentUsage } from "./usage.js";
 import type { StepId } from "./steps.js";
 
@@ -10,8 +12,10 @@ import type { StepId } from "./steps.js";
  * "phase_done": the develop phase is done and the run stopped at the gate, waiting for
  * someone to start the verify phase (phases.mode "gated"). Engines before 1.7 treat an
  * unknown status as an interrupted run, which continues into verification: acceptable.
+ * "waiting_for_approval" (1.8): the design waits for the requester's confirmation
+ * (designApproval); older engines continue as after an interruption, i.e. without it.
  */
-export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed" | "phase_done";
+export type PipelineStatus = "running" | "waiting_for_business" | "failed" | "completed" | "phase_done" | "waiting_for_approval";
 
 /** Phase names are strings so later phases need no format change. */
 export type PhaseName = "develop" | "verify";
@@ -77,7 +81,7 @@ export interface PipelineState {
    */
   worktree?: { workspaceId: string; sourceRepo: string } | null;
   /** Paseo schedules this run created (reminders, automatic continuation, watchdog); cancelled by the next run. */
-  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog" | "verify-start"; at: string | null }>;
+  schedules?: Array<{ id: string; kind: "reminder" | "auto-resume" | "watchdog" | "verify-start" | "approval-continue"; at: string | null }>;
   /** Automatic continuations used in this attempt. */
   autoResumes?: { attempt: number; count: number } | null;
   /** Set while waiting for a free slot (maxConcurrentPipelines). */
@@ -90,6 +94,61 @@ export interface PipelineState {
   verifyAt?: string | null;
   /** How many times the verify phase handed defects back to development (defects "handback"). */
   handbacks?: number;
+  /** Requirement type with its own playbook, from the spec's "类型" line; absent: the normal flow (1.8). */
+  type?: RequirementType | null;
+  /** Commit before the attempt's first code change; the quality gate's baseline and the scope check start here (1.8). */
+  codeBase?: { attempt: number; commit: string | null } | null;
+  /**
+   * Joint requirement (1.8): other repositories this requirement also changes, each in a
+   * worktree created for it, with its own code base and quality gate. See ADR 0025.
+   */
+  joint?: JointRepo[] | null;
+  /** Design confirmation point (1.8): which attempt's design is waiting or was confirmed. */
+  approval?: { attempt: number; status: "waiting" | "approved"; at: string; auto?: boolean } | null;
+  /** Quality gate: the checks' results before the change, and every run after a step (1.8). */
+  gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
+  /** External systems (1.9): the requirement's card in each, by integration name. */
+  external?: Record<string, ExternalRecord> | null;
+}
+
+export interface JointRepo {
+  /** Name in relatedRepos, e.g. "后端". */
+  name: string;
+  /** ASCII key suffix for its steps ("implement@backend"). */
+  slug: string;
+  /** The checkout the worktree was cut from. */
+  sourceRepo: string;
+  /** The worktree the steps work in. */
+  repo: string;
+  workspaceId: string;
+  branch: string;
+  /** Hash of the spec last copied there. */
+  specHash: string | null;
+  codeBase?: { attempt: number; commit: string | null } | null;
+  gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
+}
+
+export type CheckOutcome = "pass" | "fail";
+
+export interface GateBaseline {
+  attempt: number;
+  commit: string | null;
+  at: string;
+  results: Record<string, CheckOutcome>;
+}
+
+export interface GateRun {
+  /** Step key the checks ran after, e.g. "implement-s2", "review_fix-r1". */
+  key: string;
+  attempt: number;
+  at: string;
+  /** Checks that applied to the change; "skipped" ones did not touch their paths. */
+  checks: Array<{ name: string; result: CheckOutcome | "skipped"; failedBefore: boolean }>;
+  /** Checks that pass before the change and fail after it: these block. */
+  newFailures: string[];
+  /** Times the step agent was asked to fix them. */
+  fixRounds: number;
+  passed: boolean;
 }
 
 export interface IncrementalInfo {
@@ -191,6 +250,8 @@ export function writeState(file: string, state: PipelineState): void {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
   fs.renameSync(tmp, file);
+  // The machine's index of requirements (1.9): written once, and again only if it moved.
+  registerRequirement(state);
 }
 
 export function hashFile(file: string): string {

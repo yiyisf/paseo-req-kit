@@ -9,7 +9,7 @@ const ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 test("评估用例：参考实现能通过隐藏验收（用例和隐藏测试本身是对的）", () => {
   const cases = loadCases();
-  assert.deepEqual(cases.map((c) => c.name), ["text-utils-tb", "text-utils-tb-gated", "todo-cli-due"]);
+  assert.deepEqual(cases.map((c) => c.name), ["text-utils-rounding-defect", "text-utils-tb", "text-utils-tb-gated", "todo-cli-due"]);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-eval-test-"));
   for (const c of cases) {
     const result = evaluateCase(c, { base, configPath: null, reference: true, timeoutMs: 60_000 });

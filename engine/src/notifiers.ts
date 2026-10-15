@@ -6,7 +6,7 @@
 
 import { pathToFileURL } from "node:url";
 
-export const NOTIFIER_EVENT_TYPES = ["milestone", "blocked", "permission", "failed", "completed", "digest", "phase_done"] as const;
+export const NOTIFIER_EVENT_TYPES = ["milestone", "blocked", "permission", "failed", "completed", "digest", "phase_done", "approval"] as const;
 export type NotifierEventType = (typeof NOTIFIER_EVENT_TYPES)[number];
 
 export interface NotifierConfig {

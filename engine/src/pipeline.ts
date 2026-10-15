@@ -1,10 +1,25 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { type AgentProfile, PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig, type ReviewPanelMember } from "./config.js";
 import {
+  type AgentProfile,
+  PHASE_MODE_LABELS,
+  PROFILE_LABELS,
+  type PipelineConfig,
+  REQUIREMENT_TYPE_LABELS,
+  resolveRelatedRepo,
+  type ReviewPanelMember,
+} from "./config.js";
+import { changedFiles, changedSince, checkApplies, headCommit, logName, matchesPath, runCheck, tail } from "./gate.js";
+import { activeJoint, ensureJointRepos, loadProjectChecks, type StepTarget, syncJointDocs } from "./joint.js";
+import { playbookSection, promptSections, stepTitle } from "./playbooks.js";
+import {
+  approvalContinuePrompt,
+  approvalMessage,
+  approvalReminderMessage,
   autoResumePrompt,
   blockedMessage,
+  gateFollowUp,
   waitingReminderMessage,
   completedMessage,
   failedMessage,
@@ -18,9 +33,10 @@ import {
 import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
+import { describeExternal, type IntegrationEvent, type Runner, syncIntegration } from "./integrations.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
-import { type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
+import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
 import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult, VERIFY_PHASE_STEPS } from "./steps.js";
 
 export interface PipelineContext {
@@ -37,21 +53,41 @@ export interface PipelineContext {
   statusCommand?: string;
   /** Command that starts the verify phase (gated runs). */
   verifyCommand?: string;
+  /** Command that confirms a design waiting at the confirmation point. */
+  approveCommand?: string;
   log: (message: string) => void;
   sleep: (ms: number) => Promise<void>;
+  /** Runs integration commands; tests replace it. Default: the real command line. */
+  integrationRunner?: Runner;
   /** Paseo-managed services of this run (filled in by the pipeline). */
   services?: { names: string[] | null | undefined; started: Set<string> };
   /** Paseo tools the step agents get; looked up once (undefined: not yet). */
   capabilities?: { paseoTools: boolean; browser: boolean } | null;
+  /** Related repositories found on this machine, looked up once (undefined: not yet). */
+  related?: Array<{ name: string; dir: string; role: string | null; ref: string | null }>;
+  /** Joint requirement: the related repositories the spec says this requirement also changes. */
+  jointNames?: string[];
+  /** Paseo-managed services started in the joint repositories' worktrees, by workspace. */
+  jointServices?: Map<string, string[]>;
+  /** Quality-gate checks of the joint repositories, read once. */
+  jointChecksCache?: Map<string, PipelineConfig["checks"]>;
 }
 
-export type PipelineOutcome = "completed" | "waiting_for_business" | "failed" | "phase_done";
+export type PipelineOutcome = "completed" | "waiting_for_business" | "failed" | "phase_done" | "waiting_for_approval";
 
 /** The develop phase is done and the run stops at the gate (phases.mode "gated"). */
 class PhaseGate extends Error {
   constructor() {
     super("研发完成，待测试验证");
     this.name = "PhaseGate";
+  }
+}
+
+/** The design waits for the requester's confirmation before any code is written (designApproval). */
+class ApprovalNeeded extends Error {
+  constructor() {
+    super("方案等待需求方确认");
+    this.name = "ApprovalNeeded";
   }
 }
 
@@ -70,6 +106,10 @@ function phaseOf(ctx: PipelineContext): PhaseName {
 
 function verifyCommandOf(ctx: PipelineContext): string {
   return ctx.verifyCommand ?? `${ctx.resumeCommand} --phase verify`;
+}
+
+function approveCommandOf(ctx: PipelineContext): string {
+  return ctx.approveCommand ?? ctx.resumeCommand.replace(/ --resume$/, " --approve");
 }
 
 /** Ends the run early; the message is what the user-facing notification explains. */
@@ -96,7 +136,11 @@ export function isTransientError(message: string): boolean {
 }
 
 class BusinessDecisionNeeded extends Error {
-  constructor(public readonly questions: string[]) {
+  constructor(
+    public readonly questions: string[],
+    /** "reproduce": a defect that could not be reproduced. */
+    public readonly source: "design_review" | "reproduce" = "design_review",
+  ) {
     super("需要需求方决定");
     this.name = "BusinessDecisionNeeded";
   }
@@ -138,6 +182,61 @@ interface StepExtras {
   criteriaFile?: string;
   /** Step whose project additions (steps/<id>.md) apply; defaults to the step itself. */
   additionsFor?: StepId;
+  /** Run the quality gate after the step, sending new failures back to its agent (code-changing steps). */
+  gate?: boolean;
+  /** Run in one of the joint repositories instead of this one. */
+  target?: StepTarget;
+}
+
+/** The joint repositories this run works in (empty: an ordinary requirement). */
+function jointTargets(ctx: PipelineContext): StepTarget[] {
+  return activeJoint(ctx.state, ctx.jointNames ?? []).map((j) => ({
+    name: j.name,
+    slug: j.slug,
+    repo: j.repo,
+    featureDir: ctx.featureDir,
+    workspaceId: j.workspaceId,
+    branch: j.branch,
+    joint: j,
+  }));
+}
+
+/** A step key for a joint repository: "implement@backend", "code_review-r2@backend". */
+function keyFor(base: string, target: StepTarget | undefined): string {
+  return target ? `${base}@${target.slug}` : base;
+}
+
+/** The step as this requirement sees it: a playbook may rename it (e.g. 方案设计 → 复现与定位). */
+function stepDef(ctx: PipelineContext, id: StepId): StepDef {
+  return { ...STEPS[id], title: stepTitle(ctx.state.type, id) };
+}
+
+/** Related repositories that exist on this machine, with the branch and commit they are at. */
+function relatedRepos(ctx: PipelineContext): NonNullable<PipelineContext["related"]> {
+  if (ctx.related) return ctx.related;
+  const projectDir = ctx.state.worktree?.sourceRepo ?? ctx.repo;
+  ctx.related = [];
+  const joint = ctx.jointNames ?? [];
+  for (const r of ctx.config.relatedRepos) {
+    // A repository this requirement changes is not a read-only reference: it has its own worktree.
+    if (joint.includes(r.name)) continue;
+    const dir = resolveRelatedRepo(r, projectDir);
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      ctx.log(`关联仓库「${r.name}」不在这台机器上（${dir}），步骤看不到它`);
+      continue;
+    }
+    let ref: string | null = null;
+    try {
+      const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      ref = `分支 ${branch}，提交 ${commit}`;
+    } catch {
+      // Not a git repository: still readable.
+    }
+    ctx.related.push({ name: r.name, dir, role: r.role?.trim() || null, ref });
+  }
+  if (ctx.related.length > 0) ctx.log(`关联仓库（只读）：${ctx.related.map((r) => `${r.name} ${r.dir}${r.ref ? `（${r.ref}）` : ""}`).join("；")}`);
+  return ctx.related;
 }
 
 function buildPrompt(
@@ -148,17 +247,55 @@ function buildPrompt(
   resultFile: string,
   extras: StepExtras = {},
 ): string {
-  const sources = { ...ctx.prompts, repo: ctx.repo };
+  const target = extras.target;
+  const stepRepo = target?.repo ?? ctx.repo;
+  // A joint repository's own project notes, verify.md and step additions apply to its steps.
+  const sources = { ...ctx.prompts, repo: stepRepo };
   const profile = ctx.state.profile;
+  const branch = target ? target.branch : ctx.state.branch;
   const lines = [
     "<pipeline-context>",
-    `仓库目录：${ctx.repo}`,
+    `仓库目录：${stepRepo}`,
     `功能目录：${ctx.featureDir}`,
-    def.id === "spec_review" ? "工作分支：（本步骤不提交）" : `工作分支：${ctx.state.branch ?? "（不是 git 仓库，不需要提交）"}`,
+    def.id === "spec_review" ? "工作分支：（本步骤不提交）" : `工作分支：${branch ?? "（不是 git 仓库，不需要提交）"}`,
     `档位：${PROFILE_LABELS[profile]}${profile === "quick" ? "（小改动：各产物只写必要内容，保持简短）" : ""}`,
     `本步骤：${def.title}（流水线第 ${def.number} 步）`,
   ];
   if (round !== null && maxRounds !== null) lines.push(`轮次：第 ${round} 轮，最多 ${maxRounds} 轮`);
+  const type = ctx.state.type ?? null;
+  if (type) lines.push(`需求类型：${REQUIREMENT_TYPE_LABELS[type]}（按下文"本需求类型的做法"进行）`);
+  const joint = jointTargets(ctx);
+  if (joint.length > 0 && target) {
+    lines.push(
+      `联合需求：本步骤在「${target.name}」仓库中进行（${target.repo}，分支 ${target.branch}）`,
+      `联合需求的主仓库：${ctx.repo}（需求说明、方案、接口约定的原件在 ${path.join(ctx.repo, ctx.featureDir)}，本仓库功能目录中的是同步过来的副本）`,
+    );
+  } else if (joint.length > 0) {
+    lines.push(`联合需求：本需求同时改 ${joint.length + 1} 个仓库，本仓库是主仓库（${ctx.repo}，分支 ${ctx.state.branch ?? "无"}）`);
+    for (const t of joint) lines.push(`联合需求的仓库：${t.name} → ${t.repo}（分支 ${t.branch}）`);
+  }
+  const planning: readonly StepId[] = ["design", "design_proposal", "design_review", "design_revise"];
+  if (planning.includes(def.id) && type !== "assessment") {
+    lines.push(
+      joint.length > 0
+        ? "切片：联合需求每个仓库由一个 agent 实现，不按切片；实施计划按仓库分开列出任务"
+        : ctx.config.slices.profiles.includes(profile) && ctx.config.slices.max >= 2
+          ? `切片上限：${ctx.config.slices.max} 片（实施计划分成多片时，按片逐个实现）`
+          : "切片：本次不按切片实现，实施计划按任务列出即可",
+    );
+  }
+  const approval = approvalMode(ctx);
+  if (approval && (def.id === "design" || def.id === "design_revise" || def.id === "design_review")) {
+    lines.push(
+      approval === "always"
+        ? "方案确认点：开启。方案审核通过后，需求方先看 preview.md 再决定是否开始写代码"
+        : "方案确认点：界面改动时开启。结果文件写 ui_change；为 true 时写 preview.md 和界面原型，方案审核通过后需求方先确认再开始写代码",
+    );
+  }
+  const related = relatedRepos(ctx);
+  for (const r of related) {
+    lines.push(`关联仓库（只读）：${r.name} → ${r.dir}${r.ref || r.role ? `（${[r.ref, r.role].filter(Boolean).join("；")}）` : ""}`);
+  }
   const phases = runPhases(ctx.state);
   if (ctx.state.phases && phases.mode !== "continuous") {
     lines.push(`执行方式：${PHASE_MODE_LABELS[phases.mode]}（当前阶段：${phaseOf(ctx) === "verify" ? "测试验证" : "研发"}）`);
@@ -178,12 +315,21 @@ function buildPrompt(
     );
   }
   if (extras.contextLines) lines.push(...extras.contextLines);
-  lines.push(`结果文件：${resultFile}`, `结果文件绝对路径：${path.join(ctx.repo, resultFile)}`, "</pipeline-context>");
+  lines.push(`结果文件：${resultFile}`, `结果文件绝对路径：${path.join(stepRepo, resultFile)}`, "</pipeline-context>");
   const parts = [readToolPrompt(sources, "00-shared-context.md")];
   const principles = principlesSection(sources);
   if (principles) parts.push(principles);
   parts.push(readToolPrompt(sources, def.promptFile));
+  if (type) {
+    const playbook = playbookSection(sources, type, extras.additionsFor ?? def.id);
+    if (playbook) parts.push(playbook);
+  }
+  if (joint.length > 0) {
+    const jointGuide = promptSections(sources, "joint.md", extras.additionsFor ?? def.id);
+    if (jointGuide) parts.push(jointGuide);
+  }
   if (ctx.state.incremental) parts.push(readToolPrompt(sources, "incremental.md"));
+  if (related.length > 0) parts.push(readToolPrompt(sources, "related-repos.md"));
   if (extras.criteriaFile) {
     parts.push(
       [
@@ -239,6 +385,21 @@ async function notifyExternal(ctx: PipelineContext, type: NotifierEventType, tex
     },
     ctx.log,
   );
+}
+
+/** Keeps the requirement's card in each configured external system in step (1.9). Never throws. */
+async function integrate(ctx: PipelineContext, event: IntegrationEvent): Promise<void> {
+  if (ctx.config.integrations.length === 0) return;
+  for (const config of ctx.config.integrations) {
+    await syncIntegration({
+      config,
+      ctx: { repo: ctx.repo, featureDir: ctx.featureDir, state: ctx.state, projectDefaults: ctx.config.integrationDefaults[config.name] },
+      event,
+      run: ctx.integrationRunner,
+      log: ctx.log,
+    });
+  }
+  save(ctx);
 }
 
 /** Sends a progress note once per run attempt, when enabled. */
@@ -357,8 +518,10 @@ async function runStepOnce(
   maxRounds: number | null,
   extras: StepExtras,
 ): Promise<Record<string, unknown>> {
-  const def = STEPS[id];
-  const key = extras.key ?? stepKey(id, round);
+  const def = stepDef(ctx, id);
+  const target = extras.target;
+  const key = extras.key ?? keyFor(stepKey(id, round), target);
+  const stepRepo = target?.repo ?? ctx.repo;
   const cached = ctx.state.results[key];
   if (cached) {
     ctx.log(`跳过 ${key}：沿用上次运行的结果 ${JSON.stringify(cached)}`);
@@ -366,10 +529,17 @@ async function runStepOnce(
   }
 
   const resultRel = `${ctx.featureDir}/.pipeline/results/${key}.json`;
-  const resultAbs = path.join(ctx.repo, resultRel);
+  const resultAbs = path.join(stepRepo, resultRel);
+  fs.mkdirSync(path.dirname(resultAbs), { recursive: true });
   fs.rmSync(resultAbs, { force: true });
 
-  const managed = mergeExtras(mergeExtras(await serviceExtras(ctx, id), await browserExtras(ctx, id)), deployedExtras(ctx, id));
+  // Services, the browser and the deployed environment belong to the steps in this repository.
+  const managed = target
+    ? null
+    : mergeExtras(
+        mergeExtras(mergeExtras(await serviceExtras(ctx, id), await jointServiceExtras(ctx, id)), await browserExtras(ctx, id)),
+        deployedExtras(ctx, id),
+      );
   if (managed) {
     extras = {
       ...extras,
@@ -380,7 +550,7 @@ async function runStepOnce(
 
   const agentTitle =
     `[${featureName(ctx.featureDir)}] ` +
-    (extras.title ?? `${def.number}-${def.title}${round !== null && round > 1 ? ` 第${round}轮` : ""}`);
+    (extras.title ?? `${def.number}-${def.title}${round !== null && round > 1 ? ` 第${round}轮` : ""}${target ? `（${target.name}）` : ""}`);
   const record: StepRecord = {
     key,
     stepId: id,
@@ -402,15 +572,16 @@ async function runStepOnce(
       role: def.role,
       title: agentTitle,
       prompt: buildPrompt(ctx, def, round, maxRounds, resultRel, extras),
-      cwd: ctx.repo,
+      cwd: stepRepo,
       labels: {
         "requirement-pipeline": featureName(ctx.featureDir),
         "pipeline-step": key,
+        ...(target ? { "joint-repo": target.slug } : {}),
       },
       parentAgentId: ctx.config.attachToOriginChat ? ctx.state.originAgentId : null,
       // Always passed: the run's config has Paseo profile names resolved; the runtime's may not.
       profile: extras.profile ?? phaseAgent(ctx, id) ?? ctx.config.agents[def.role],
-      workspaceId: ctx.state.worktree?.workspaceId ?? null,
+      workspaceId: target ? target.workspaceId : (ctx.state.worktree?.workspaceId ?? null),
     });
     record.agentId = agent.id;
     ctx.state.history.push(record);
@@ -429,6 +600,16 @@ async function runStepOnce(
     }
     if (!validation.ok) {
       throw new StepFailure(def.title, `提醒 ${record.followUps} 次后仍没有得到有效的结果文件：${validation.error}`);
+    }
+
+    if (extras.gate) {
+      // The same agent fixes what its own change broke: it still has the context.
+      await qualityGate(ctx, key, target, async (text) => {
+        await agent.followUp(text);
+        record.usage = (await waitForTurn(ctx, agent, def, agentTitle, deadline)) ?? record.usage ?? null;
+        const again = readResultFile(resultAbs, def);
+        if (again.ok) validation = again;
+      });
     }
 
     record.outcome = "completed";
@@ -562,7 +743,38 @@ async function serviceExtras(ctx: PipelineContext, id: StepId): Promise<{ contex
   return { contextLines: lines, sections };
 }
 
+/** Joint requirement: the other repositories' paseo.json services, started with their current code too. */
+async function jointServiceExtras(ctx: PipelineContext, id: StepId): Promise<{ contextLines: string[]; sections: string[] } | null> {
+  if (!SERVICE_STEPS.includes(id) || deployed(ctx) || ctx.config.paseoServices === "off") return null;
+  const joint = jointTargets(ctx);
+  if (joint.length === 0) return null;
+  ctx.jointServices ??= new Map();
+  const lines: string[] = [];
+  for (const t of joint) {
+    if (!t.workspaceId) continue;
+    const names = await ctx.runtime.listServices({ workspaceId: t.workspaceId }).catch(() => null);
+    if (!names || names.length === 0) {
+      lines.push(`联合仓库「${t.name}」：paseo.json 中没有定义服务，需要它的服务时按它的验证方法自己启动（在 ${t.repo}），用完关掉`);
+      continue;
+    }
+    try {
+      const services = await ctx.runtime.startServices({ workspaceId: t.workspaceId }, names, ctx.config.serviceReadySeconds * 1000);
+      ctx.jointServices.set(t.workspaceId, names);
+      for (const service of services) lines.push(`联合仓库「${t.name}」的${describeService(service, null)}`);
+    } catch (error) {
+      lines.push(`联合仓库「${t.name}」的服务这次没能通过 Paseo 启动（${(error as Error).message}），需要时按它的验证方法自己启动，用完关掉`);
+    }
+  }
+  if (lines.length > 0) ctx.log(lines.join("；"));
+  return lines.length > 0 ? { contextLines: lines, sections: [] } : null;
+}
+
 async function stopManagedServices(ctx: PipelineContext): Promise<void> {
+  for (const [workspaceId, names] of ctx.jointServices ?? []) {
+    await ctx.runtime.stopServices({ workspaceId }, names).catch((error: Error) => ctx.log(`停止联合仓库的服务失败：${error.message}`));
+    ctx.log(`已停止联合仓库中由 Paseo 管理的服务：${names.join("、")}`);
+  }
+  ctx.jointServices?.clear();
   const started = [...(ctx.services?.started ?? [])];
   const target = serviceTarget(ctx);
   if (started.length === 0 || !target) return;
@@ -572,24 +784,23 @@ async function stopManagedServices(ctx: PipelineContext): Promise<void> {
 }
 
 /** A Paseo schedule that reminds the chat about unanswered questions; returns the hours, or null. */
-async function scheduleReminder(ctx: PipelineContext, questions: string[] | null): Promise<number | null> {
+async function scheduleReminder(ctx: PipelineContext, what: string[] | "phase" | "approval"): Promise<number | null> {
   const hours = ctx.config.waitingReminderHours;
   const origin = ctx.state.originAgentId;
   if (hours <= 0 || !origin) return null;
   const at = new Date(Date.now() + hours * 3600_000);
+  const shown = shownFeatureDir(ctx);
   try {
     const id = await ctx.runtime.scheduleMessage({
       agentId: origin,
       at,
-      name: `req-kit 提醒：${featureName(ctx.featureDir)} ${questions ? "等待回答" : "待测试验证"}`,
-      prompt: questions
-        ? waitingReminderMessage({ featureDir: shownFeatureDir(ctx), hours, questions, resumeCommand: ctx.resumeCommand })
-        : phaseWaitingReminderMessage({
-            featureDir: shownFeatureDir(ctx),
-            hours,
-            handoffPath: `${shownFeatureDir(ctx)}/handoff.md`,
-            verifyCommand: verifyCommandOf(ctx),
-          }),
+      name: `req-kit 提醒：${featureName(ctx.featureDir)} ${what === "phase" ? "待测试验证" : what === "approval" ? "等待确认方案" : "等待回答"}`,
+      prompt:
+        what === "phase"
+          ? phaseWaitingReminderMessage({ featureDir: shown, hours, handoffPath: `${shown}/handoff.md`, verifyCommand: verifyCommandOf(ctx) })
+          : what === "approval"
+            ? approvalReminderMessage({ featureDir: shown, hours, previewPath: `${shown}/preview.md`, approveCommand: approveCommandOf(ctx) })
+            : waitingReminderMessage({ featureDir: shown, hours, questions: what, resumeCommand: ctx.resumeCommand }),
     });
     if (!id) return null;
     ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "reminder", at: at.toISOString() }];
@@ -630,6 +841,35 @@ async function scheduleVerifyStart(ctx: PipelineContext): Promise<string | null>
     return shortTime(at);
   } catch (error) {
     ctx.log(`预约测试验证失败：${(error as Error).message}`);
+    return null;
+  }
+}
+
+/** designApproval.autoContinueHours: a Paseo schedule that has the chat approve the design if nobody did; returns the time, or null. */
+async function scheduleApprovalContinue(ctx: PipelineContext): Promise<string | null> {
+  const hours = ctx.config.designApproval.autoContinueHours;
+  const origin = ctx.state.originAgentId;
+  if (hours <= 0 || !origin) return null;
+  const at = new Date(Date.now() + hours * 3600_000);
+  try {
+    const id = await ctx.runtime.scheduleMessage({
+      agentId: origin,
+      at,
+      name: `req-kit 方案确认超时：${featureName(ctx.featureDir)}`,
+      prompt: approvalContinuePrompt({
+        featureDir: shownFeatureDir(ctx),
+        hours,
+        statusCommand: ctx.statusCommand ?? ctx.resumeCommand.replace(/ --resume$/, " --status"),
+        approveCommand: approveCommandOf(ctx),
+      }),
+    });
+    if (!id) return null;
+    ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "approval-continue", at: at.toISOString() }];
+    save(ctx);
+    ctx.log(`已预约 ${hours} 小时后仍未确认时按方案继续（Paseo 定时任务 ${id}）`);
+    return shortTime(at);
+  } catch (error) {
+    ctx.log(`预约按方案继续失败：${(error as Error).message}`);
     return null;
   }
 }
@@ -713,24 +953,37 @@ function memberName(member: ReviewPanelMember, index: number): string {
  * (relative to the repository) of the members that finished; a member that fails
  * is logged and left out. Fails only when no member finishes.
  */
-async function runPanel(ctx: PipelineContext, step: PanelStep, round: number): Promise<string[]> {
-  const members = ctx.config.reviewPanel.members;
-  const stepTitle = STEPS[step].title;
+/** A reviewer of a panel; `section` is extra guidance for this member only (review axes). */
+type PanelMember = ReviewPanelMember & { section?: string };
+
+async function runPanel(
+  ctx: PipelineContext,
+  step: PanelStep,
+  round: number,
+  shared: string[] = [],
+  members: PanelMember[] = ctx.config.reviewPanel.members,
+  target?: StepTarget,
+): Promise<string[]> {
+  const title = stepDef(ctx, step).title;
   const runs = members.map((member, i) => {
-    const key = `${step}-r${round}-p${i + 1}`;
-    const findings = `${ctx.featureDir}/review-panel/${key}.md`;
+    const key = keyFor(`${step}-r${round}-p${i + 1}`, target);
+    const findings = `${ctx.featureDir}/review-panel/${key.replace("@", "-")}.md`;
     const name = memberName(member, i);
     const contextLines = [
-      `评审小组：${stepTitle}，第 ${round} 轮，${name}（共 ${members.length} 位）`,
+      `评审小组：${title}，第 ${round} 轮，${name}（共 ${members.length} 位）`,
       `你的意见文件：${findings}`,
-      `你的意见文件绝对路径：${path.join(ctx.repo, findings)}`,
+      `你的意见文件绝对路径：${path.join(target?.repo ?? ctx.repo, findings)}`,
+      ...shared,
     ];
     if (member.focus) contextLines.push(`你的关注重点：${member.focus}`);
+    const { section, ...profile } = member;
     return runStep(ctx, "panel_review", round, null, {
       key,
-      title: `${STEPS[step].number}-${stepTitle} 评审小组·${name}`,
-      profile: member,
+      title: `${STEPS[step].number}-${title}${target ? `（${target.name}）` : ""} 评审小组·${name}`,
+      target,
+      profile,
       contextLines,
+      sections: section ? [section] : undefined,
       criteriaFile: STEPS[step].promptFile,
       additionsFor: step,
     }).then(() => findings);
@@ -743,7 +996,7 @@ async function runPanel(ctx: PipelineContext, step: PanelStep, round: number): P
   });
   if (done.length === 0) {
     const first = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
-    throw first?.reason instanceof StepFailure ? first.reason : new StepFailure(stepTitle, "评审小组的成员都没有完成");
+    throw first?.reason instanceof StepFailure ? first.reason : new StepFailure(title, "评审小组的成员都没有完成");
   }
   return done;
 }
@@ -771,7 +1024,9 @@ function consolidationSection(step: PanelStep, findings: string[], total: number
 function proposalsApply(ctx: PipelineContext): boolean {
   const p = ctx.config.designProposals;
   // A continuation after a change only touches what changed; one designer is enough.
-  return p.enabled && p.profiles.includes(ctx.state.profile) && !ctx.state.incremental;
+  // A defect is located, not designed; an assessment compares options itself.
+  const type = ctx.state.type;
+  return p.enabled && p.profiles.includes(ctx.state.profile) && !ctx.state.incremental && type !== "defect" && type !== "assessment";
 }
 
 function proposalMembers(ctx: PipelineContext): ReviewPanelMember[] {
@@ -833,12 +1088,37 @@ function proposalsSection(files: string[], total: number): string {
 }
 
 /** One review round; with a panel in the first round, members review first and this step consolidates. */
-async function runReview(ctx: PipelineContext, step: PanelStep, round: number, maxRounds: number): Promise<Record<string, unknown>> {
-  if (!panelApplies(ctx, step, round)) return runStep(ctx, step, round, maxRounds);
-  const findings = await runPanel(ctx, step, round);
+async function runReview(
+  ctx: PipelineContext,
+  step: PanelStep,
+  round: number,
+  maxRounds: number,
+  contextLines: string[] = [],
+  target?: StepTarget,
+): Promise<Record<string, unknown>> {
+  const members = panelApplies(ctx, step, round) ? ctx.config.reviewPanel.members : axesApply(ctx, step, round) ? axisMembers(ctx) : null;
+  if (!members) return runStep(ctx, step, round, maxRounds, { contextLines, target });
+  const findings = await runPanel(ctx, step, round, contextLines, members, target);
   return runStep(ctx, step, round, maxRounds, {
-    sections: [consolidationSection(step, findings, ctx.config.reviewPanel.members.length)],
+    contextLines,
+    target,
+    sections: [consolidationSection(step, findings, members.length)],
   });
+}
+
+/** Code review in two axes: the first round of a standard run, unless a review panel is configured. */
+function axesApply(ctx: PipelineContext, step: PanelStep, round: number): boolean {
+  const axes = ctx.config.reviewAxes;
+  return step === "code_review" && round === 1 && axes.enabled && axes.profiles.includes(ctx.state.profile);
+}
+
+/** The spec reviewer and the standards reviewer, both with the configured reviewer agent. */
+function axisMembers(ctx: PipelineContext): PanelMember[] {
+  const sources = { ...ctx.prompts, repo: ctx.repo };
+  return [
+    { ...ctx.config.agents.reviewer, name: "规格评审", section: readToolPrompt(sources, "review-axis-spec.md") },
+    { ...ctx.config.agents.reviewer, name: "规范评审", section: readToolPrompt(sources, "review-axis-standards.md") },
+  ];
 }
 
 /** Runs one step outside the pipeline's flow (the spec review started from the chat). */
@@ -850,9 +1130,312 @@ export async function runSingleStep(ctx: PipelineContext, id: StepId, extras: St
   }
 }
 
+// ---------------------------------------------------------------------------
+// Quality gate (ADR 0023): the engine runs the project's checks itself after the
+// steps that change code. Before the first code change of an attempt it records a
+// baseline; afterwards only checks that passed then and fail now block, and the
+// step's own agent is asked to fix them, up to qualityGate.fixAttempts times.
+// ---------------------------------------------------------------------------
+
+/** Where the code base and the quality gate of a repository are kept: the state, or its joint entry. */
+type GateHolder = Pick<JointRepo, "codeBase" | "gate">;
+
+function holderOf(ctx: PipelineContext, target: StepTarget | undefined): GateHolder {
+  return target ? target.joint : ctx.state;
+}
+
+/** The quality-gate checks of this repository (configuration) or of a joint one (its own project file). */
+function checksOf(ctx: PipelineContext, target: StepTarget | undefined): PipelineConfig["checks"] {
+  if (!target) return ctx.config.checks;
+  ctx.jointChecksCache ??= new Map();
+  let checks = ctx.jointChecksCache.get(target.slug);
+  if (!checks) {
+    checks = loadProjectChecks(target.repo, ctx.log);
+    ctx.jointChecksCache.set(target.slug, checks);
+  }
+  return checks;
+}
+
+function implementedThisAttempt(ctx: PipelineContext, target?: StepTarget): boolean {
+  const suffix = target ? `@${target.slug}` : "";
+  return Object.keys(ctx.state.results).some((k) => {
+    if (!k.endsWith(suffix) || (!target && k.includes("@"))) return false;
+    const base = target ? k.slice(0, -suffix.length) : k;
+    return base === "implement" || base.startsWith("implement-s");
+  });
+}
+
+/** Records the commit before the attempt's first change (before design); set once per attempt. */
+function recordCodeBase(ctx: PipelineContext, target?: StepTarget): void {
+  const holder = holderOf(ctx, target);
+  if (holder.codeBase?.attempt === ctx.state.attempt) return;
+  // An older run that already implemented without recording it: unknown, rather than wrong.
+  holder.codeBase = { attempt: ctx.state.attempt, commit: implementedThisAttempt(ctx, target) ? null : headCommit(target?.repo ?? ctx.repo) };
+  save(ctx);
+}
+
+function codeBaseCommit(ctx: PipelineContext, target?: StepTarget): string | null {
+  const holder = holderOf(ctx, target);
+  return holder.codeBase?.attempt === ctx.state.attempt ? (holder.codeBase.commit ?? null) : null;
+}
+
+function gateState(ctx: PipelineContext, target?: StepTarget): NonNullable<PipelineState["gate"]> {
+  const holder = holderOf(ctx, target);
+  holder.gate ??= { baseline: null, runs: [] };
+  return holder.gate;
+}
+
+function checksDir(ctx: PipelineContext, key: string, target?: StepTarget): string {
+  return path.join(target?.repo ?? ctx.repo, ctx.featureDir, ".pipeline", "checks", key);
+}
+
+/** Runs every check on the code as it is before the change; skipped when one exists for this attempt. */
+async function gateBaseline(ctx: PipelineContext, target?: StepTarget): Promise<void> {
+  const checks = checksOf(ctx, target);
+  if (checks.length === 0) return;
+  const gate = gateState(ctx, target);
+  if (gate.baseline?.attempt === ctx.state.attempt) return;
+  const where = target ? `「${target.name}」` : "";
+  if (implementedThisAttempt(ctx, target)) {
+    ctx.log(`质量门${where}：这次尝试已经开始写代码，没有改动前的基线，检查失败一律按新问题处理`);
+    return;
+  }
+  const dir = checksDir(ctx, "baseline", target);
+  fs.mkdirSync(dir, { recursive: true });
+  const results: Record<string, CheckOutcome> = {};
+  for (const check of checks) {
+    const run = await runCheck(check, target?.repo ?? ctx.repo, ctx.config.qualityGate.timeoutMinutes);
+    fs.writeFileSync(path.join(dir, logName(check.name)), run.output);
+    results[check.name] = run.outcome;
+  }
+  gate.baseline = { attempt: ctx.state.attempt, commit: codeBaseCommit(ctx, target), at: new Date().toISOString(), results };
+  save(ctx);
+  const failing = Object.entries(results).filter(([, r]) => r === "fail").map(([n]) => n);
+  ctx.log(`质量门基线${where}（改动前）：${checks.length} 项检查，${failing.length > 0 ? `原本就失败的：${failing.join("、")}` : "全部通过"}`);
+}
+
+/**
+ * Runs the checks that apply to the change after a step. New failures go back to the
+ * step's agent through `fix` (a follow-up turn) until they pass or the attempts run out;
+ * either way the run goes on, and the outcome is recorded for the review and the report.
+ */
+async function qualityGate(ctx: PipelineContext, key: string, target: StepTarget | undefined, fix: (text: string) => Promise<void>): Promise<void> {
+  const checks = checksOf(ctx, target);
+  if (checks.length === 0) return;
+  const repo = target?.repo ?? ctx.repo;
+  const gate = gateState(ctx, target);
+  const baseline = gate.baseline?.attempt === ctx.state.attempt ? gate.baseline : null;
+  const max = ctx.config.qualityGate.fixAttempts;
+  const dir = checksDir(ctx, key, target);
+  fs.mkdirSync(dir, { recursive: true });
+  for (let fixRounds = 0; ; fixRounds += 1) {
+    const files = changedFiles(repo, codeBaseCommit(ctx, target));
+    const runs: GateRun["checks"] = [];
+    const failures: Parameters<typeof gateFollowUp>[0]["failures"] = [];
+    for (const check of checks) {
+      const failedBefore = baseline?.results[check.name] === "fail";
+      if (!checkApplies(check, files)) {
+        runs.push({ name: check.name, result: "skipped", failedBefore });
+        continue;
+      }
+      const run = await runCheck(check, repo, ctx.config.qualityGate.timeoutMinutes);
+      const logFile = path.join(dir, logName(check.name));
+      fs.writeFileSync(logFile, run.output);
+      runs.push({ name: check.name, result: run.outcome, failedBefore });
+      if (run.outcome === "fail" && !failedBefore) {
+        failures.push({ name: check.name, command: check.command, cwd: check.cwd ?? null, logFile, tail: tail(run.output) });
+      }
+    }
+    if (failures.length === 0 || fixRounds >= max) {
+      const record: GateRun = {
+        key,
+        attempt: ctx.state.attempt,
+        at: new Date().toISOString(),
+        checks: runs,
+        newFailures: failures.map((f) => f.name),
+        fixRounds,
+        passed: failures.length === 0,
+      };
+      gate.runs.push(record);
+      save(ctx);
+      ctx.log(`质量门（${key} 之后）：${describeGateRun(record)}`);
+      return;
+    }
+    ctx.log(`质量门（${key} 之后）：${failures.map((f) => f.name).join("、")} 改动前通过、现在失败，第 ${fixRounds + 1} 次要求修复`);
+    const preexisting = runs.filter((r) => r.result === "fail" && r.failedBefore).map((r) => r.name);
+    await fix(gateFollowUp({ failures, round: fixRounds + 1, max, preexisting }));
+  }
+}
+
+function describeGateRun(run: GateRun): string {
+  const ran = run.checks.filter((c) => c.result !== "skipped");
+  const skipped = run.checks.length - ran.length;
+  const old = ran.filter((c) => c.result === "fail" && c.failedBefore).map((c) => c.name);
+  const parts = [
+    run.passed
+      ? `通过（运行 ${ran.length} 项${run.fixRounds > 0 ? `，要求修复 ${run.fixRounds} 次后通过` : ""}）`
+      : `${run.newFailures.join("、")} 改动前通过、现在失败，要求修复 ${run.fixRounds} 次后仍失败`,
+  ];
+  if (old.length > 0) parts.push(`${old.join("、")} 改动前就失败`);
+  if (skipped > 0) parts.push(`${skipped} 项与改动的模块无关，没有运行`);
+  return parts.join("；");
+}
+
+/** What the gate found in this attempt, for the code review and the report. */
+function gateLines(ctx: PipelineContext, target?: StepTarget): string[] {
+  if (checksOf(ctx, target).length === 0) return [];
+  const gate = holderOf(ctx, target).gate;
+  const where = target ? `「${target.name}」` : "";
+  const lines: string[] = [];
+  const baseline = gate?.baseline?.attempt === ctx.state.attempt ? gate.baseline : null;
+  if (baseline) {
+    const failing = Object.entries(baseline.results).filter(([, r]) => r === "fail").map(([n]) => n);
+    lines.push(`质量门基线${where}（改动前，流水线运行）：${Object.keys(baseline.results).length} 项检查，${failing.length > 0 ? `原本就失败：${failing.join("、")}` : "全部通过"}`);
+  }
+  const latest = new Map<string, GateRun>();
+  for (const run of gate?.runs ?? []) if (run.attempt === ctx.state.attempt) latest.set(run.key, run);
+  for (const run of latest.values()) lines.push(`质量门（${run.key} 之后，流水线运行）：${describeGateRun(run)}`);
+  if (lines.length > 0) lines.push(`质量门${where}的完整输出：${path.join(target?.repo ?? "", ctx.featureDir, ".pipeline", "checks").split(path.sep).join("/")}/`);
+  return lines;
+}
+
+/** The latest plan of this attempt: the design's slices and files, as revised. */
+function currentPlan(ctx: PipelineContext): { slices: string[]; files: string[]; uiChange: boolean | null } {
+  const plan = { slices: [] as string[], files: [] as string[], uiChange: null as boolean | null };
+  const take = (r: Record<string, unknown> | undefined) => {
+    if (!r) return;
+    if (typeof r.ui_change === "boolean") plan.uiChange = r.ui_change;
+    if (Array.isArray(r.slices)) plan.slices = (r.slices as string[]).map((s) => s.trim()).filter(Boolean);
+    if (Array.isArray(r.files)) plan.files = (r.files as string[]).map((s) => s.trim()).filter(Boolean);
+  };
+  take(ctx.state.results.design);
+  const revisions = Object.keys(ctx.state.results)
+    .filter((k) => /^design_revise-r\d+$/.test(k))
+    .sort((a, b) => Number(a.slice(15)) - Number(b.slice(15)));
+  for (const k of revisions) take(ctx.state.results[k]);
+  return plan;
+}
+
+/** The slices to implement one by one, or [] for a single implementation step. */
+function implementationSlices(ctx: PipelineContext): string[] {
+  // A joint requirement runs one implementation per repository instead.
+  if (jointTargets(ctx).length > 0) return [];
+  const { slices } = currentPlan(ctx);
+  if (slices.length < 2 || !ctx.config.slices.profiles.includes(ctx.state.profile)) return [];
+  const max = ctx.config.slices.max;
+  if (max < 2) return [];
+  if (slices.length <= max) return slices;
+  ctx.log(`方案分了 ${slices.length} 个切片，超过上限 ${max}，最后几片合并为一片`);
+  return [...slices.slice(0, max - 1), slices.slice(max - 1).join("；")];
+}
+
+function sliceSection(index: number, total: number, title: string): string {
+  return [
+    "# 按切片实现",
+    "",
+    `方案把实施计划分成了 ${total} 个纵向切片（见 \`design.md\` 的实施计划）。每个切片由一个新的 agent 完成，你负责第 ${index} 片：**${title}**。`,
+    "",
+    index > 1
+      ? `- 前面 ${index - 1} 片已经完成并提交：先读 \`implementation.md\` 中它们的记录，用 \`git log\` 看提交，在它们的基础上继续。`
+      : "- 你是第一片：按上文的\"开始前\"记录基线提交，`implementation.md` 按完整结构写。",
+    index < total ? "- 后面的切片由之后的 agent 完成，不要提前做它们的任务。" : "- 这是最后一片：完成后运行完整的测试、代码检查、类型检查和构建。",
+    index > 1
+      ? `- \`implementation.md\`：不改前面切片的记录，在末尾追加"## 切片 ${index}：${title}"一节，写本片的任务完成情况、改动的文件、测试结果、与方案的偏离。`
+      : `- \`implementation.md\` 的任务完成情况表只填本片的任务，并注明"切片 1"；后面的切片会追加各自的一节。`,
+    "- 本片做完的标志：本片对应的验收标准有测试或验证覆盖并通过，前面切片的测试仍然通过。提交信息中注明切片编号。",
+    "- 结果文件：本片的任务全部完成写 `done`，否则写 `partial` 并在本片的记录里说明。",
+  ].join("\n");
+}
+
+/** Files changed outside the feature directory since the attempt's code base. */
+function changedOutsideFeature(ctx: PipelineContext): string[] | null {
+  const files = changedFiles(ctx.repo, codeBaseCommit(ctx));
+  return files === null ? null : files.filter((f) => !f.startsWith(`${ctx.featureDir}/`));
+}
+
+/** The scope check: changed files the plan did not list, for the code review and the report. */
+function scopeLines(ctx: PipelineContext): string[] {
+  const { files: planned } = currentPlan(ctx);
+  if (planned.length === 0) return [];
+  const changed = changedOutsideFeature(ctx);
+  if (changed === null) return [];
+  const extra = changed.filter((f) => !planned.some((p) => matchesPath(f, p)));
+  if (extra.length === 0) return [`范围检查（流水线比对）：改动的 ${changed.length} 个文件都在方案列出的范围内`];
+  const shown = extra.slice(0, 30).join("、");
+  return [`范围检查（流水线比对）：共改动 ${changed.length} 个文件，其中 ${extra.length} 个不在方案列出的范围内：${shown}${extra.length > 30 ? " 等" : ""}`];
+}
+
+/** The confirmation point setting that applies to this requirement, or null. */
+function approvalMode(ctx: PipelineContext): "ui" | "always" | null {
+  const a = ctx.config.designApproval;
+  if (a.mode === "off" || !a.profiles.includes(ctx.state.profile) || ctx.state.type === "assessment") return null;
+  return a.mode;
+}
+
+/**
+ * Design confirmation point: after the design review, the requester sees what they will get
+ * (preview.md, a prototype for UI changes) and says "yes" before any code is written. The run
+ * stops here once per attempt; --approve continues, a changed spec starts over from design.
+ */
+function confirmDesign(ctx: PipelineContext): void {
+  const mode = approvalMode(ctx);
+  if (!mode) return;
+  const uiChange = currentPlan(ctx).uiChange;
+  if (mode === "ui" && uiChange !== true) return;
+  const approval = ctx.state.approval;
+  if (approval?.attempt === ctx.state.attempt && approval.status === "approved") return;
+  ctx.state.approval = { attempt: ctx.state.attempt, status: "waiting", at: new Date().toISOString() };
+  save(ctx);
+  throw new ApprovalNeeded();
+}
+
+/** Acceptance tests committed before the code (implement results): were they changed afterwards? */
+function acceptanceLines(ctx: PipelineContext, target?: StepTarget): string[] {
+  const lines: string[] = [];
+  const suffix = target ? `@${target.slug}` : "";
+  const keys = Object.keys(ctx.state.results)
+    .filter((k) => k.endsWith(suffix) && (target || !k.includes("@")))
+    .filter((k) => /^implement(-s\d+)?$/.test(target ? k.slice(0, -suffix.length) : k))
+    .sort((a, b) => Number(a.replace(/@.*/, "").slice(11) || 0) - Number(b.replace(/@.*/, "").slice(11) || 0));
+  for (const key of keys) {
+    const r = ctx.state.results[key];
+    const files = Array.isArray(r.acceptance_tests) ? (r.acceptance_tests as string[]).map((f) => f.trim()).filter(Boolean) : [];
+    const commit = typeof r.acceptance_tests_commit === "string" ? r.acceptance_tests_commit.trim() : "";
+    if (files.length === 0 || !commit) continue;
+    const changed = changedSince(target?.repo ?? ctx.repo, commit, files);
+    const where = key === "implement" ? "" : `（${key}）`;
+    if (changed === null) lines.push(`验收测试锁定（流水线比对）${where}：记录的提交 ${commit} 不在仓库中，没能核对 ${files.length} 个验收测试是否被改过`);
+    else if (changed.length === 0) lines.push(`验收测试锁定（流水线比对）${where}：${files.length} 个验收测试文件自提交 ${commit} 之后没有被修改`);
+    else lines.push(`验收测试锁定（流水线比对）${where}：以下验收测试在提交 ${commit} 之后被修改：${changed.join("、")}`);
+  }
+  return lines;
+}
+
+/** Assessment: read-only research → assessment.md → independent review ⇄ revise. */
+async function assessmentPhase(ctx: PipelineContext): Promise<void> {
+  const rounds = ctx.config.profiles[ctx.state.profile].rounds;
+  recordCodeBase(ctx);
+  await runStep(ctx, "design");
+  for (let r = 1; r <= rounds.designReview; r++) {
+    const review = await runReview(ctx, "design_review", r, rounds.designReview);
+    if (review.verdict === "approved") break;
+    if (review.verdict === "blocked") throw new BusinessDecisionNeeded(review.questions as string[]);
+    await runStep(ctx, "design_revise", r, rounds.designReview);
+  }
+}
+
 /** Develop phase: design → design review ⇄ revise → implement → code review ⇄ fix → handoff. Returns the design result. */
 async function developPhase(ctx: PipelineContext): Promise<Record<string, unknown>> {
   const rounds = ctx.config.profiles[ctx.state.profile].rounds;
+  // Before anything is committed: a defect's reproduction test, committed while locating
+  // the cause, must not make the whole test check count as failing before the change.
+  const joint = jointTargets(ctx);
+  recordCodeBase(ctx);
+  await gateBaseline(ctx);
+  for (const t of joint) {
+    recordCodeBase(ctx, t);
+    await gateBaseline(ctx, t);
+  }
 
   let designExtras: StepExtras = {};
   if (proposalsApply(ctx) && !ctx.state.results.design) {
@@ -861,6 +1444,10 @@ async function developPhase(ctx: PipelineContext): Promise<Record<string, unknow
     else ctx.log("方案提案都没有完成，按原来的方式由一个 agent 做方案设计");
   }
   const design = await runStep(ctx, "design", null, null, designExtras);
+  if (ctx.state.type === "defect" && design.reproduced === false) {
+    // Fixing what could not be reproduced is guessing: ask for what is missing.
+    throw new BusinessDecisionNeeded(design.questions as string[], "reproduce");
+  }
 
   let designRounds = 0;
   for (let r = 1; r <= rounds.designReview; r++) {
@@ -872,21 +1459,72 @@ async function developPhase(ctx: PipelineContext): Promise<Record<string, unknow
     // the implementer reads both the review and the revision record.
     await runStep(ctx, "design_revise", r, rounds.designReview);
   }
+  confirmDesign(ctx);
+  const slices = implementationSlices(ctx);
   await milestone(
     ctx,
     "design-settled",
-    `技术方案已经确定（审核 ${designRounds} 轮），开始写代码。写代码和代码检查通常是整个过程中最耗时的部分。`,
+    `技术方案已经确定（审核 ${designRounds} 轮），开始写代码${slices.length > 0 ? `，分 ${slices.length} 个切片逐个完成` : ""}。写代码和代码检查通常是整个过程中最耗时的部分。`,
   );
 
-  await runStep(ctx, "implement");
-
-  for (let r = 1; r <= rounds.codeReview; r++) {
-    const review = await runReview(ctx, "code_review", r, rounds.codeReview);
-    if (review.verdict === "pass") break;
-    await runStep(ctx, "review_fix", r, rounds.codeReview);
+  if (joint.length > 0) {
+    // The other repositories get the settled design and the interface contract next to their code.
+    syncJointDocs(activeJoint(ctx.state, ctx.jointNames ?? []), ctx.repo, ctx.featureDir, JOINT_DOCS, specTitle(ctx), ctx.log);
+    save(ctx);
   }
-  await runStep(ctx, "handoff");
+
+  const implementHere = async () => {
+    if (slices.length === 0) {
+      await runStep(ctx, "implement", null, null, { gate: true });
+      return;
+    }
+    for (const [i, title] of slices.entries()) {
+      await runStep(ctx, "implement", null, null, {
+        key: `implement-s${i + 1}`,
+        title: `5-代码实现 第${i + 1}/${slices.length}片`,
+        contextLines: [`切片：第 ${i + 1} 片，共 ${slices.length} 片（${title}）`],
+        sections: [sliceSection(i + 1, slices.length, title)],
+        gate: true,
+      });
+    }
+  };
+  // Joint requirement: every repository is implemented at the same time, against the contract.
+  await allOrFirstError([implementHere(), ...joint.map((t) => runStep(ctx, "implement", null, null, { gate: true, target: t }))]);
+
+  const reviewLoop = async (target?: StepTarget) => {
+    for (let r = 1; r <= rounds.codeReview; r++) {
+      const lines = [...gateLines(ctx, target), ...(target ? [] : scopeLines(ctx)), ...acceptanceLines(ctx, target)];
+      const review = await runReview(ctx, "code_review", r, rounds.codeReview, lines, target);
+      if (review.verdict === "pass") break;
+      await runStep(ctx, "review_fix", r, rounds.codeReview, { gate: true, target });
+    }
+  };
+  await allOrFirstError([reviewLoop(), ...joint.map((t) => reviewLoop(t))]);
+  await runStep(ctx, "handoff", null, null, { contextLines: jointLines(ctx) });
   return design;
+}
+
+/** Files of the feature directory a joint repository gets a copy of, before its implementation. */
+const JOINT_DOCS = ["spec.md", "alignment.md", "design.md", "contract.md", "preview.md", "prototype"];
+
+/**
+ * Waits for all of them, so no agent keeps working unseen after one failed; then fails with
+ * the first failure, if any.
+ */
+async function allOrFirstError(runs: Array<Promise<unknown>>): Promise<void> {
+  const settled = await Promise.allSettled(runs);
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
+/** Each joint repository's worktree, branch and what the gate found there, for the handoff and the report. */
+function jointLines(ctx: PipelineContext): string[] {
+  const lines: string[] = [];
+  for (const t of jointTargets(ctx)) {
+    lines.push(`联合需求的仓库「${t.name}」：工作区 ${t.repo}，分支 ${t.branch}，改动前的提交 ${codeBaseCommit(ctx, t)?.slice(0, 12) ?? "未知"}；实现、评审记录在那里的 ${ctx.featureDir}/`);
+    lines.push(...gateLines(ctx, t), ...acceptanceLines(ctx, t));
+  }
+  return lines;
 }
 
 /**
@@ -909,7 +1547,9 @@ async function verifyPhase(ctx: PipelineContext, design: Record<string, unknown>
     ctx.log("方案设计判断项目没有常驻服务，跳过服务启动验证。");
   }
 
-  const verification = await runStep(ctx, "verify");
+  const joint = jointTargets(ctx);
+  const jointContext = joint.length > 0 ? { contextLines: jointLines(ctx) } : {};
+  const verification = await runStep(ctx, "verify", null, null, jointContext);
   if (verification.result !== "defects_found") return false;
   if (phases.defects === "report") {
     ctx.log("验证发现了问题，按设置只记录、不修复，直接写报告。");
@@ -922,20 +1562,32 @@ async function verifyPhase(ctx: PipelineContext, design: Record<string, unknown>
     return false;
   }
   await milestone(ctx, "fixing-defects", `验证中发现了一些问题，正在修复并重新验证（最多 ${rounds.defectFix} 轮）。`);
+  let found = verification;
   for (let r = 1; r <= rounds.defectFix; r++) {
-    await runStep(ctx, "defect_fix", r, rounds.defectFix);
-    const recheck = await runStep(ctx, "reverify", r, rounds.defectFix);
+    // Joint requirement: each defect is fixed in the repository it belongs to.
+    const where = defectTargets(ctx, found);
+    await allOrFirstError(where.map((t) => runStep(ctx, "defect_fix", r, rounds.defectFix, { gate: true, target: t ?? undefined, ...(t ? {} : jointContext) })));
+    const recheck = await runStep(ctx, "reverify", r, rounds.defectFix, jointContext);
     if (recheck.result === "pass") break;
+    found = recheck;
   }
   return false;
 }
 
-function headCommit(repo: string): string | null {
-  try {
-    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
-  } catch {
-    return null;
-  }
+/**
+ * Where the defects of a verification (or re-verification) are: null stands for this
+ * repository. Results name the repositories in `defect_repos` ("本仓库" or a joint name);
+ * without it, every repository of a joint requirement is asked to look.
+ */
+function defectTargets(ctx: PipelineContext, result: Record<string, unknown>): Array<StepTarget | null> {
+  const joint = jointTargets(ctx);
+  if (joint.length === 0) return [null];
+  const named = Array.isArray(result.defect_repos) ? (result.defect_repos as string[]).map((n) => n.trim()) : [];
+  if (named.length === 0) return [null, ...joint];
+  const here = named.some((n) => n === "本仓库" || n === "主仓库");
+  const there = joint.filter((t) => named.includes(t.name));
+  const out: Array<StepTarget | null> = [...(here ? [null] : []), ...there];
+  return out.length > 0 ? out : [null, ...joint];
 }
 
 /**
@@ -967,6 +1619,8 @@ async function handBack(ctx: PipelineContext): Promise<void> {
   ctx.state.results = {};
   ctx.state.milestones = [];
   ctx.state.phase = "develop";
+  // Fixing defects does not change what the requester confirmed: no second confirmation.
+  if (ctx.state.approval?.status === "approved") ctx.state.approval = { ...ctx.state.approval, attempt: ctx.state.attempt };
   save(ctx);
   ctx.log(`测试验证发现缺陷，第 ${n} 次退回研发阶段（第 ${ctx.state.attempt} 次尝试）`);
   const text = `测试验证发现了缺陷，按设置退回研发阶段修复（第 ${n} 次）：从方案设计开始只处理这些缺陷，修完经过代码评审后${runPhases(ctx.state).mode === "gated" ? "重新提测" : "再次验证"}。`;
@@ -987,8 +1641,61 @@ function usageLines(ctx: PipelineContext): string[] {
   return lines;
 }
 
+/** Joint requirement: the other repositories' worktrees exist and have the current spec. */
+async function setUpJoint(ctx: PipelineContext): Promise<void> {
+  const names = ctx.jointNames ?? [];
+  if (names.length === 0) return;
+  try {
+    const entries = await ensureJointRepos({
+      runtime: ctx.runtime,
+      state: ctx.state,
+      featureDir: ctx.featureDir,
+      names,
+      related: ctx.config.relatedRepos,
+      projectDir: ctx.state.worktree?.sourceRepo ?? ctx.repo,
+      title: specTitle(ctx),
+      log: ctx.log,
+    });
+    save(ctx);
+    syncJointDocs(entries, ctx.repo, ctx.featureDir, ["spec.md", "alignment.md"], specTitle(ctx), ctx.log);
+    save(ctx);
+  } catch (error) {
+    save(ctx);
+    throw new StepFailure("联合开发准备", (error as Error).message);
+  }
+}
+
+/** What the report is told about this attempt: usage, the quality gate, the scope check. */
+/** The requirement's cards in external systems, for the report's appendix. */
+function externalLines(ctx: PipelineContext): string[] {
+  return describeExternal(ctx.state.external).map((l) => `外部系统 ${l}`);
+}
+
+function reportLines(ctx: PipelineContext): string[] {
+  const lines = [...usageLines(ctx), ...gateLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx), ...jointLines(ctx), ...externalLines(ctx)];
+  if (ctx.config.checks.length === 0 && ctx.state.type !== "assessment") {
+    lines.push("质量门：项目没有配置检查（checks），流水线没有自己运行检查，以各步骤记录的检查结果为准");
+  }
+  return lines;
+}
+
 /** Steps 3–11. Loop rounds and optional steps come from the run's profile; the gate from the execution mode. */
 async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
+  await setUpJoint(ctx);
+  if (ctx.state.type === "assessment") {
+    // Read-only: no code, so no implementation, review of code, handoff or verification.
+    await assessmentPhase(ctx);
+    const changed = changedOutsideFeature(ctx) ?? [];
+    if (changed.length > 0) ctx.log(`评估期间功能目录之外有文件被改动：${changed.join("、")}`);
+    return runStep(ctx, "report", null, null, {
+      contextLines: [
+        ...usageLines(ctx),
+        ...(changed.length > 0
+          ? [`评估期间改动了功能目录之外的文件（评估不应改动代码，请在报告中如实说明）：${changed.slice(0, 30).join("、")}`]
+          : []),
+      ],
+    });
+  }
   for (;;) {
     const design = await developPhase(ctx);
     const phases = runPhases(ctx.state);
@@ -996,7 +1703,7 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
       if (phases.mode === "develop-only") {
         await stopManagedServices(ctx);
         return runStep(ctx, "report", null, null, {
-          contextLines: [...usageLines(ctx), "只做研发：本次不做测试验证，完成报告按本步骤说明中“只做研发时”一节写成研发报告"],
+          contextLines: [...reportLines(ctx), "只做研发：本次不做测试验证，完成报告按本步骤说明中“只做研发时”一节写成研发报告"],
         });
       }
       if (phases.mode === "gated") {
@@ -1009,18 +1716,20 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
       }
       ctx.state.phase = "verify";
       save(ctx);
+      await integrate(ctx, "verify");
     }
     if (!(await verifyPhase(ctx, design))) break;
     await handBack(ctx);
   }
   await stopManagedServices(ctx);
-  return runStep(ctx, "report", null, null, { contextLines: usageLines(ctx) });
+  return runStep(ctx, "report", null, null, { contextLines: reportLines(ctx) });
 }
 
 export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome> {
   ctx.state.status = "running";
   ctx.state.stopReason = null;
   save(ctx);
+  await integrate(ctx, phaseOf(ctx) === "verify" ? "verify" : "started");
   try {
     await checkQuota(ctx);
     const report = await flow(ctx);
@@ -1046,6 +1755,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     const text = developOnly
       ? `研发已完成（只做研发）：${outcomeText[report.outcome as string] ?? report.outcome}，请按提测说明人工测试。`
       : `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`;
+    await integrate(ctx, "completed");
     await notifyExternal(ctx, "completed", text, {
       outcome: report.outcome,
       summary: report.summary,
@@ -1060,7 +1770,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       save(ctx);
       await stopManagedServices(ctx);
       const verifyAt = await scheduleVerifyStart(ctx);
-      const reminderHours = verifyAt ? null : await scheduleReminder(ctx, null);
+      const reminderHours = verifyAt ? null : await scheduleReminder(ctx, "phase");
       await notifyOrigin(
         ctx,
         phaseDoneMessage({
@@ -1073,6 +1783,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
           handbacks: ctx.state.handbacks ?? 0,
         }),
       );
+      await integrate(ctx, "phase_done");
       await notifyExternal(ctx, "phase_done", `研发已完成，可以提测：提测说明在 ${ctx.featureDir}/handoff.md。${verifyAt ? `已预约在 ${verifyAt} 开始测试验证。` : ""}`, {
         handoffPath: `${ctx.featureDir}/handoff.md`,
         mode: runPhases(ctx.state).mode,
@@ -1082,16 +1793,48 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       });
       return "phase_done";
     }
+    if (error instanceof ApprovalNeeded) {
+      ctx.state.status = "waiting_for_approval";
+      ctx.state.stopReason = null;
+      save(ctx);
+      const autoContinueAt = await scheduleApprovalContinue(ctx);
+      const reminderHours = await scheduleReminder(ctx, "approval");
+      const prototype = path.join(ctx.repo, ctx.featureDir, "prototype");
+      await notifyOrigin(
+        ctx,
+        approvalMessage({
+          featureDir: shownFeatureDir(ctx),
+          previewPath: `${shownFeatureDir(ctx)}/preview.md`,
+          prototypePath: fs.existsSync(prototype) ? `${shownFeatureDir(ctx)}/prototype/` : null,
+          approveCommand: approveCommandOf(ctx),
+          resumeCommand: ctx.resumeCommand,
+          reminderHours,
+          autoContinueAt,
+        }),
+      );
+      await integrate(ctx, "approval");
+      await notifyExternal(ctx, "approval", `方案已通过审核，请需求方确认"做完后会看到什么"再开始写代码：${ctx.featureDir}/preview.md`, {
+        previewPath: `${ctx.featureDir}/preview.md`,
+        approveCommand: approveCommandOf(ctx),
+        resumeCommand: ctx.resumeCommand,
+      });
+      return "waiting_for_approval";
+    }
     if (error instanceof BusinessDecisionNeeded) {
+      const reproduce = error.source === "reproduce";
       ctx.state.status = "waiting_for_business";
-      ctx.state.stopReason = `方案审核需要需求方决定：${error.questions.join("；")}`;
+      ctx.state.stopReason = `${reproduce ? "没能复现缺陷，需要需求方补充信息" : "方案审核需要需求方决定"}：${error.questions.join("；")}`;
       save(ctx);
       const reminderHours = await scheduleReminder(ctx, error.questions);
       await notifyOrigin(
         ctx,
-        blockedMessage({ featureDir: shownFeatureDir(ctx), questions: error.questions, resumeCommand: ctx.resumeCommand, reminderHours }),
+        blockedMessage({ featureDir: shownFeatureDir(ctx), questions: error.questions, resumeCommand: ctx.resumeCommand, reminderHours, source: error.source }),
       );
-      await notifyExternal(ctx, "blocked", `方案审核发现 ${error.questions.length} 个需要需求方决定的问题，流水线已暂停，请到发起的对话中回答。`, {
+      const external = reproduce
+        ? `没能复现这个缺陷，需要需求方补充 ${error.questions.length} 项信息，流水线已暂停，请到发起的对话中回答。`
+        : `方案审核发现 ${error.questions.length} 个需要需求方决定的问题，流水线已暂停，请到发起的对话中回答。`;
+      await integrate(ctx, "blocked");
+      await notifyExternal(ctx, "blocked", external, {
         questions: error.questions,
         resumeCommand: ctx.resumeCommand,
       });
@@ -1113,6 +1856,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         autoResumeAt,
       }),
     );
+    await integrate(ctx, "failed");
     await notifyExternal(ctx, "failed", `开发流水线在「${stepTitle}」步骤中断：${(error as Error).message}`, {
       stepTitle,
       reason: (error as Error).message,

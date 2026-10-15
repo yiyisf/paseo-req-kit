@@ -25,7 +25,7 @@ metadata:
 
 | 用户想做的事 | 典型说法 | 手册 |
 | --- | --- | --- |
-| 提一个新需求 | "我想加一个……""帮我把这个需求理一下" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/new.md` |
+| 提一个新需求，包括修一个缺陷、重构代码、先评估能不能做 | "我想加一个……""这里有个 bug……""整理一下……的代码""帮我评估一下能不能做……" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/new.md` |
 | 一个范围很小的改动 | "把这个按钮的文字改成……""加一个配置项" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/small.md` |
 | 查看进度、暂停、继续 | "做到哪了""先停一下""继续开发" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/status.md` |
 | 研发完成后开始测试验证（提测） | "可以提测了""开始测试""我是测试，来测这个需求" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/verify.md` |
@@ -65,6 +65,7 @@ metadata:
 | 做什么 | 命令 |
 | --- | --- |
 | 需求说明审阅 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --spec-review` |
+| 卡片字段 | `node "{{PIPELINE_LAUNCHER}}" --card-fields` |
 | 启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录>` |
 | 启动（自动新建工作区） | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --worktree` |
 | 预约启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --at <时间>`（时间写 `22:00`、`明天 8:30`、`2026-10-14 08:30` 或 `+2h`；可以和 `--worktree` 一起用） |
@@ -74,6 +75,7 @@ metadata:
 | 查看进度 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --status` |
 | 暂停 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --stop` |
 | 继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --resume` |
+| 确认方案后继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --approve`（只在方案确认点、用户确认之后用） |
 | 从头重来 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --restart` |
 | 列出需求 | `node "{{PIPELINE_LAUNCHER}}" --list` |
 
@@ -88,7 +90,8 @@ metadata:
 1. 按 `{{REQ_KIT_ROOT}}/skills/result-report/SKILL.md` 把要点转告用户，不要原样粘贴，除非用户要求。
 2. 按通知类型处理：
    - **进展**（标题带"进展"）：一句话转告，例如"方案已经定了，开始写代码"。
-   - **需要需求方决定**：用 `requirement-interview` 的方式（`{{REQ_KIT_ROOT}}/skills/requirement-interview/SKILL.md`）逐个提问，把答案记入 `alignment.md` 并更新 `spec.md`（版本加 1，在 `changes.md` 中记一节，原因写"方案审核提出的问题"），请用户再次确认，然后执行通知中给出的继续命令。
+   - **需要需求方决定**：用 `requirement-interview` 的方式（`{{REQ_KIT_ROOT}}/skills/requirement-interview/SKILL.md`）逐个提问，把答案记入 `alignment.md` 并更新 `spec.md`（版本加 1，在 `changes.md` 中记一节，原因写"方案审核提出的问题"；缺陷复现不了时写"补充复现信息"），请用户再次确认，然后执行通知中给出的继续命令。
+   - **请确认方案**（方案确认点）：按通知中的做法，把 `preview.md` 的要点讲给用户（会看到的变化、需要确认的假设；有界面原型的告诉用户在哪里看），问"按这个做，还是有要改的地方"。用户确认后执行通知中的确认命令（`--approve`）；要改的，问清楚后更新需求说明（`changes.md` 中原因写"方案确认时的修改"），请用户确认，再执行继续命令（`--resume`）。不要替用户确认。
    - **等待权限批准**：告诉用户打开通知中提到的 agent 处理批准。
    - **流水线中断**：说明发生了什么、日志在哪里。用户能处理的（例如环境没启动）告诉他怎么做；问题解决后执行通知中给出的继续命令。涉及配置或代码的，请开发同事处理。
    - **需求说明审阅完成**：按通知中的做法核对问题、逐个问用户，再请用户确认需求说明。
@@ -96,4 +99,4 @@ metadata:
    - **排队 / 排队结束**：一句话转告。
    - **预约的提醒、自动继续、定时检查、预约的开始时间**（由 Paseo 定时任务发来，开头写着"预约的""定时检查"）：严格按消息中的步骤执行命令；消息说"不要打扰用户"的情况就不要回复用户。
    - **研发完成（只做研发）**：转告研发结论和摘要，说明流水线没有做测试验证，需要人工测试；问是否现在按 `accept.md` 开始人工测试（以 `handoff.md` 为线索）。
-   - **流水线结束**：转告结论和摘要，读功能目录中的 `report.md`，告诉用户"需要你做的事"和"需要你确认的决定"有几条，并问是否现在开始验收（`accept.md`）。用户追问细节时，以 `report.md` 和功能目录中的其他文件为准回答。
+   - **流水线结束**：转告结论和摘要，读功能目录中的 `report.md`，告诉用户"需要你做的事"和"需要你确认的决定"有几条，并问是否现在开始验收（`accept.md`）。用户追问细节时，以 `report.md` 和功能目录中的其他文件为准回答。评估类需求没有验收：转告结论和推荐的做法，问用户是否按评估结果提一个新需求（按 `new.md`，以 `assessment.md` 最后一节的需求草稿为起点，新需求用新的功能目录）。

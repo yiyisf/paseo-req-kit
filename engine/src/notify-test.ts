@@ -34,6 +34,10 @@ export function sampleEvent(type: NotifierEventType, repo: string): NotifierEven
       text: `研发已完成，可以提测：提测说明在 ${featureDir}/handoff.md。`,
       details: { handoffPath: `${featureDir}/handoff.md`, mode: "gated", verifyCommand: `${resume} --phase verify`, verifyAt: null, handbacks: 0 },
     },
+    approval: {
+      text: `方案已通过审核，请需求方确认"做完后会看到什么"再开始写代码：${featureDir}/preview.md`,
+      details: { previewPath: `${featureDir}/preview.md`, approveCommand: resume.replace(/--resume$/, "--approve"), resumeCommand: resume },
+    },
     completed: {
       text: "开发流水线已结束：已完成，可以验收。",
       details: { outcome: "completed", summary: "6 条验收标准全部通过。", reportPath: `${featureDir}/report.md` },

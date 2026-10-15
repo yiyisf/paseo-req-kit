@@ -11,11 +11,13 @@ export const USAGE = `用法：
   start-pipeline [--feature <功能目录>] --status   查看进度（不写 --feature 时：工作区里只有一个需求运行过就看它）
   start-pipeline --feature <功能目录> --stop       停止（之后可用 --resume 继续）
   start-pipeline --list                           列出这个项目所有工作区中的需求
+  start-pipeline --card-fields                    团队对接了外部系统时，确认需求说明时要一并确认的卡片字段
   start-pipeline --feature <功能目录> --spec-review  确认前请另一个模型独立审阅需求说明草稿（后台进行，结果发回对话）
   start-pipeline --feature <功能目录> --worktree     为这个需求新建 Paseo worktree 工作区并在那里开发（对话目录不变）
   start-pipeline --feature <功能目录> --at 22:00     预约在指定时间开始（也可以写"明天 8:30""2026-10-14 08:30""+2h"）
   start-pipeline --feature <功能目录> --phases gated  分阶段：研发完成后停下等待测试验证（continuous | gated | develop-only）
   start-pipeline --feature <功能目录> --phase verify  开始测试验证阶段（研发阶段完成后；可以加 --at 预约）
+  start-pipeline --feature <功能目录> --approve       需求方确认了方案（方案确认点），继续开发
 
   其他选项：[--repo <仓库目录>] [--origin-agent <agent ID>] [--config <配置文件>]
 
@@ -34,6 +36,7 @@ export const USAGE = `用法：
   --verify-at     分阶段时，研发完成后在这个时间自动开始测试验证（写法同 --at）
   --verify-env    测试验证的环境：local（本地启动服务）或 deployed（已部署的测试环境，需要 test-env.md）
   --defects       测试验证发现缺陷时：fix（当场修复并复验）、handback（退回研发阶段修复）、report（只记录）
+  --approve       方案确认点：需求方看过 preview.md 并确认，继续开发（等同于 --resume 加上确认）
   --config        配置文件，默认为 ~/.req-kit/config.json（可用环境变量 REQ_KIT_HOME 改变目录）`;
 
 export function parseLaunchArgs(argv: string[]): LaunchArgs {
@@ -50,6 +53,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       status: { type: "boolean", default: false },
       stop: { type: "boolean", default: false },
       list: { type: "boolean", default: false },
+      "card-fields": { type: "boolean", default: false },
       "spec-review": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       "source-repo": { type: "string" },
@@ -60,6 +64,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       "verify-at": { type: "string" },
       "verify-env": { type: "string" },
       defects: { type: "string" },
+      approve: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
     strict: true,
@@ -68,7 +73,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     console.log(USAGE);
     process.exit(0);
   }
-  if (!values.feature && !values.list && !values.status) {
+  if (!values.feature && !values.list && !values.status && !values["card-fields"]) {
     throw new Error(`缺少 --feature\n\n${USAGE}`);
   }
   const profile = values.profile?.trim().toLowerCase();
@@ -101,6 +106,9 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
   if (defects !== undefined && !["fix", "handback", "report"].includes(defects)) {
     throw new Error(`--defects 只能是 fix、handback 或 report，收到 "${values.defects}"`);
   }
+  if (values.approve && (values.status || values.stop || values["spec-review"] || values.restart || values.worktree || phase || values.at)) {
+    throw new Error("--approve 只用于确认等待中的方案并继续开发");
+  }
   // In a Paseo chat, the chat itself is the origin unless told otherwise.
   const origin = (values["origin-agent"] ?? process.env.PASEO_AGENT_ID)?.trim();
   return {
@@ -108,13 +116,14 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     repo: path.resolve(values.repo ?? process.env.PASEO_AGENT_CWD ?? process.cwd()),
     featureDir: values.feature ?? "",
     originAgentId: origin ? origin : null,
-    resume: (values.resume ?? false) || phase === "verify",
+    resume: (values.resume ?? false) || phase === "verify" || (values.approve ?? false),
     restart: values.restart ?? false,
     configPath: values.config ? path.resolve(values.config) : null,
     profile: (profile as ProfileName | undefined) ?? null,
     status: values.status ?? false,
     stop: values.stop ?? false,
     list: values.list ?? false,
+    cardFields: values["card-fields"] ?? false,
     specReview: values["spec-review"] ?? false,
     worktree: values.worktree ?? false,
     sourceRepo: values["source-repo"] ? path.resolve(values["source-repo"]) : null,
@@ -125,6 +134,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     verifyAt: values["verify-at"] ?? null,
     verifyEnv: (verifyEnv as VerifyEnvironment | undefined) ?? null,
     defects: (defects as DefectHandling | undefined) ?? null,
+    approve: values.approve ?? false,
   };
 }
 
@@ -160,6 +170,11 @@ export function startCommand(args: {
   if (args.phases) parts.push("--phases", args.phases);
   if (args.verifyAt) parts.push("--verify-at", args.verifyAt);
   return parts.map(quote).join(" ");
+}
+
+/** The command that confirms a design waiting at the confirmation point. */
+export function approveCommand(args: { repo: string; featureDir: string; configPath: string | null }): string {
+  return resumeCommand(args).replace(/ --resume$/, " --approve");
 }
 
 /** The command that starts the verify phase once development is done. */
@@ -200,5 +215,6 @@ export function launchArgv(args: LaunchArgs): string[] {
   if (args.verifyAt) out.push("--verify-at", args.verifyAt);
   if (args.verifyEnv) out.push("--verify-env", args.verifyEnv);
   if (args.defects) out.push("--defects", args.defects);
+  if (args.approve) out.push("--approve");
   return out;
 }

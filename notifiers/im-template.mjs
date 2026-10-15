@@ -9,7 +9,7 @@
 //            "options": { "webhook": "https://im.example.internal/hook/xxxx" } }
 //        ]
 //      module 可以是绝对路径、"~/" 开头的路径，或相对配置文件所在目录的路径。
-//      events 不写时发送全部事件：milestone、blocked、permission、failed、completed、phase_done、digest。
+//      events 不写时发送全部事件：milestone、blocked、permission、failed、completed、phase_done、approval、digest。
 //   3. 在终端运行 `req notify-test`（或 `req notify-test --type blocked`）发一条测试通知，不需要运行流水线。
 //
 // 约定（详见 contracts/notifier-event.md）：
@@ -31,6 +31,7 @@ export default async function notify(event, options) {
     completed: "开发完成",
     digest: "需求总览",
     phase_done: "研发完成，可以提测",
+    approval: "请确认方案",
   }[event.type] ?? event.type;
 
   // 一条通用的纯文本消息，大多数 IM 机器人都能直接使用。
@@ -38,6 +39,7 @@ export default async function notify(event, options) {
   const lines = event.type === "digest" ? [event.text] : [`【req-kit · ${title}】${event.feature.title}`, event.text];
   if (event.type === "completed" && event.details.summary) lines.push("", String(event.details.summary));
   if (event.type === "phase_done") lines.push("", `提测说明：${event.details.handoffPath}`);
+  if (event.type === "approval") lines.push("", `要确认的内容：${event.details.previewPath}`);
   if (event.type === "blocked") lines.push("", ...event.details.questions.map((q, i) => `${i + 1}. ${q}`));
   if (event.type !== "digest") lines.push("", `需求目录：${event.feature.dir}${event.branch ? `（分支 ${event.branch}）` : ""}`);
   const text = lines.join("\n");

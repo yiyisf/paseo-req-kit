@@ -46,6 +46,20 @@ export interface StepDef {
 
 const done: ResultSpec = { required: { status: { kind: "enum", values: ["done", "partial"] } } };
 
+/**
+ * Optional plan fields of the design result (1.8): the implementation slices, the files the
+ * plan expects to change (for the scope check), and for a defect whether it was reproduced.
+ */
+const PLAN_FIELDS: Pick<ResultSpec, "optional"> = {
+  optional: {
+    slices: { kind: "string[]" },
+    files: { kind: "string[]" },
+    reproduced: { kind: "boolean" },
+    questions: { kind: "string[]" },
+    ui_change: { kind: "boolean" },
+  },
+};
+
 /** Review steps that can run with a review panel. */
 export const PANEL_STEPS = ["design_review", "code_review"] as const;
 export type PanelStep = (typeof PANEL_STEPS)[number];
@@ -88,7 +102,14 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "方案设计",
     role: "builder",
     promptFile: "03-design.md",
-    result: { required: { has_runnable_service: { kind: "boolean" } } },
+    result: {
+      required: { has_runnable_service: { kind: "boolean" } },
+      optional: PLAN_FIELDS.optional,
+      check: (value) =>
+        value.reproduced === false && (!Array.isArray(value.questions) || value.questions.length === 0)
+          ? "reproduced 为 false 时，questions 必须是非空的字符串数组：需要需求方补充什么才能复现"
+          : null,
+    },
   },
   design_review: {
     id: "design_review",
@@ -111,7 +132,7 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "方案修订",
     role: "builder",
     promptFile: "04b-design-revise.md",
-    result: done,
+    result: { required: done.required, optional: { slices: { kind: "string[]" }, files: { kind: "string[]" }, ui_change: { kind: "boolean" } } },
   },
   implement: {
     id: "implement",
@@ -119,7 +140,9 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "代码实现",
     role: "builder",
     promptFile: "05-implement.md",
-    result: done,
+    // acceptance_tests: test files written from the AC examples, committed first (in
+    // acceptance_tests_commit); the engine tells the code review when they changed later.
+    result: { required: done.required, optional: { acceptance_tests: { kind: "string[]" }, acceptance_tests_commit: { kind: "string" } } },
   },
   code_review: {
     id: "code_review",
@@ -159,7 +182,8 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "功能验证",
     role: "reviewer",
     promptFile: "09-verify.md",
-    result: { required: { result: { kind: "enum", values: ["pass", "defects_found", "blocked"] } } },
+    // defect_repos (joint requirements): where the defects are, "本仓库" or a joint repository's name.
+    result: { required: { result: { kind: "enum", values: ["pass", "defects_found", "blocked"] } }, optional: { defect_repos: { kind: "string[]" } } },
   },
   defect_fix: {
     id: "defect_fix",
@@ -175,7 +199,7 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "复验",
     role: "reviewer",
     promptFile: "10b-reverify.md",
-    result: { required: { result: { kind: "enum", values: ["pass", "defects_remaining"] } } },
+    result: { required: { result: { kind: "enum", values: ["pass", "defects_remaining"] } }, optional: { defect_repos: { kind: "string[]" } } },
   },
   report: {
     id: "report",

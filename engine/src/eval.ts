@@ -104,6 +104,8 @@ function runPipeline(repo: string, featureDir: string, c: EvalCase, configPath: 
   const env = { ...process.env };
   delete env.PASEO_AGENT_ID;
   delete env.PASEO_AGENT_CWD;
+  // Evaluation runs are not real requirements: keep them out of the machine's index and usage records.
+  env.REQ_KIT_NO_RECORD = "1";
   const run = spawnSync(process.execPath, args, { cwd: repo, env, encoding: "utf8", timeout: timeoutMs, windowsHide: true });
   fs.appendFileSync(path.join(repo, featureDir, ".pipeline", "eval-run.log"), `${run.stdout ?? ""}${run.stderr ?? ""}`);
   if (run.error) return `流水线进程出错：${run.error.message}`;
@@ -199,7 +201,7 @@ export function evaluateCase(
         const rounds = (id: string) => Math.max(0, ...history.filter((h) => h.stepId === id).map((h) => h.round ?? 0));
         result.reviewRounds = { design: rounds("design_review"), code: rounds("code_review"), defectFix: rounds("defect_fix") };
         result.resultFollowUps = history.reduce((sum, h) => sum + (h.followUps ?? 0), 0);
-        result.humanInterventions = state.status === "waiting_for_business" || state.status === "failed" ? 1 : 0;
+        result.humanInterventions = ["waiting_for_business", "waiting_for_approval", "failed"].includes(state.status ?? "") ? 1 : 0;
       } else if (!result.error) {
         result.error = "流水线没有留下状态文件，见 .pipeline/eval-run.log";
       }

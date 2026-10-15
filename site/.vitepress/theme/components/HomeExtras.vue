@@ -9,13 +9,13 @@ const installs = [
   {
     id: "unix",
     label: "macOS / Linux",
-    command: "curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh",
-    note: "也适用于 Windows 的 Git Bash、WSL。加 -s -- --beta 可安装测试版。",
+    command: "curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh",
+    note: "也适用于 Windows 的 Git Bash、WSL。加 -s -- --beta 可安装 beta 版。",
   },
   {
     id: "windows",
     label: "Windows PowerShell",
-    command: "irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 | iex",
+    command: "irm https://paseo-req-kit.vercel.app/install.ps1 | iex",
     note: "不受 Windows 脚本执行策略拦截限制。",
   },
 ];

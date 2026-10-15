@@ -1,0 +1,14 @@
+{
+  "title": "缺陷：接近单位边界的数值显示成 1024 KB",
+  "fixture": "text-utils",
+  "feature": "20261015-fix-format-bytes-rounding",
+  "profile": "quick",
+  "hidden": {
+    "dir": ".eval-hidden",
+    "command": [
+      "node",
+      "--test",
+      ".eval-hidden/rounding.hidden.test.js"
+    ]
+  }
+}

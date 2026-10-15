@@ -89,6 +89,8 @@ function stageOf(confirmed: boolean, state: RawState | null, acceptance: string 
       return state.pid && isAlive(state.pid) ? "开发中" : "已中断（可继续）";
     case "waiting_for_business":
       return "等待需求方决定";
+    case "waiting_for_approval":
+      return "等待确认方案";
     case "phase_done":
       return "研发完成，待测试验证";
     case "failed":

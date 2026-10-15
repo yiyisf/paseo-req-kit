@@ -47,7 +47,8 @@
     "report": 30,
     "panel_review": 45,
     "spec_review": 20,
-    "design_proposal": 45
+    "design_proposal": 45,
+    "handoff": 30
   },
   "waitChunkSeconds": 600,
   "permissionPollSeconds": 30,
@@ -97,5 +98,35 @@
       "defects": "fix",
       "serviceStart": null
     }
+  },
+  "requirementTypes": [
+    "defect",
+    "refactor",
+    "assessment"
+  ],
+  "checks": [],
+  "qualityGate": {
+    "fixAttempts": 2,
+    "timeoutMinutes": 20
+  },
+  "slices": {
+    "profiles": [
+      "standard"
+    ],
+    "max": 6
+  },
+  "relatedRepos": [],
+  "designApproval": {
+    "mode": "ui",
+    "profiles": [
+      "standard"
+    ],
+    "autoContinueHours": 0
+  },
+  "reviewAxes": {
+    "enabled": true,
+    "profiles": [
+      "standard"
+    ]
   }
 }

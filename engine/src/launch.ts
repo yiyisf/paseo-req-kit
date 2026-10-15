@@ -13,6 +13,7 @@ import { scheduledStartPrompt } from "./messages.js";
 import { describeTime, parseStartTime } from "./schedule-time.js";
 import { moveToOwnWorktree, type OwnWorktree } from "./worktree.js";
 import { loadConfig, PHASE_MODE_LABELS, type PipelineConfig, PROFILE_LABELS } from "./config.js";
+import { cardFieldsText } from "./integrations.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeLiveActivity, describeStatus, stopPipeline } from "./control.js";
 import { describeFeatures, featuresWithRuns, findWorktreeRun, listFeatures, resolveFeatureArg } from "./features.js";
@@ -78,6 +79,17 @@ try {
   fail((error as Error).message);
 }
 const configPath = args.configPath ?? defaultConfigPath();
+
+if (args.cardFields) {
+  try {
+    const text = cardFieldsText(loadConfig(configPath, fs.existsSync(args.repo) ? args.repo : undefined).config.integrations);
+    console.log(text ?? "没有配置外部系统对接（integrations），不需要 card.json，跳过这一步。");
+    process.exit(0);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(2);
+  }
+}
 
 if (args.list) {
   console.log(describeFeatures(listFeatures(args.repo), args.repo));
@@ -380,7 +392,7 @@ console.log(
   [
     checked.entersVerify
       ? `已在后台开始测试验证阶段（${PROFILE_LABELS[profile]}档），进程 ${child.pid}。提测说明：${checked.featureDir}/handoff.md`
-      : `已在后台启动（${modeText[checked.mode.kind]}，${PROFILE_LABELS[profile]}档${phaseMode === "continuous" ? "" : `，执行方式：${PHASE_MODE_LABELS[phaseMode]}`}），进程 ${child.pid}。`,
+      : `已在后台启动（${args.approve && checked.mode.kind === "resume-reuse" ? "已确认方案，开始写代码" : modeText[checked.mode.kind]}，${PROFILE_LABELS[profile]}档${phaseMode === "continuous" ? "" : `，执行方式：${PHASE_MODE_LABELS[phaseMode]}`}），进程 ${child.pid}。`,
     !checked.entersVerify && phaseMode === "gated"
       ? `研发完成（写好提测说明）后会停下来通知这个对话，等待测试验证${args.verifyAt ? `；已安排在 ${describeTime(new Date(args.verifyAt))} 之后自动开始测试验证` : ""}。`
       : !checked.entersVerify && phaseMode === "develop-only"

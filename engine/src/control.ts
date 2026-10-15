@@ -2,10 +2,11 @@
 // is it?" or "stop for now". Output is plain language for relaying to the user.
 
 import { describeActivity } from "./activity.js";
-import { PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig } from "./config.js";
+import { describeExternal } from "./integrations.js";
+import { PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig, REQUIREMENT_TYPE_LABELS } from "./config.js";
 import type { AgentRuntime, RuntimeFactory } from "./runtime.js";
 import { isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
-import { STEPS } from "./steps.js";
+import { stepTitle } from "./playbooks.js";
 import { describeTotals, totals } from "./usage.js";
 
 export function duration(fromIso: string, to: Date = new Date()): string {
@@ -31,7 +32,7 @@ const RESULT_TEXT: Record<string, string> = {
   not_completed: "未完成",
 };
 
-function resultText(record: StepRecord): string {
+export function resultText(record: StepRecord): string {
   const r = record.result ?? {};
   if (typeof r.has_runnable_service === "boolean") return r.has_runnable_service ? "完成（项目有常驻服务）" : "完成";
   if (typeof r.started === "boolean") return r.started ? "服务启动成功" : "服务启动失败";
@@ -42,8 +43,12 @@ function resultText(record: StepRecord): string {
   return "完成";
 }
 
-function stepName(record: StepRecord): string {
-  const title = STEPS[record.stepId].title;
+export function stepName(record: StepRecord, state: Pick<PipelineState, "type" | "joint"> | null = null): string {
+  const [base, slug] = record.key.split("@");
+  const repo = slug ? (state?.joint ?? []).find((j) => j.slug === slug)?.name ?? slug : null;
+  const title = `${stepTitle(state?.type, record.stepId)}${repo ? `·${repo}` : ""}`;
+  const slice = /^implement-s(\d+)$/.exec(base);
+  if (slice) return `${title}（第 ${slice[1]} 片）`;
   return record.round !== null ? `${title}（第 ${record.round} 轮）` : title;
 }
 
@@ -56,6 +61,8 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
       ? "已中断（后台进程意外退出，可以继续）"
       : state.status === "waiting_for_business"
         ? "已暂停，等待需求方决定"
+        : state.status === "waiting_for_approval"
+          ? "已暂停，等待需求方确认方案（做完后会看到什么，见功能目录中的 preview.md）"
         : state.status === "phase_done"
           ? "研发完成，待测试验证（提测说明见功能目录中的 handoff.md）"
         : state.status === "failed"
@@ -65,7 +72,7 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
             : `已完成（${RESULT_TEXT[state.outcome ?? ""] ?? state.outcome ?? ""}）`;
 
   const lines = [
-    `需求：${featureDir}（档位：${PROFILE_LABELS[state.profile ?? "standard"]}）`,
+    `需求：${featureDir}（档位：${PROFILE_LABELS[state.profile ?? "standard"]}${state.type ? `，类型：${REQUIREMENT_TYPE_LABELS[state.type]}` : ""}）`,
     `状态：${running && state.queuedSince ? `排队中（本机同时运行的流水线已达上限，自 ${new Date(state.queuedSince).toLocaleString("zh-CN", { hour12: false })} 起等待，轮到时自动开始）` : statusText}`,
     ...(state.phases && state.phases.mode !== "continuous"
       ? [`执行方式：${PHASE_MODE_LABELS[state.phases.mode]}（当前阶段：${state.phase === "verify" ? "测试验证" : "研发"}${state.handbacks ? `，测试已退回 ${state.handbacks} 次` : ""}）`]
@@ -73,7 +80,9 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
     `开始时间：${new Date(state.startedAt).toLocaleString("zh-CN", { hour12: false })}，距今 ${duration(state.startedAt, now)}`,
   ];
   if (state.stopReason && !running) lines.push(`原因：${state.stopReason}`);
-  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证" } as const;
+  for (const j of state.joint ?? []) lines.push(`联合开发：${j.name} 在工作区 ${j.repo}（分支 ${j.branch}）`);
+  for (const l of describeExternal(state.external)) lines.push(`外部系统 ${l}`);
+  const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证", "approval-continue": "未确认时按方案继续" } as const;
   for (const s of state.schedules ?? []) {
     if (s.kind === "watchdog" && !running) continue;
     const when = s.at ? `${new Date(s.at).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} ` : "";
@@ -83,20 +92,29 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
   const records = state.history.filter((h) => h.attempt === state.attempt);
   const current = records.find((h) => h.outcome === "running");
   if (current && running) {
-    lines.push(`当前步骤：${stepName(current)}，已进行 ${duration(current.startedAt, now)}`);
+    lines.push(`当前步骤：${stepName(current, state)}，已进行 ${duration(current.startedAt, now)}`);
   }
   const done = records.filter((h) => h.outcome === "completed");
   if (done.length > 0) {
     lines.push("已完成的步骤：");
     done.forEach((h, i) => {
       const took = h.endedAt ? duration(h.startedAt, new Date(h.endedAt)) : "";
-      lines.push(`  ${i + 1}. ${stepName(h)}：${resultText(h)}${took ? `（用时 ${took}）` : ""}`);
+      lines.push(`  ${i + 1}. ${stepName(h, state)}：${resultText(h)}${took ? `（用时 ${took}）` : ""}`);
     });
   } else if (!current) {
     lines.push("还没有完成的步骤。");
   }
   const failed = records.filter((h) => h.outcome === "failed").at(-1);
-  if (failed && !running) lines.push(`中断在：${stepName(failed)}（${failed.error ?? "原因未知"}）`);
+  if (failed && !running) lines.push(`中断在：${stepName(failed, state)}（${failed.error ?? "原因未知"}）`);
+  const gateRuns = (state.gate?.runs ?? []).filter((r) => r.attempt === state.attempt);
+  const lastGate = gateRuns.at(-1);
+  if (lastGate) {
+    lines.push(
+      lastGate.passed
+        ? `质量门（流水线自己运行的检查）：最近一次通过（${lastGate.key} 之后）`
+        : `质量门（流水线自己运行的检查）：${lastGate.newFailures.join("、")} 在 ${lastGate.key} 之后仍失败，已交给代码评审和报告`,
+    );
+  }
   if (records.length > 0) lines.push(`用时与用量：${describeTotals(totals(records, now))}`);
   if (state.attempt > 1) lines.push(`这个需求的全部 ${state.attempt} 次尝试合计：${describeTotals(totals(state.history, now))}`);
   if (state.phases && state.phases.mode !== "continuous") {
@@ -196,7 +214,7 @@ export async function stopPipeline(input: StopInput): Promise<{ stopped: boolean
     }
   }
 
-  const where = interrupted.length > 0 ? `，停在「${stepName(interrupted[0])}」` : "";
+  const where = interrupted.length > 0 ? `，停在「${stepName(interrupted[0], latest)}」` : "";
   return {
     stopped: true,
     message: wasAlive
@@ -224,7 +242,7 @@ export async function describeLiveActivity(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs).unref()),
     ]);
     if (!items || items.length === 0) continue;
-    lines.push(`「${stepName(record)}」的 agent 最近在做：`, ...describeActivity(items, now));
+    lines.push(`「${stepName(record, state)}」的 agent 最近在做：`, ...describeActivity(items, now));
   }
   return lines;
 }

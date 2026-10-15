@@ -41,6 +41,21 @@
 | `resultFollowUps` | 2 | 结果文件缺失或不合格时提醒补写的次数 |
 | `retry` | 2 次，等 60/300 秒 | 临时错误（限流、网络）后自动重做这一步 |
 
+## 质量与范围
+
+通常写在项目配置 `.requirement-pipeline.json` 中，见 [项目定制与运行规则](/guide/project)。
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `checks` | `[]` | 质量门：流水线自己运行的检查，`[{ "name", "command", "cwd"?, "paths"?, "timeoutMinutes"? }]`；只拦改动前通过、现在失败的检查 |
+| `qualityGate.fixAttempts` | 2 | 新失败发回 agent 修复的次数，用完照常继续并写进报告 |
+| `qualityGate.timeoutMinutes` | 20 | 单项检查的默认时限 |
+| `slices` | 标准档，最多 6 片 | 按切片实现：`profiles` 哪些档位，`max` 最多几片 |
+| `requirementTypes` | 缺陷、重构、评估 | 哪些需求类型按自己的做法运行；去掉的按新需求处理 |
+| `relatedRepos` | `[]` | 只读参考的其他仓库，`[{ "name", "path", "role"? }]`，`path` 相对项目目录 |
+| `designApproval` | 界面改动，标准档 | 方案确认点：`mode`（`ui` / `always` / `off`）、`profiles`、`autoContinueHours`（超时按方案继续，0 一直等） |
+| `reviewAxes` | 开启，标准档 | 第一轮代码评审由规格评审和规范评审并行，再汇总：`enabled`、`profiles` |
+
 ## Paseo 能力
 
 | 配置 | 默认 | 说明 |

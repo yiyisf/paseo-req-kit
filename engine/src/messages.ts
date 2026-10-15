@@ -12,13 +12,17 @@ export function blockedMessage(input: {
   resumeCommand: string;
   /** A reminder is scheduled after this many hours without an answer. */
   reminderHours?: number | null;
+  /** "reproduce": the defect could not be reproduced (defect playbook); default: the design review. */
+  source?: "design_review" | "reproduce";
 }): string {
   const list = input.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
   return [
     HEADER,
     "",
     `功能目录：${input.featureDir}`,
-    "情况：方案审核发现有问题必须由需求方决定，否则可能做出错误的东西。流水线已暂停，还没有开始写代码。",
+    input.source === "reproduce"
+      ? "情况：复现与定位这一步没能复现这个缺陷，需要需求方补充信息（复现步骤、环境、账号或数据、截图或报错）。流水线已暂停，还没有修改代码。"
+      : "情况：方案审核发现有问题必须由需求方决定，否则可能做出错误的东西。流水线已暂停，还没有开始写代码。",
     "",
     "需要用户决定的问题：",
     list,
@@ -126,6 +130,29 @@ export function resultFollowUp(input: { resultFile: string; problem: string }): 
     `流水线没有拿到本步骤的有效结果：${input.problem}。`,
     `如果本步骤的工作还没有完成，请先完成它；然后按照"本步骤任务"中"结果文件"一节的要求，把结果写入 ${input.resultFile}（只含一个 JSON 对象），再结束。`,
   ].join("\n");
+}
+
+/** Sent to the step agent when checks that passed before its change now fail (the quality gate). */
+export function gateFollowUp(input: {
+  failures: Array<{ name: string; command: string; cwd: string | null; logFile: string; tail: string }>;
+  round: number;
+  max: number;
+  /** Checks that already failed before this requirement's change: not this step's problem. */
+  preexisting: string[];
+}): string {
+  const parts = [
+    `流水线在你这一步结束后运行了项目的检查（质量门），以下检查在改动之前通过、现在失败（第 ${input.round} 次要求修复，最多 ${input.max} 次）：`,
+    "",
+  ];
+  for (const f of input.failures) {
+    parts.push(`### ${f.name}`, "", `命令：\`${f.command}\`${f.cwd ? `（在 ${f.cwd} 目录）` : ""}`, `完整输出：${f.logFile}`, "", "最后的输出：", "", "```text", f.tail, "```", "");
+  }
+  if (input.preexisting.length > 0) parts.push(`（${input.preexisting.join("、")} 在改动之前就失败，不算本次引入，不需要处理。）`, "");
+  parts.push(
+    "请找到原因并修复，让这些检查重新通过；修复要针对原因，不要删除、跳过或放宽检查和测试。修完自己运行一遍这些命令确认通过，提交，并在本步骤的产物里记一笔（哪个检查、原因、怎么修的）；结果文件按需要更新。",
+    "确实修不了的（例如需要环境或权限），在产物里写明原因后照常结束，流水线会把它带进评审和报告。",
+  );
+  return parts.join("\n");
 }
 
 export function milestoneMessage(text: string): string {
@@ -304,5 +331,64 @@ export function verifyStartPrompt(input: { featureDir: string; statusCommand: st
       "然后用一句话告诉用户预约的测试验证已经开始（输出\"未启动\"时告诉用户原因）：",
     `   ${input.verifyCommand}`,
     "3. 其他情况（已经开始、已完成、用户已经手动处理过）：什么也不做，也不要回复用户。",
+  ].join("\n");
+}
+
+/** The design waits at the confirmation point (designApproval). */
+export function approvalMessage(input: {
+  featureDir: string;
+  previewPath: string;
+  /** The prototype (UI changes), when the design made one. */
+  prototypePath: string | null;
+  approveCommand: string;
+  resumeCommand: string;
+  reminderHours?: number | null;
+  /** The run carries on with the design at this time (text) without an answer. */
+  autoContinueAt?: string | null;
+}): string {
+  return [
+    `${HEADER.replace("【需求开发流水线通知】", "【需求开发流水线通知 · 请确认方案】")}`,
+    "",
+    `功能目录：${input.featureDir}`,
+    "情况：方案已经通过审核，还没有开始写代码。开发前请需求方确认\"做完之后会看到什么\"，这时调整的成本最低。",
+    `- 做完后你会看到什么：${input.previewPath}`,
+    ...(input.prototypePath ? [`- 界面原型：${input.prototypePath}（静态页面，可以在浏览器中打开）`] : []),
+    "",
+    "请这样处理：",
+    "1. 读 preview.md，用几句话把要点讲给用户：会看到的变化、主要的假设（尤其是影响界面、数据、权限的），有原型就告诉用户在哪里看。",
+    "2. 问用户：按这个做，还是有要改的地方？",
+    `3. 用户确认后，执行下面的命令继续开发：\n\n${input.approveCommand}`,
+    "4. 用户要改的：按需求对齐时的方式问清楚，把结论记入 alignment.md，更新 spec.md（顶部\"版本\"加 1，在 changes.md 中记一节，原因写\"方案确认时的修改\"），请用户再次确认需求说明，然后执行下面的命令，流水线会从方案设计开始按修改后的需求调整方案，再请用户确认一次：",
+    "",
+    input.resumeCommand,
+    ...(input.reminderHours ? ["", `（如果 ${input.reminderHours} 小时内还没有确认，会在这个对话里提醒一次。）`] : []),
+    ...(input.autoContinueAt ? ["", `（按团队设置，到 ${input.autoContinueAt} 仍没有确认时，会按这个方案继续开发。）`] : []),
+  ].join("\n");
+}
+
+export function approvalReminderMessage(input: { featureDir: string; hours: number; previewPath: string; approveCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的提醒，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `这个需求的方案等待需求方确认已经超过 ${input.hours} 小时，开发一直暂停着（要确认的内容：${input.previewPath}）。`,
+    "",
+    "请先执行查看进度的命令确认：仍然是\"等待需求方确认方案\"时，在用户下次说话时提醒他看一下并确认；已经确认、开发已经继续或停止时，忽略这条提醒，不要打扰用户。",
+    `用户确认后继续开发的命令是：${input.approveCommand}`,
+  ].join("\n");
+}
+
+export function approvalContinuePrompt(input: { featureDir: string; hours: number; statusCommand: string; approveCommand: string }): string {
+  return [
+    "【需求开发流水线通知】这是一条预约的自动继续，不是用户发的。",
+    "",
+    `功能目录：${input.featureDir}`,
+    `这个需求的方案等待确认已经 ${input.hours} 小时。按团队的设置，超时没有确认时按方案继续开发。`,
+    "",
+    "请这样处理：",
+    `1. 先执行查看进度的命令：${input.statusCommand}`,
+    "2. 仍然是\"等待需求方确认方案\"时，执行下面的命令，然后用一句话告诉用户：方案一直没有确认，已按方案继续开发，之后仍可以修改需求：",
+    `   ${input.approveCommand}`,
+    "3. 其他情况（已经确认、需求已修改、已经停止）：什么也不做，也不要回复用户。",
   ].join("\n");
 }

@@ -9,6 +9,7 @@ import {
   PROFILE_LABELS,
   PROFILE_NAMES,
   type ProfileName,
+  type RequirementType,
   type VerifyEnvironment,
 } from "./config.js";
 import { gitInfo } from "./git.js";
@@ -28,6 +29,8 @@ export interface LaunchArgs {
   stop: boolean;
   /** --list: print every requirement in this repository's worktrees. */
   list: boolean;
+  /** --card-fields: what /req confirms with the spec for the external systems (card.json). */
+  cardFields?: boolean;
   /** --spec-review: independent review of the draft spec, before confirmation. */
   specReview: boolean;
   /** --worktree: create a Paseo worktree workspace for this requirement and develop there. */
@@ -51,6 +54,8 @@ export interface LaunchArgs {
   verifyEnv: VerifyEnvironment | null;
   /** --defects: what the verify phase does with defects (overrides phases.verify.defects). */
   defects: DefectHandling | null;
+  /** --approve: the requester confirmed the design waiting at the confirmation point. Implies --resume. */
+  approve: boolean;
 }
 
 export class PreflightError extends Error {
@@ -137,6 +142,10 @@ export interface PreflightResult {
   specProfile: ProfileName | null;
   /** Execution mode named in the spec, if any. */
   specPhases: PhaseMode | null;
+  /** Requirement type with its own playbook named in the spec, if any. */
+  specType: RequirementType | null;
+  /** Related repositories the spec says this requirement also changes. */
+  specJoint: string[];
   /** This start begins the verify phase (the develop phase is done). */
   entersVerify: boolean;
 }
@@ -149,6 +158,27 @@ export function specPhases(specText: string): PhaseMode | null {
     if (match[1].startsWith(PHASE_MODE_LABELS[mode]) || match[1].toLowerCase().startsWith(mode)) return mode;
   }
   return null;
+}
+
+const TYPE_WORDS: Array<[RequirementType, RegExp]> = [
+  ["defect", /^(缺陷|bug|defect|fix|问题修复)/i],
+  ["refactor", /^(重构|技术改进|refactor)/i],
+  ["assessment", /^(评估|调研|assessment|spike)/i],
+];
+
+/** Reads "- 类型：缺陷" (缺陷 / 重构 / 评估, or the English names); 新需求 and 小改动 give null. */
+export function specType(specText: string): RequirementType | null {
+  const match = /^\s*-\s*类型\s*[:：]\s*(\S+)/m.exec(specText);
+  if (!match) return null;
+  return TYPE_WORDS.find(([, re]) => re.test(match[1]))?.[0] ?? null;
+}
+
+/** Reads "- 联合开发：后端、支付" (related repositories this requirement also changes). */
+export function specJoint(specText: string): string[] {
+  const match = /^\s*-\s*联合开发\s*[:：]\s*(.+)$/m.exec(specText);
+  if (!match) return [];
+  const names = match[1].split(/[、,，;；\s]+/).map((n) => n.replace(/[（(].*$/, "").trim()).filter((n) => n && n !== "无");
+  return [...new Set(names)];
 }
 
 /** Whether a run has finished its develop phase, so the verify phase can start. */
@@ -222,6 +252,17 @@ export function preflight(
         ? "这个需求的流水线已经完成。如需重新完整运行，请加 --restart。"
         : `这个需求已有运行记录（状态：${previous.status}）。从中断处继续请加 --resume，从头开始请加 --restart。`;
     throw new PreflightError(hint);
+  } else if (args.approve && previous.status !== "waiting_for_approval") {
+    throw new PreflightError(`这个需求没有等待确认的方案（状态：${previous.status}），不需要 --approve。继续开发请用 --resume。`);
+  } else if (previous.status === "waiting_for_approval" && currentSpecHash(specPath) !== previous.specHash) {
+    mode = { kind: "resume-from-design", previous, reason: "方案确认时需求方提出了修改，需求说明已更新，从方案设计开始增量处理" };
+  } else if (previous.status === "waiting_for_approval") {
+    if (!args.approve) {
+      throw new PreflightError(
+        "方案正在等待需求方确认（见功能目录中的 preview.md）。需求方确认后用 --approve 继续开发；要修改的话，先更新并重新确认需求说明，再用 --resume。",
+      );
+    }
+    mode = { kind: "resume-reuse", previous };
   } else if (args.phase === "verify" && !developDone(previous) && previous.phase !== "verify") {
     throw new PreflightError(
       previous.status === "completed"
@@ -263,7 +304,7 @@ export function preflight(
       throw new PreflightError("这个需求已经在这里运行过，不能再改为在新工作区中开发。请用 --resume 继续，或去掉 --worktree。");
     }
     if (!git.isRepo) throw new PreflightError("--worktree 需要 git 仓库。");
-    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), entersVerify: false };
+    return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), specJoint: specJoint(specText), entersVerify: false };
   }
   // The run commits to the branch that is checked out now, and never to the default branch.
   if (git.isRepo && git.detached) {
@@ -283,7 +324,7 @@ export function preflight(
     );
   }
   const entersVerify = mode.kind === "resume-reuse" && developDone(mode.previous);
-  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), entersVerify };
+  return { repo, featureDir, specPath, mode, branch: git.branch, specProfile: specProfile(specText), specPhases: specPhases(specText), specType: specType(specText), specJoint: specJoint(specText), entersVerify };
 }
 
 /** Why the verify phase cannot start in this environment, or null. */

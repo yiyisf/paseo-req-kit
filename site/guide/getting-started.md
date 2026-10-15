@@ -12,15 +12,15 @@
 ::: code-group
 
 ```sh [macOS / Linux]
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
 
 ```powershell [Windows PowerShell]
-irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 | iex
+irm https://paseo-req-kit.vercel.app/install.ps1 | iex
 ```
 
 ```sh [Windows Git Bash / WSL]
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
 
 :::
@@ -28,13 +28,19 @@ curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.s
 ### 安装脚本全自动执行事项：
 1. **基础依赖环境核验**：自动检测 Node.js 22+、npm 和 git 运行环境；
 2. **下载与布局**：自动安装 `paseo-req-kit` 全局或隔离运行时（当 npm 全局目录不可写时自动安装至 `~/.req-kit/npm`，免除 sudo 权限困扰）；
-3. **注册 Skill 指令**：执行 `req setup`，为系统中的 Claude Code、Codex 等自动挂载 `/req`、`/req-setup`、`/req-doctor` 等 Skill；
-4. **模型角色向导**：触发交互式向导 `req configure`，分别为 **实现者 (Builder)** 和 **评审者 (Reviewer)** 选择对应的 Agent 模型。
+3. **Paseo 运行时就绪**：若未安装 Paseo，自动安装相匹配的 `@getpaseo/cli`，开启自带 Web 界面并启动 daemon（浏览器打开 `http://localhost:6767/` 即可直接使用）；若已有 Paseo，则核对版本并启用 Web 界面；
+4. **注册 Skill 指令**：执行 `req setup`，把版本部署至 `~/tools/req-kit/versions/<版本>`，为系统中的 Claude Code、Codex 等自动挂载 `/req`、`/req-setup`、`/req-doctor` 等 Skill；
+5. **模型角色向导**：触发交互式向导 `req configure`，分别为 **实现者 (Builder)** 和 **评审者 (Reviewer)** 选择对应的 Agent 模型；
+6. **Paseo 专属插件提示**：询问是否安装 req-kit Paseo 插件，安装后可在 Paseo 原生 UI 中直观查看需求总览、进度、文档以及直接确认方案。
+
+再次运行同一条命令即可平滑升级。常用选项：
 
 ::: tip 离线或特定版本安装
-如需体验包含最新特性的测试版本，只需追加参数：
+如需体验包含最新特性的测试版本或指定安装，只需追加参数：
 ```sh
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --beta
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --beta             # 安装最新 beta 版
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --version 1.8.0    # 安装指定版本
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --skip-paseo       # 不检查、不安装 Paseo
 ```
 内网或离线安装详情，请查看 [安装与升级指南](./install)。
 :::

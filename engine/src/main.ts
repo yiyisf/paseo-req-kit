@@ -2,16 +2,19 @@
 // from the chat agent's shell; can also be run in the foreground for debugging.
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
-import { LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand } from "./cli-args.js";
+import { approveCommand, LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand } from "./cli-args.js";
 import { dequeuedMessage, queuedMessage, watchdogPrompt } from "./messages.js";
 import { slotHolders, slotsDir, tryAcquireSlot } from "./queue.js";
 import { cronEvery, parseStartTime } from "./schedule-time.js";
-import { loadConfig, PHASE_MODE_LABELS, PROFILE_LABELS } from "./config.js";
+import { loadConfig, PHASE_MODE_LABELS, PROFILE_LABELS, REQUIREMENT_TYPE_LABELS } from "./config.js";
 import { defaultConfigPath, kitVersion, localPromptsDir, PRINCIPLES_INDEX, PROMPTS_DIR } from "./locations.js";
 import { satisfies } from "./daemon-check.js";
 import { describeAgentProfile, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
+import { jointProblem } from "./joint.js";
 import { runPipeline } from "./pipeline.js";
+import { appendRun, runRecord } from "./records.js";
 import { preflight, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import {
@@ -71,6 +74,12 @@ async function main(): Promise<number> {
     args.phases ?? (reuse ? previousState?.phases?.mode : null) ?? checked.specPhases ?? previousState?.phases?.mode ?? config.phases.mode;
   // --verify-at only makes sense with a gate; asking for it implies one.
   if (args.verifyAt && phaseMode === "continuous" && !args.phases) phaseMode = "gated";
+  // A playbook type the configuration turned off runs the normal flow.
+  const type = checked.specType && config.requirementTypes.includes(checked.specType) ? checked.specType : null;
+  // An assessment writes no code: there is nothing to hand over for testing.
+  if (type === "assessment") phaseMode = "continuous";
+  // Joint requirement: other repositories this one also changes (an assessment only reads them).
+  const jointNames = type === "assessment" ? [] : checked.specJoint;
   const phases: RunPhases = {
     mode: phaseMode,
     environment: args.verifyEnv ?? previousState?.phases?.environment ?? config.phases.verify.environment,
@@ -86,6 +95,9 @@ async function main(): Promise<number> {
       const chatDir = args.sourceRepo ?? (mode.kind === "fresh" ? null : mode.previous.worktree?.sourceRepo) ?? repo;
       if (verifyAtText && !verifyAt) throw new Error(`看不懂测试验证的开始时间"${verifyAtText}"`);
       if (verifyAtText && phases.mode === "develop-only") throw new Error("只做研发时没有测试验证阶段，--verify-at 不适用");
+      if (type === "assessment" && (verifyAtText || args.phase === "verify")) throw new Error("评估类需求只做调研、不写代码，没有测试验证阶段");
+      const jointIssue = jointProblem(jointNames, config.relatedRepos, chatDir);
+      if (jointIssue) throw new Error(jointIssue);
       if (checked.entersVerify) {
         const problem = verifyPhaseProblem(repo, featureDir, phases.environment);
         if (problem) throw new Error(problem);
@@ -138,8 +150,11 @@ async function main(): Promise<number> {
       phase: "develop",
       verifyAt: verifyAt?.toISOString() ?? null,
       handbacks: 0,
+      type,
     };
-    log(`开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，执行方式：${PHASE_MODE_LABELS[phases.mode]}，分支 ${checked.branch ?? "无"}）`);
+    log(
+      `开始新的流水线：${featureDir}（${PROFILE_LABELS[profile]}档，${type ? `类型：${REQUIREMENT_TYPE_LABELS[type]}，` : ""}执行方式：${PHASE_MODE_LABELS[phases.mode]}，分支 ${checked.branch ?? "无"}）`,
+    );
   } else {
     const startOver = mode.kind !== "resume-reuse";
     const previousImplemented = Object.keys(mode.previous.results).some((k) => k === "implement") ||
@@ -170,13 +185,30 @@ async function main(): Promise<number> {
       phase: checked.entersVerify ? "verify" : startOver ? "develop" : (mode.previous.phase ?? "develop"),
       verifyAt: checked.entersVerify ? null : (verifyAt?.toISOString() ?? (startOver ? null : (mode.previous.verifyAt ?? null))),
       handbacks: mode.kind === "restart" ? 0 : (mode.previous.handbacks ?? 0),
+      type,
+      codeBase: startOver ? null : (mode.previous.codeBase ?? null),
+      // --approve: the requester confirmed the design that was waiting at the confirmation point.
+      approval:
+        args.approve && mode.previous.status === "waiting_for_approval"
+          ? { attempt: mode.previous.attempt, status: "approved", at: now }
+          : startOver
+            ? null
+            : (mode.previous.approval ?? null),
+      gate: mode.kind === "restart" ? null : (mode.previous.gate ?? null),
     };
     if (checked.entersVerify) {
       // A develop-only run that ends with its development report gets a full report after verification.
       delete state.results.report;
       log(`开始测试验证阶段（${phases.environment === "deployed" ? "已部署的测试环境" : "本地"}，缺陷处理：${phases.defects}）`);
     }
-    const why = mode.kind === "resume-from-design" ? mode.reason : mode.kind === "restart" ? "按 --restart 从头开始" : "从中断处继续，已完成的步骤沿用结果";
+    const why =
+      mode.kind === "resume-from-design"
+        ? mode.reason
+        : mode.kind === "restart"
+          ? "按 --restart 从头开始"
+          : args.approve
+            ? "需求方已确认方案，开始写代码"
+            : "从中断处继续，已完成的步骤沿用结果";
     log(`继续流水线：${featureDir}（第 ${state.attempt} 次尝试，${PROFILE_LABELS[profile]}档）—— ${why}`);
   }
   writeState(stateFile, state);
@@ -198,6 +230,7 @@ async function main(): Promise<number> {
     resume: resumeCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
     status: statusCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
     verify: verifyCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
+    approve: approveCommand({ repo: chatRepo, featureDir, configPath: args.configPath }),
   };
   const notify = async (text: string) => {
     log(`通知：\n${text}`);
@@ -212,6 +245,28 @@ async function main(): Promise<number> {
     writeState(stateFile, state);
   }
 
+  // This run's usage record (1.9): written once when the process ends, however it ends.
+  let recorded = false;
+  const recordRun = () => {
+    if (recorded) return;
+    recorded = true;
+    const title = (() => {
+      try {
+        return (/^#\s+(.+)$/m.exec(fs.readFileSync(checked.specPath, "utf8"))?.[1] ?? path.basename(featureDir)).trim();
+      } catch {
+        return path.basename(featureDir);
+      }
+    })();
+    appendRun(
+      runRecord({
+        state,
+        runStartedAt: now,
+        title,
+        agents: { builder: describeAgentProfile(config.agents.builder), reviewer: describeAgentProfile(config.agents.reviewer) },
+      }),
+    );
+  };
+
   let releaseSlot = () => {};
   const shutdown = (signal: string) => {
     log(`收到 ${signal}，流水线停止`);
@@ -219,6 +274,7 @@ async function main(): Promise<number> {
     state.stopReason = `流水线进程被 ${signal} 终止`;
     state.queuedSince = null;
     writeState(stateFile, state);
+    recordRun();
     releaseSlot();
     release();
     process.exit(1);
@@ -285,11 +341,13 @@ async function main(): Promise<number> {
       resumeCommand: commands.resume,
       statusCommand: commands.status,
       verifyCommand: commands.verify,
+      approveCommand: commands.approve,
+      jointNames,
       log,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
     log(`流水线结束：${outcome}`);
-    return outcome === "completed" || outcome === "phase_done" ? 0 : outcome === "waiting_for_business" ? 3 : 1;
+    return outcome === "completed" || outcome === "phase_done" ? 0 : outcome === "waiting_for_business" || outcome === "waiting_for_approval" ? 3 : 1;
   } finally {
     // The run ended by itself: the watchdog has nothing left to watch.
     if (watchdog) {
@@ -298,6 +356,7 @@ async function main(): Promise<number> {
       writeState(stateFile, state);
     }
     await runtime.close().catch(() => undefined);
+    recordRun();
     releaseSlot();
     release();
   }

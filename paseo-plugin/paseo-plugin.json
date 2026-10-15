@@ -1,0 +1,6 @@
+{
+  "id": "req-kit",
+  "name": "req-kit 需求",
+  "description": "在 Paseo 中查看和管理 req-kit 的需求：总览、进度、文档、统计，确认方案、停止和继续",
+  "requirements": { "paseo": ">=0.11.0 <0.12.0" }
+}

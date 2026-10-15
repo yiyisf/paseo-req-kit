@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type IntegrationConfig, validateIntegrations } from "./integrations.js";
 import { NOTIFIER_EVENT_TYPES, type NotifierConfig } from "./notifiers.js";
 import type { StepId } from "./steps.js";
 
@@ -100,6 +101,52 @@ export interface PhaseSettings {
   verify: VerifyPhaseSettings;
 }
 
+/**
+ * Requirement types with their own playbook (see playbooks.ts and ADR 0023). The spec's
+ * "- 类型：" line picks one; anything else (新需求, 小改动) runs the normal flow.
+ */
+export type RequirementType = "defect" | "refactor" | "assessment";
+
+export const REQUIREMENT_TYPES: readonly RequirementType[] = ["defect", "refactor", "assessment"];
+
+export const REQUIREMENT_TYPE_LABELS: Record<RequirementType, string> = { defect: "缺陷修复", refactor: "重构", assessment: "评估" };
+
+/**
+ * One project check the engine runs itself (the quality gate): formatting, lint, type
+ * check, tests, build. Commands should read the same on every system (see /req-setup).
+ */
+export interface CheckDef {
+  /** Short name, e.g. "lint", "web 测试". */
+  name: string;
+  command: string;
+  /** Directory to run in, relative to the repository root; default the root. */
+  cwd?: string;
+  /**
+   * Run only when the change touches these paths (prefixes like "web/", or globs with *);
+   * default: `cwd` when given, otherwise always. Lets a monorepo check only changed modules.
+   */
+  paths?: string[];
+  /** Minutes before the check is stopped; default qualityGate.timeoutMinutes. */
+  timeoutMinutes?: number;
+}
+
+export interface QualityGateSettings {
+  /** How many times the step agent is asked to fix newly failing checks before the run moves on. */
+  fixAttempts: number;
+  /** Default time limit of one check. */
+  timeoutMinutes: number;
+}
+
+/** A repository the step agents may read but never change (e.g. the backend of a frontend project). */
+export interface RelatedRepo {
+  /** Name used in prompts and reports, e.g. "后端". */
+  name: string;
+  /** Path on this machine: absolute, "~/…", or relative to the project's checkout. */
+  path: string;
+  /** What it is for, e.g. "提供登录和订单接口". */
+  role?: string;
+}
+
 export interface PipelineConfig {
   daemonUrl: string;
   /** Name of the environment variable holding the daemon password, if the daemon has one. */
@@ -129,6 +176,10 @@ export interface PipelineConfig {
   reviewPanel: ReviewPanelSettings;
   /** External notifiers (e.g. an internal IM). Machine or team config only. */
   notifiers: NotifierConfig[];
+  /** External systems kept in step with requirements, e.g. an ALM's CLI (1.9). Machine or team config only: they run commands. */
+  integrations: IntegrationConfig[];
+  /** Per integration name, values for its {field.*} placeholders; a project's file may set these (e.g. its project id). */
+  integrationDefaults: Record<string, Record<string, string>>;
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -165,6 +216,31 @@ export interface PipelineConfig {
   watchdogMinutes: number;
   /** Develop and verify phases: continuous (default), gated, or develop-only, plus verify-phase options. */
   phases: PhaseSettings;
+  /** Requirement types whose playbook is used; a type left out runs the normal flow. */
+  requirementTypes: RequirementType[];
+  /** Project checks for the quality gate; empty: no gate. Usually in the project config, written by /req-setup. */
+  checks: CheckDef[];
+  qualityGate: QualityGateSettings;
+  /**
+   * Slice-by-slice implementation: when the design splits the work into vertical slices,
+   * each slice is implemented by a fresh agent, committed and checked on its own.
+   */
+  slices: { profiles: ProfileName[]; max: number };
+  /** Repositories the steps may read for reference, never change. */
+  relatedRepos: RelatedRepo[];
+  /**
+   * Design confirmation point (1.8): after the design review, show the requester what they
+   * will get (preview.md, a prototype for UI changes) and wait for "yes" before writing code.
+   * mode "ui": only when the design says the change is visible in the UI; "always"; "off".
+   * autoContinueHours > 0: carry on with the design after that long without an answer.
+   */
+  designApproval: { mode: "off" | "ui" | "always"; profiles: ProfileName[]; autoContinueHours: number };
+  /**
+   * Code review in two axes (1.8): the first round runs a spec reviewer (is every AC done, is
+   * anything outside the scope) and a standards reviewer (project conventions, tests, security)
+   * in parallel; the reviewer consolidates. A configured review panel takes precedence.
+   */
+  reviewAxes: { enabled: boolean; profiles: ProfileName[] };
 }
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -206,6 +282,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   requiredVersion: null,
   reviewPanel: { enabled: false, steps: ["design_review", "code_review"], profiles: ["standard"], members: [] },
   notifiers: [],
+  integrations: [],
+  integrationDefaults: {},
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -220,6 +298,13 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   autoResumeMax: 2,
   watchdogMinutes: 0,
   phases: { mode: "continuous", verify: { environment: "local", agents: {}, defects: "fix", serviceStart: null } },
+  requirementTypes: ["defect", "refactor", "assessment"],
+  checks: [],
+  qualityGate: { fixAttempts: 2, timeoutMinutes: 20 },
+  slices: { profiles: ["standard"], max: 6 },
+  relatedRepos: [],
+  designApproval: { mode: "ui", profiles: ["standard"], autoContinueHours: 0 },
+  reviewAxes: { enabled: true, profiles: ["standard"] },
 };
 
 /** Project file, at the repository root, that overrides the machine-wide configuration. */
@@ -254,6 +339,14 @@ function readJson(file: string, label: string): Record<string, unknown> {
 function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConfig {
   const merged: PipelineConfig = { ...base, ...(raw as Partial<PipelineConfig>) };
   merged.agents = { ...base.agents, ...(isRecord(raw.agents) ? raw.agents : {}) } as PipelineConfig["agents"];
+  // Integration defaults add up by integration and field: the team sets the shared ones, a project its own.
+  if (isRecord(raw.integrationDefaults)) {
+    const combined: Record<string, Record<string, string>> = { ...base.integrationDefaults };
+    for (const [name, fields] of Object.entries(raw.integrationDefaults)) {
+      combined[name] = { ...(combined[name] ?? {}), ...(isRecord(fields) ? (fields as Record<string, string>) : {}) };
+    }
+    merged.integrationDefaults = combined;
+  }
   merged.stepTimeoutMinutes = {
     ...base.stepTimeoutMinutes,
     ...(isRecord(raw.stepTimeoutMinutes) ? raw.stepTimeoutMinutes : {}),
@@ -293,6 +386,13 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
       agents: { ...base.phases.verify.agents, ...(isRecord(rawVerify.agents) ? rawVerify.agents : {}) },
     },
   };
+  merged.qualityGate = { ...base.qualityGate, ...(isRecord(raw.qualityGate) ? (raw.qualityGate as Partial<QualityGateSettings>) : {}) };
+  merged.slices = { ...base.slices, ...(isRecord(raw.slices) ? (raw.slices as Partial<PipelineConfig["slices"]>) : {}) };
+  merged.designApproval = {
+    ...base.designApproval,
+    ...(isRecord(raw.designApproval) ? (raw.designApproval as Partial<PipelineConfig["designApproval"]>) : {}),
+  };
+  merged.reviewAxes = { ...base.reviewAxes, ...(isRecord(raw.reviewAxes) ? (raw.reviewAxes as Partial<PipelineConfig["reviewAxes"]>) : {}) };
   delete (merged as unknown as Record<string, unknown>).rounds;
   return merged;
 }
@@ -344,6 +444,60 @@ function validatePhases(phases: PhaseSettings): void {
   }
 }
 
+function validateChecks(config: PipelineConfig): void {
+  if (!Array.isArray(config.requirementTypes) || !config.requirementTypes.every((t) => REQUIREMENT_TYPES.includes(t))) {
+    throw new ConfigError(`requirementTypes 只能包含 ${REQUIREMENT_TYPES.map((t) => `"${t}"`).join("、")}`);
+  }
+  if (!Array.isArray(config.checks)) throw new ConfigError('checks 必须是数组，例如 [{ "name": "test", "command": "npm test" }]');
+  const names = new Set<string>();
+  config.checks.forEach((c, i) => {
+    if (!isRecord(c) || typeof c.name !== "string" || c.name.trim() === "") throw new ConfigError(`checks[${i}].name 必须是非空字符串`);
+    if (names.has(c.name)) throw new ConfigError(`checks 中有两个检查都叫 "${c.name}"，名称不能重复`);
+    names.add(c.name);
+    if (typeof c.command !== "string" || c.command.trim() === "") throw new ConfigError(`checks[${i}].command 必须是要运行的命令`);
+    if (c.cwd !== undefined && (typeof c.cwd !== "string" || path.isAbsolute(c.cwd) || c.cwd.split(/[\\/]/).includes(".."))) {
+      throw new ConfigError(`checks[${i}].cwd 必须是仓库之内的相对路径`);
+    }
+    if (c.paths !== undefined && (!Array.isArray(c.paths) || !c.paths.every((p) => typeof p === "string" && p.trim() !== ""))) {
+      throw new ConfigError(`checks[${i}].paths 必须是路径数组，例如 ["web/"]`);
+    }
+    if (c.timeoutMinutes !== undefined && (typeof c.timeoutMinutes !== "number" || c.timeoutMinutes <= 0)) {
+      throw new ConfigError(`checks[${i}].timeoutMinutes 必须是正数`);
+    }
+  });
+  const gate = config.qualityGate;
+  if (!Number.isInteger(gate.fixAttempts) || gate.fixAttempts < 0) throw new ConfigError("qualityGate.fixAttempts 必须是不小于 0 的整数");
+  if (typeof gate.timeoutMinutes !== "number" || gate.timeoutMinutes <= 0) throw new ConfigError("qualityGate.timeoutMinutes 必须是正数");
+  if (!Array.isArray(config.slices.profiles) || !config.slices.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('slices.profiles 只能包含 "quick" 和 "standard"（空数组表示不按切片实现）');
+  }
+  if (!Number.isInteger(config.slices.max) || config.slices.max < 1) throw new ConfigError("slices.max 必须是不小于 1 的整数");
+  const approval = config.designApproval;
+  if (!["off", "ui", "always"].includes(approval.mode)) throw new ConfigError('designApproval.mode 只能是 "off"、"ui" 或 "always"');
+  if (!Array.isArray(approval.profiles) || !approval.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('designApproval.profiles 只能包含 "quick" 和 "standard"');
+  }
+  if (typeof approval.autoContinueHours !== "number" || approval.autoContinueHours < 0) {
+    throw new ConfigError("designApproval.autoContinueHours 必须是不小于 0 的数（0 表示一直等待确认）");
+  }
+  if (typeof config.reviewAxes.enabled !== "boolean") throw new ConfigError("reviewAxes.enabled 必须是 true 或 false");
+  if (!Array.isArray(config.reviewAxes.profiles) || !config.reviewAxes.profiles.every((p) => PROFILE_NAMES.includes(p))) {
+    throw new ConfigError('reviewAxes.profiles 只能包含 "quick" 和 "standard"');
+  }
+  if (!Array.isArray(config.relatedRepos)) throw new ConfigError('relatedRepos 必须是数组，例如 [{ "name": "后端", "path": "../backend" }]');
+  config.relatedRepos.forEach((r, i) => {
+    if (!isRecord(r) || typeof r.name !== "string" || r.name.trim() === "") throw new ConfigError(`relatedRepos[${i}].name 必须是非空字符串`);
+    if (typeof r.path !== "string" || r.path.trim() === "") throw new ConfigError(`relatedRepos[${i}].path 必须是这台机器上的目录`);
+    if (r.role !== undefined && typeof r.role !== "string") throw new ConfigError(`relatedRepos[${i}].role 必须是字符串`);
+  });
+}
+
+/** Where a related repository is on this machine; relative paths start from the project's checkout. */
+export function resolveRelatedRepo(repo: RelatedRepo, projectDir: string): string {
+  if (repo.path.startsWith("~/") || repo.path.startsWith("~\\")) return path.join(os.homedir(), repo.path.slice(2));
+  return path.resolve(projectDir, repo.path);
+}
+
 function validate(config: PipelineConfig): void {
   for (const role of ["builder", "reviewer"] as const) validateProvider(`agents.${role}`, config.agents[role]);
   if (!PROFILE_NAMES.includes(config.defaultProfile)) {
@@ -376,6 +530,11 @@ function validate(config: PipelineConfig): void {
       throw new ConfigError(`notifiers[${i}].events 只能包含 ${NOTIFIER_EVENT_TYPES.join("、")}`);
     }
   });
+  const integrationProblem = validateIntegrations(config.integrations);
+  if (integrationProblem) throw new ConfigError(integrationProblem);
+  if (!isRecord(config.integrationDefaults) || !Object.values(config.integrationDefaults).every((m) => isRecord(m) && Object.values(m).every((v) => typeof v === "string"))) {
+    throw new ConfigError('integrationDefaults 必须是 { "<集成名称>": { "<字段>": "<值>" } }');
+  }
   if (config.requiredVersion !== null && typeof config.requiredVersion !== "string") {
     throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
   }
@@ -396,6 +555,7 @@ function validate(config: PipelineConfig): void {
     if (typeof config[key] !== "number" || config[key] < 0) throw new ConfigError(`${key} 必须是不小于 0 的数（0 表示关闭）`);
   }
   validatePhases(config.phases);
+  validateChecks(config);
   for (const key of ["waitChunkSeconds", "permissionPollSeconds", "serviceReadySeconds", "queuePollSeconds"] as const) {
     if (typeof config[key] !== "number" || config[key] <= 0) throw new ConfigError(`${key} 必须是正数`);
   }
@@ -410,7 +570,7 @@ export interface LoadedConfig {
 }
 
 /** Keys a project file may not set: they run code or reach outside the repository. */
-const NOT_IN_PROJECT_KEYS = ["notifiers"] as const;
+const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations"] as const;
 
 /** Notifier module paths are relative to the file that names them; "~/" is the home directory. */
 function resolveNotifiers(raw: Record<string, unknown>, file: string): Record<string, unknown> {

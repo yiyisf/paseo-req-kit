@@ -4,14 +4,18 @@
 
 | 步骤 ID | 字段 |
 | --- | --- |
-| `design` | `has_runnable_service`: boolean |
+| `design` | `has_runnable_service`: boolean。可选（1.8 起）：`slices`: 字符串数组（实施计划的切片，按实现顺序；两片以上时按片逐个实现）；`files`: 字符串数组（预计改动的文件和目录，目录以 `/` 结尾，可用 `*`，用于范围检查）；缺陷类型的 `reproduced`: boolean，为 `false` 时 `questions`: 非空字符串数组（需要需求方补充的信息）；`ui_change`: boolean（改动是否改变使用者看到的界面或操作方式，方案确认点按它决定是否停下） |
 | `design_review` | `verdict`: `approved` \| `changes_required` \| `blocked`；为 `blocked` 时 `questions`: 非空字符串数组 |
-| `design_revise`、`implement`、`review_fix`、`defect_fix` | `status`: `done` \| `partial` |
+| `design_revise` | `status`: `done` \| `partial`。可选（1.8 起）：`slices`、`files`、`ui_change`，修订改变了它们时写新的值 |
+| `implement` | `status`: `done` \| `partial`。按切片实现时，每片的键为 `implement-s<序号>`。可选（1.8 起）：`acceptance_tests`: 字符串数组（从验收标准的例子写出、先单独提交的测试文件），`acceptance_tests_commit`: string（那次提交）；代码评审前引擎核对它们之后有没有被改过 |
+| `review_fix`、`defect_fix` | `status`: `done` \| `partial` |
 | `code_review` | `verdict`: `pass` \| `changes_required` |
 | `service_start` | `started`: boolean |
-| `verify` | `result`: `pass` \| `defects_found` \| `blocked` |
-| `reverify` | `result`: `pass` \| `defects_remaining` |
+| `verify` | `result`: `pass` \| `defects_found` \| `blocked`。可选（1.8 起，联合需求）：`defect_repos`: 字符串数组，缺陷所在的仓库（`本仓库` 或 `relatedRepos` 中的名称）；没有时每个仓库都做一轮缺陷修复 |
+| `reverify` | `result`: `pass` \| `defects_remaining`。可选：`defect_repos`，同上 |
 | `report` | `outcome`: `completed` \| `completed_with_issues` \| `not_completed`；`summary`: string |
 | `panel_review`（评审小组成员，键为 `<评审步骤>-r<轮次>-p<序号>`） | `status`: `done` \| `partial`；意见写在 `<功能目录>/review-panel/<键>.md` |
+
+联合需求中，其他仓库的步骤的键带 `@<仓库后缀>`（如 `implement@backend`、`code_review-r2@backend`），结果文件写在那个仓库工作区的功能目录中。
 
 字段定义以 `engine/src/steps.ts` 为准；改动时同步更新各步骤提示词末尾的"结果文件"一节。

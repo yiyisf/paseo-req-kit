@@ -39,6 +39,13 @@ if (command === "--version") {
 } else if (command === "install") {
   const prefix = globalInstall ? path.join(globalPrefix(), "lib") : value("--prefix");
   const spec = args.at(-1);
+  if (spec.startsWith("@getpaseo/cli")) {
+    // The Paseo CLI: a paseo command in <prefix>/bin that runs test/fake-paseo.mjs.
+    const bin = path.join(globalPrefix(), "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "paseo"), `#!/bin/sh\nexec node "${path.join(ROOT, "test", "fake-paseo.mjs")}" "$@"\n`, { mode: 0o755 });
+    process.exit(0);
+  }
   let source;
   if (spec.endsWith(".tgz")) source = JSON.parse(fs.readFileSync(spec, "utf8")).dir;
   else {

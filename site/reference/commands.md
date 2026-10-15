@@ -25,10 +25,33 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `req status [需求]` | 查看进度；只有一个需求运行过时可以不写 |
 | `req stop <需求>` | 停止流水线（之后可以继续）；同时取消预约的开始、提醒、自动继续 |
 | `req resume <需求>` | 从上次中断处继续；需求改过时只处理变化的部分 |
+| `req approve <需求>` | 需求方看过 `preview.md` 并确认后，从方案确认点继续开发 |
 | `req verify <需求> [--verify-env local\|deployed] [--defects fix\|handback\|report]` | 研发完成后开始测试验证（分阶段执行时） |
 | `req start <需求> [--profile quick\|standard] [--phases gated] [--at 22:00]` | 启动流水线（通常由 `/req` 在对话中启动） |
 | `req digest [--notify]` | 项目的需求总览；`--notify` 同时发到外部通知 |
 | `req digest --schedule "0 9 * * 1"` | 让 Paseo 按时间表发送需求总览；取消：`req digest --cancel <ID>` |
+| `req sync <需求>` | 把需求同步到对接的外部系统：补发没有成功的调用、补建卡片、更新状态 |
+| `req integration test [需求]` | 显示对接外部系统时每个事件会执行的命令，不真正调用 |
+| `req index --rebuild [目录…]` | 把这些仓库中运行过的需求登记进本机的需求索引（1.9 之前运行过的需求用） |
+
+### 使用统计（任何目录）
+
+| 命令 | 作用 |
+| --- | --- |
+| `req stats [--since 30d] [--month 2026-10]` | 本机的使用统计：需求数、交付周期、返工、等待、各步骤用时、用量；`--json`、`--csv` |
+| `req stats --report [--out 目录]` | 生成汇报用的 `.md` 汇总和 `.csv` 明细 |
+| `req stats --export [文件]` | 导出本机的运行记录 |
+| `req stats --merge <文件…> --report` | 汇总几台机器的导出 |
+| `req index [--prune]` | 本机记录的需求；`--prune` 移除目录已不在的 |
+| `req api <命令> …` | 给程序用的 JSON 输出，见 [req api](./contracts/cli-json) |
+
+### Paseo 插件
+
+| 命令 | 作用 |
+| --- | --- |
+| `req plugin install [--yes]` | 安装或更新 req-kit 的 Paseo 插件；需要时询问是否打开 Paseo 的插件总开关 |
+| `req plugin status` | 插件是否在运行 |
+| `req plugin remove` | 从 Paseo 移除插件 |
 
 `<需求>` 可以写功能目录（`docs/features/20261012-sms-login`）、目录名，或名称中能唯一确定的一部分（`sms-login`）。
 
@@ -57,6 +80,7 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `--resume` / `--restart` | 从中断处继续 / 丢弃结果从零开始 |
 | `--profile quick\|standard` | 档位；不传时读需求说明中的"档位"，再用配置的 `defaultProfile` |
 | `--phases continuous\|gated\|develop-only` | 执行方式；不传时读需求说明中的"执行方式"，再用配置的 `phases.mode` |
+| `--approve` | 方案确认点：需求方确认了方案，继续开发（等待确认时单独的 `--resume` 会被拒绝；要修改就先更新需求说明再 `--resume`） |
 | `--phase verify` | 开始（或继续）测试验证阶段；研发完成、待测试时单独的 `--resume` 效果相同 |
 | `--verify-env local\|deployed`、`--defects fix\|handback\|report` | 开始测试验证时临时指定环境和缺陷处理方式 |
 | `--verify-at <时间>` | 分阶段时，研发完成后在这个时间自动开始测试验证 |
@@ -69,7 +93,7 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 
 | 系统 | 命令 |
 | --- | --- |
-| macOS、Linux、Git Bash、WSL | `curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh \| sh` |
-| Windows PowerShell | `irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 \| iex` |
+| macOS、Linux、Git Bash、WSL | `curl -fsSL https://paseo-req-kit.vercel.app/install.sh \| sh` |
+| Windows PowerShell | `irm https://paseo-req-kit.vercel.app/install.ps1 \| iex` |
 
-`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.7.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`。
+`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）、`--with-plugin`（直接安装 Paseo 插件）、`--no-plugin`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.8.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`、`$ReqKitPlugin = "yes"`（或 `"no"`）。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。

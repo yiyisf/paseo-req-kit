@@ -21,6 +21,7 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req status [需求]            查看进度；只有一个需求运行过时可以不写
   req stop <需求>              停止流水线（之后可以继续）
   req resume <需求>            从上次中断处继续；需求改过时只处理变化的部分
+  req approve <需求>           需求方确认了方案（方案确认点，见 preview.md），继续开发
   req verify <需求> [--verify-env local|deployed] [--defects fix|handback|report]
                                研发完成后开始测试验证（分阶段执行时）
   req start <需求> [--profile quick|standard] [--phases gated] [--at 22:00]
@@ -28,6 +29,23 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req digest [--notify]        项目的需求总览；--notify 同时发到外部通知（如企业 IM）
   req digest --schedule "0 9 * * 1"
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
+  req sync <需求>              把需求同步到对接的外部系统（补发失败的调用、补建卡片、更新状态）
+  req integration test [需求]  只显示对接外部系统时会执行的命令，不真正调用
+
+使用情况（可以在任何目录运行）：
+  req stats [--since 30d] [--month 2026-10]
+                               本机的使用统计：需求数、交付周期、返工、等待、各步骤用时、用量
+  req stats --report [--out 目录]
+                               生成汇报用的汇总（.md）和每个需求一行的表格（.csv）
+  req stats --export [文件]    导出本机的运行记录；汇总多台机器：req stats --merge <文件…> --report
+  req index [--rebuild [目录…]] [--prune]
+                               本机记录的需求（Paseo 插件据此找到所有需求）；1.9 之前运行过的用 --rebuild 补登
+  req api <命令> …             给程序用的 JSON 输出（见 contracts/cli-json.md）
+
+Paseo 插件（在 Paseo 中查看和管理需求）：
+  req plugin install [--yes]   安装或更新插件；需要时会询问是否打开 Paseo 的插件总开关
+  req plugin status            插件是否在运行
+  req plugin remove            从 Paseo 移除插件
 
 本机维护：
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
@@ -126,6 +144,9 @@ switch (command) {
   case "verify":
     code = node([launcher, "--phase", "verify", ...feature(rest, true)]);
     break;
+  case "approve":
+    code = node([launcher, "--approve", ...feature(rest, true)]);
+    break;
   case "start":
     code = node([launcher, ...feature(rest, true)]);
     break;
@@ -151,6 +172,24 @@ switch (command) {
     break;
   case "digest":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "digest.ts"), ...rest]) : 1;
+    break;
+  case "stats":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "stats.ts"), ...rest]) : 1;
+    break;
+  case "index":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "index-cmd.ts"), ...rest]) : 1;
+    break;
+  case "api":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "api.ts"), ...rest]) : 1;
+    break;
+  case "sync":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), "sync", ...rest]) : 1;
+    break;
+  case "integration":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), ...rest]) : 1;
+    break;
+  case "plugin":
+    code = node([path.join(kitRoot, "bin", "req-plugin.mjs"), ...rest]);
     break;
   case "notify-test":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "notify-test.ts"), ...rest]) : 1;

@@ -42,8 +42,12 @@ AI  ▸ 结论：已完成，可以验收。6 条验收标准全部通过……�
 ## 特性
 
 - **对话对齐需求**：一次一个问题，给出选项和推荐；确认前由另一个模型独立审阅需求说明，减少返工。
-- **后台 agent 流水线**：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD）→ 代码评审 ⇄ 修复 → 提测说明 → 服务启动 → 功能验证 → 缺陷修复 ⇄ 复验 → 完成报告。
-- **做事的和检查的分开**：builder 与 reviewer 可用不同模型；可选的评审小组并行评审、方案提案并行比较。
+- **后台 agent 流水线**：方案设计 → 方案审核 ⇄ 修订 → 代码实现（适合时 TDD，大需求按切片逐片实现）→ 代码评审 ⇄ 修复 → 提测说明 → 服务启动 → 功能验证 → 缺陷修复 ⇄ 复验 → 完成报告。
+- **按需求类型走不同的做法**：缺陷先复现、找到根因再修；重构先用测试锁住行为再小步改；评估只调研、写评估报告，不写代码。
+- **让分歧更早暴露**：验收标准带具体例子，测试直接用它们作为期望值；界面改动在写代码之前请你确认预览和原型；代码评审分规格、规范两个方向；反复出现的问题记下来，提示变成项目的规则。
+- **质量门**：流水线自己运行项目的 lint、类型检查、测试、构建，只拦改动前通过、现在失败的检查，发回那一步的 agent 修复；代码评审前比对方案列出的文件，清单之外的改动要说明理由。
+- **联合需求**：前后端分在两个仓库的需求可以一起做：先定接口约定，再在每个仓库各开一个工作区同时开发，最后一起验证。
+- **做事的和检查的分开**：builder 与 reviewer 可用不同模型；可选的评审小组并行评审、方案提案并行比较；其他仓库（例如后端）可以登记为只读参考。
 - **如实报告**：每一步的结论只看结果文件和证据；没验证的写"未验证"，遗留问题写进报告。
 - **分阶段提测**：研发完成写好提测说明，可以停下来交给测试同事，在已部署的测试环境中验证；缺陷可退回研发。
 - **用好 Paseo**：复用 agent profile、`paseo.json` 服务和 worktree、定时任务、内置浏览器；几个需求并行互不干扰。
@@ -52,23 +56,25 @@ AI  ▸ 结论：已完成，可以验收。6 条验收标准全部通过……�
 
 ## 快速开始
 
-在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
+在要运行 Paseo 的机器上（需要 Node.js 22+；还没有 Paseo 也可以，脚本会装好）：
 
 ```bash
 # macOS、Linux、Windows 的 Git Bash 或 WSL
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 | iex
+irm https://paseo-req-kit.vercel.app/install.ps1 | iex
 ```
 
-安装脚本会检查环境、安装 `paseo-req-kit`、为 Claude Code / Codex / OpenCode / Pi 安装 `/req` 等 skill，并引导你为 builder 和 reviewer 选择 agent。再次运行即升级。然后：
+安装脚本会检查环境、安装 `paseo-req-kit`；没有 Paseo 时安装 Paseo 命令行，开启它自带的网页界面（`http://localhost:6767/`）并启动 daemon；为 Claude Code / Codex / OpenCode / Pi 安装 `/req` 等 skill，并引导你为 builder 和 reviewer 选择 agent。再次运行即升级。然后：
 
 1. `req doctor` —— 检查 daemon、agent 模式和额度；
 2. 在项目的 Paseo 对话中运行 `/req-setup` —— 接入项目（每个项目一次）；
 3. 在 Paseo 对话中输入 `/req 我想……` —— 开始第一个需求。
+
+想在 Paseo 的界面（网页端、桌面版、手机）里看需求总览和进度、确认方案或停止继续，运行 `req plugin install` 安装 req-kit 的 Paseo 插件。
 
 其他安装方式（npm、离线安装包、git）、各 agent 的配置写法和升级回滚，见 [安装与升级](docs/guide/安装与升级.md)。
 

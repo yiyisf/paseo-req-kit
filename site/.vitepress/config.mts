@@ -101,6 +101,8 @@ export default defineConfig({
             { text: "功能目录中的文件", link: "/reference/contracts/feature-files" },
             { text: "验证方法 verify.md", link: "/reference/contracts/verify" },
             { text: "外部通知事件", link: "/reference/contracts/notifier-event" },
+            { text: "req api 的 JSON 输出", link: "/reference/contracts/cli-json" },
+            { text: "需求索引与使用记录", link: "/reference/contracts/usage-record" },
           ],
         },
         {

@@ -30,3 +30,17 @@ jobs:
           set -o pipefail
           shellcheck -s sh -f gcc install.sh | sed -E 's/^([^:]+):([0-9]+):([0-9]+): (error|warning|note): (.*)$/::\4 file=\1,line=\2,col=\3::\5/; s/^::note /::notice /'
           pwsh -NoProfile -Command '$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$errors); if ($errors) { $errors | ForEach-Object { Write-Host "::error file=install.ps1,line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 }'
+
+  # The Paseo plugin is compiled by Paseo with its own SDK; typecheck it against that SDK here.
+  plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: paseo-plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund --ignore-scripts
+      - run: npm run typecheck
