@@ -2,6 +2,34 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.8.0
+
+第一个正式版。汇总 1.8.0-beta.1 到 beta.3 的全部内容（各节见下），并让新机器一条命令就能从零用起来。
+
+### 使用者会看到的变化
+
+- **一键安装改用站点地址**：
+  - macOS、Linux、Git Bash、WSL：`curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh`
+  - Windows PowerShell：`irm https://paseo-req-kit.vercel.app/install.ps1 | iex`
+  - 原来的 GitHub 地址仍然可用。
+- **一键安装会准备好 Paseo**：
+  - 新机器上没有 Paseo 时，脚本先安装与这个版本匹配的 Paseo 命令行（`@getpaseo/cli@~0.11.0`），开启它自带的网页界面，再启动 daemon。装完在浏览器打开 `http://localhost:6767/` 就能用 Paseo 对话，不必另装桌面版。
+  - 已有 `paseo` 命令时不重装：核对版本（不在支持范围内时提醒），开启网页界面；daemon 没在运行就启动。daemon 已在运行而网页界面是刚开启的，只提示 `paseo daemon restart`，不自动重启，因为重启会中断正在运行的 agent。
+  - 只有桌面版 Paseo 管理的 daemon（没有 `paseo` 命令）时什么都不装，只提示在桌面版中开启网页界面。
+  - 一个 agent 命令行（Claude Code、Codex、OpenCode、Pi、Copilot）都没有时会提醒。
+  - 不想让脚本动 Paseo 时加 `--skip-paseo`（PowerShell：`$ReqKitSkipPaseo = $true`）。
+- **1.8 的内容**：
+  - 按需求类型分流（缺陷先复现、重构先锁行为、评估只出报告）。
+  - 质量门、按切片实现、范围检查、关联仓库。
+  - 带例子的验收标准、开工前确认方案、评审分规格和规范两个方向、反复出现的问题变成规则。
+  - 前后端联合需求。
+
+### 升级须知
+
+- 这是 npm 上的第一个 `latest` 版本：`npm i -g paseo-req-kit` 和不带 `--beta` 的一键安装从此装正式版。在 beta 通道的（`req upgrade --beta` 或 `@beta`）照常收到之后的 beta 版；没有更新的 beta 时，一键安装的 `--beta` 装正式版，而不是更早的 1.8.0-beta.3。
+- 从 1.7.x 或更早升级：依次看下面 1.8.0-beta.1 到 beta.3 的升级须知。最重要的是在每个项目主目录的对话中再运行一次 `/req-setup`，写入检查命令、术语表和范例文件。
+- 从 1.8.0-beta.3 升级：引擎和提示词没有变化，只改了安装脚本和文档。
+
 ## 1.8.0-beta.3
 
 联合需求：前端和后端分在两个仓库的需求，可以作为一个需求一起做。

@@ -56,19 +56,19 @@ AI  ▸ 结论：已完成，可以验收。6 条验收标准全部通过……�
 
 ## 快速开始
 
-在运行 Paseo daemon 的机器上（需要 Node.js 22+）：
+在要运行 Paseo 的机器上（需要 Node.js 22+；还没有 Paseo 也可以，脚本会装好）：
 
 ```bash
 # macOS、Linux、Windows 的 Git Bash 或 WSL
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 | iex
+irm https://paseo-req-kit.vercel.app/install.ps1 | iex
 ```
 
-安装脚本会检查环境、安装 `paseo-req-kit`、为 Claude Code / Codex / OpenCode / Pi 安装 `/req` 等 skill，并引导你为 builder 和 reviewer 选择 agent。再次运行即升级。然后：
+安装脚本会检查环境、安装 `paseo-req-kit`；没有 Paseo 时安装 Paseo 命令行，开启它自带的网页界面（`http://localhost:6767/`）并启动 daemon；为 Claude Code / Codex / OpenCode / Pi 安装 `/req` 等 skill，并引导你为 builder 和 reviewer 选择 agent。再次运行即升级。然后：
 
 1. `req doctor` —— 检查 daemon、agent 模式和额度；
 2. 在项目的 Paseo 对话中运行 `/req-setup` —— 接入项目（每个项目一次）；

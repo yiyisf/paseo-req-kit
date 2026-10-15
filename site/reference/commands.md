@@ -71,7 +71,7 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 
 | 系统 | 命令 |
 | --- | --- |
-| macOS、Linux、Git Bash、WSL | `curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh \| sh` |
-| Windows PowerShell | `irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 \| iex` |
+| macOS、Linux、Git Bash、WSL | `curl -fsSL https://paseo-req-kit.vercel.app/install.sh \| sh` |
+| Windows PowerShell | `irm https://paseo-req-kit.vercel.app/install.ps1 \| iex` |
 
-`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.7.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`。
+`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.8.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。

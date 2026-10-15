@@ -7,15 +7,15 @@
 ::: code-group
 
 ```sh [macOS / Linux]
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
 
 ```powershell [Windows PowerShell]
-irm https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.ps1 | iex
+irm https://paseo-req-kit.vercel.app/install.ps1 | iex
 ```
 
 ```sh [Windows Git Bash / WSL]
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
 
 :::
@@ -24,14 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.s
 
 1. 检查 Node.js 22+、npm 和 git；
 2. 安装 `paseo-req-kit`（npm 上有就从 npm 安装，否则用 GitHub Release 的安装包；npm 全局目录不可写时装到 `~/.req-kit/npm`，不需要 sudo）；
-3. 运行 `req setup`：把这个版本装到 `~/tools/req-kit/versions/<版本>`，并为 Claude Code、Codex 等安装 `/req` 等 skill；
-4. 运行配置向导 `req configure`，为"实现"（builder）和"评审"（reviewer）各选一个 agent——建议选两个不同的模型。
+3. 检查 Paseo：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行（`@getpaseo/cli`），开启它自带的网页界面并启动 daemon；已有 Paseo 时核对版本、开启网页界面（不会自动重启正在运行的 daemon）。之后浏览器打开 `http://localhost:6767/` 就是 Paseo；
+4. 运行 `req setup`：把这个版本装到 `~/tools/req-kit/versions/<版本>`，并为 Claude Code、Codex 等安装 `/req` 等 skill；
+5. 运行配置向导 `req configure`，为"实现"（builder）和"评审"（reviewer）各选一个 agent——建议选两个不同的模型。
 
 再次运行同一条命令即升级。常用选项：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --beta             # 包括 beta 版
-curl -fsSL https://raw.githubusercontent.com/yiyisf/paseo-req-kit/main/install.sh | sh -s -- --version 1.8.0-beta.3
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --beta             # 包括 beta 版
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --version 1.8.0
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --skip-paseo       # 不检查、不安装 Paseo
 ```
 
 ::: tip 不能用一键脚本时

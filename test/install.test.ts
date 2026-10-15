@@ -518,7 +518,10 @@ test("npm 升级：只选能支持本机 Paseo 版本的最新版；指定版本
   req({}, "setup");
 
   const check = req({ REQ_KIT_DAEMON_VERSION: "0.11.2" }, "upgrade", "--check");
-  assert.match(check.stdout, /9\.2\.0-beta\.1 需要 Paseo >=0\.12\.0 <0\.13\.0，本机是 0\.11\.2/);
+  assert.match(check.stdout, /9\.1\.0 需要 Paseo >=0\.12\.0 <0\.13\.0，本机是 0\.11\.2/);
+  // The beta is considered only on the beta channel (the current version is a beta).
+  if (version.includes("-")) assert.match(check.stdout, /9\.2\.0-beta\.1 需要 Paseo >=0\.12\.0 <0\.13\.0，本机是 0\.11\.2/);
+  else assert.doesNotMatch(check.stdout, /9\.2\.0-beta\.1/);
   assert.match(check.stdout, /有新版本 9\.0\.0/);
 
   const up = req({ REQ_KIT_DAEMON_VERSION: "0.11.2" }, "upgrade");
