@@ -1,0 +1,48 @@
+# 本机的需求索引与使用记录
+
+1.9.0 起，引擎在本机配置目录（默认 `~/.req-kit`，可用 `REQ_KIT_HOME` 改变）下记两样东西。它们只在这台机器上，不提交进任何仓库，也不会自动发往任何地方。环境变量 `REQ_KIT_NO_RECORD=1` 时两样都不记（评估运行就是这样）。
+
+## 需求索引 `index/<key>.json`
+
+每个在本机运行过的需求一个文件，记录它在哪里，供 `req api list --all` 和 Paseo 插件找到本机所有的需求。需求的阶段、进度仍然现场从功能目录读取（ADR 0010）。
+
+```json
+{
+  "schema": 1,
+  "key": "3f2a9c1e5b7d4e8a",
+  "repo": "/home/me/work/shop-sms-login",
+  "featureDir": "docs/features/20261012-sms-login",
+  "sourceRepo": "/home/me/work/shop",
+  "workspaceId": "ws_123",
+  "project": "shop",
+  "registeredAt": "2026-10-12T09:00:00.000Z"
+}
+```
+
+`key` 由对话所在的目录（没有自己的工作区时即 `repo`）和功能目录算出。`req index --rebuild` 为 1.9 之前运行过的需求补登，`req index --prune` 移除目录已不在的。
+
+## 使用记录 `usage/runs.jsonl`
+
+每次流水线运行（后台进程从开始到结束，包括停在等待确认、等待需求方、研发完成处）结束时追加一行：
+
+| 字段 | 含义 |
+| --- | --- |
+| `schema` / `kind` | `1` / `"run"` |
+| `machine` / `kitVersion` | 主机名、req-kit 版本 |
+| `requirement` | `{ key, project, name, title, type, profile }` |
+| `run` | `{ startedAt, endedAt, attempt, phase, phaseMode, status, outcome, stopReason }`；`status` 是运行结束时的状态，`outcome` 是完成时报告的结论 |
+| `agents` | `{ builder, reviewer }`：当时配置的 agent（如 `claude/opus（bypassPermissions）`） |
+| `steps` | 这次运行中开始的步骤：`{ key, stepId, phase, attempt, round, startedAt, endedAt, minutes, outcome, inputTokens, outputTokens, costUsd }`；agent 没有报告的用量为 null |
+| `gate` | `{ runs, failed }`：这次运行中质量门运行的次数、发现新失败的次数 |
+
+不记录需求内容、代码和对话。
+
+## 统计口径（`req stats`）
+
+- 一段时间的用量、步骤用时：结束时间在这段时间内的运行。
+- 交付周期：需求第一次开始到完成（最后一次运行以"已完成"结束）的小时数，用这个需求的全部运行，算在完成的那段时间。
+- 代码评审轮数、缺陷修复轮数：不同的（尝试、轮次、仓库）个数；评审分方向或评审小组的几个成员算一轮。
+- 等待：相邻两次运行之间的间隔，按前一次结束时的状态归类：等待确认方案、等待需求方决定、研发完成到开始测试验证、中断到继续。
+- 合并多台机器的导出时，同一机器、同一需求、同一开始时间的运行只算一次。
+
+`req stats --json` 和 `req api stats` 输出同样的对象（`schema: 1`）：`period`、`machines`、`active`、`completed`、`byType`、`cycleHours`、`steps`、`rework`、`waits`、`usage`、`byBuilder`、`requirements`（每个需求一项，字段与 `req stats --csv` 的列对应）。

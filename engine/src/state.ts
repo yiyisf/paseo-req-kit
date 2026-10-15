@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { DefectHandling, PhaseMode, ProfileName, RequirementType, VerifyEnvironment } from "./config.js";
+import { registerRequirement } from "./records.js";
 import type { AgentUsage } from "./usage.js";
 import type { StepId } from "./steps.js";
 
@@ -246,6 +247,8 @@ export function writeState(file: string, state: PipelineState): void {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
   fs.renameSync(tmp, file);
+  // The machine's index of requirements (1.9): written once, and again only if it moved.
+  registerRequirement(state);
 }
 
 export function hashFile(file: string): string {

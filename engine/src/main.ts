@@ -2,6 +2,7 @@
 // from the chat agent's shell; can also be run in the foreground for debugging.
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { approveCommand, LAUNCHER, parseLaunchArgs, resumeCommand, statusCommand, verifyCommand } from "./cli-args.js";
 import { dequeuedMessage, queuedMessage, watchdogPrompt } from "./messages.js";
@@ -13,6 +14,7 @@ import { satisfies } from "./daemon-check.js";
 import { describeAgentProfile, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { jointProblem } from "./joint.js";
 import { runPipeline } from "./pipeline.js";
+import { appendRun, runRecord } from "./records.js";
 import { preflight, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import {
@@ -243,6 +245,28 @@ async function main(): Promise<number> {
     writeState(stateFile, state);
   }
 
+  // This run's usage record (1.9): written once when the process ends, however it ends.
+  let recorded = false;
+  const recordRun = () => {
+    if (recorded) return;
+    recorded = true;
+    const title = (() => {
+      try {
+        return (/^#\s+(.+)$/m.exec(fs.readFileSync(checked.specPath, "utf8"))?.[1] ?? path.basename(featureDir)).trim();
+      } catch {
+        return path.basename(featureDir);
+      }
+    })();
+    appendRun(
+      runRecord({
+        state,
+        runStartedAt: now,
+        title,
+        agents: { builder: describeAgentProfile(config.agents.builder), reviewer: describeAgentProfile(config.agents.reviewer) },
+      }),
+    );
+  };
+
   let releaseSlot = () => {};
   const shutdown = (signal: string) => {
     log(`收到 ${signal}，流水线停止`);
@@ -250,6 +274,7 @@ async function main(): Promise<number> {
     state.stopReason = `流水线进程被 ${signal} 终止`;
     state.queuedSince = null;
     writeState(stateFile, state);
+    recordRun();
     releaseSlot();
     release();
     process.exit(1);
@@ -331,6 +356,7 @@ async function main(): Promise<number> {
       writeState(stateFile, state);
     }
     await runtime.close().catch(() => undefined);
+    recordRun();
     releaseSlot();
     release();
   }

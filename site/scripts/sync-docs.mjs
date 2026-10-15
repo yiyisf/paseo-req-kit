@@ -26,6 +26,8 @@ export const PAGES = [
   ["contracts/feature-files.md", "reference/contracts/feature-files"],
   ["contracts/verify.md", "reference/contracts/verify"],
   ["contracts/notifier-event.md", "reference/contracts/notifier-event"],
+  ["contracts/cli-json.md", "reference/contracts/cli-json"],
+  ["contracts/usage-record.md", "reference/contracts/usage-record"],
   ["docs/adr/README.md", "reference/adr/index"],
   ["SCOPE.md", "reference/scope"],
   ["CHANGELOG.md", "changelog"],

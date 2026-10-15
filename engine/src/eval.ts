@@ -104,6 +104,8 @@ function runPipeline(repo: string, featureDir: string, c: EvalCase, configPath: 
   const env = { ...process.env };
   delete env.PASEO_AGENT_ID;
   delete env.PASEO_AGENT_CWD;
+  // Evaluation runs are not real requirements: keep them out of the machine's index and usage records.
+  env.REQ_KIT_NO_RECORD = "1";
   const run = spawnSync(process.execPath, args, { cwd: repo, env, encoding: "utf8", timeout: timeoutMs, windowsHide: true });
   fs.appendFileSync(path.join(repo, featureDir, ".pipeline", "eval-run.log"), `${run.stdout ?? ""}${run.stderr ?? ""}`);
   if (run.error) return `流水线进程出错：${run.error.message}`;

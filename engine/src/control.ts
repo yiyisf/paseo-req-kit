@@ -31,7 +31,7 @@ const RESULT_TEXT: Record<string, string> = {
   not_completed: "未完成",
 };
 
-function resultText(record: StepRecord): string {
+export function resultText(record: StepRecord): string {
   const r = record.result ?? {};
   if (typeof r.has_runnable_service === "boolean") return r.has_runnable_service ? "完成（项目有常驻服务）" : "完成";
   if (typeof r.started === "boolean") return r.started ? "服务启动成功" : "服务启动失败";
@@ -42,7 +42,7 @@ function resultText(record: StepRecord): string {
   return "完成";
 }
 
-function stepName(record: StepRecord, state: Pick<PipelineState, "type" | "joint"> | null = null): string {
+export function stepName(record: StepRecord, state: Pick<PipelineState, "type" | "joint"> | null = null): string {
   const [base, slug] = record.key.split("@");
   const repo = slug ? (state?.joint ?? []).find((j) => j.slug === slug)?.name ?? slug : null;
   const title = `${stepTitle(state?.type, record.stepId)}${repo ? `·${repo}` : ""}`;

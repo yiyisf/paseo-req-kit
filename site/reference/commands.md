@@ -30,6 +30,18 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `req start <需求> [--profile quick\|standard] [--phases gated] [--at 22:00]` | 启动流水线（通常由 `/req` 在对话中启动） |
 | `req digest [--notify]` | 项目的需求总览；`--notify` 同时发到外部通知 |
 | `req digest --schedule "0 9 * * 1"` | 让 Paseo 按时间表发送需求总览；取消：`req digest --cancel <ID>` |
+| `req index --rebuild [目录…]` | 把这些仓库中运行过的需求登记进本机的需求索引（1.9 之前运行过的需求用） |
+
+### 使用统计（任何目录）
+
+| 命令 | 作用 |
+| --- | --- |
+| `req stats [--since 30d] [--month 2026-10]` | 本机的使用统计：需求数、交付周期、返工、等待、各步骤用时、用量；`--json`、`--csv` |
+| `req stats --report [--out 目录]` | 生成汇报用的 `.md` 汇总和 `.csv` 明细 |
+| `req stats --export [文件]` | 导出本机的运行记录 |
+| `req stats --merge <文件…> --report` | 汇总几台机器的导出 |
+| `req index [--prune]` | 本机记录的需求；`--prune` 移除目录已不在的 |
+| `req api <命令> …` | 给程序用的 JSON 输出，见 [req api](./contracts/cli-json) |
 
 `<需求>` 可以写功能目录（`docs/features/20261012-sms-login`）、目录名，或名称中能唯一确定的一部分（`sms-login`）。
 

@@ -30,6 +30,16 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req digest --schedule "0 9 * * 1"
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
 
+使用情况（可以在任何目录运行）：
+  req stats [--since 30d] [--month 2026-10]
+                               本机的使用统计：需求数、交付周期、返工、等待、各步骤用时、用量
+  req stats --report [--out 目录]
+                               生成汇报用的汇总（.md）和每个需求一行的表格（.csv）
+  req stats --export [文件]    导出本机的运行记录；汇总多台机器：req stats --merge <文件…> --report
+  req index [--rebuild [目录…]] [--prune]
+                               本机记录的需求（Paseo 插件据此找到所有需求）；1.9 之前运行过的用 --rebuild 补登
+  req api <命令> …             给程序用的 JSON 输出（见 contracts/cli-json.md）
+
 本机维护：
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
   req configure                配置向导：选择 builder 和 reviewer 用的 agent
@@ -155,6 +165,15 @@ switch (command) {
     break;
   case "digest":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "digest.ts"), ...rest]) : 1;
+    break;
+  case "stats":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "stats.ts"), ...rest]) : 1;
+    break;
+  case "index":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "index-cmd.ts"), ...rest]) : 1;
+    break;
+  case "api":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "api.ts"), ...rest]) : 1;
     break;
   case "notify-test":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "notify-test.ts"), ...rest]) : 1;
