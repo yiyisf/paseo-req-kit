@@ -11,6 +11,7 @@ export const USAGE = `用法：
   start-pipeline [--feature <功能目录>] --status   查看进度（不写 --feature 时：工作区里只有一个需求运行过就看它）
   start-pipeline --feature <功能目录> --stop       停止（之后可用 --resume 继续）
   start-pipeline --list                           列出这个项目所有工作区中的需求
+  start-pipeline --card-fields                    团队对接了外部系统时，确认需求说明时要一并确认的卡片字段
   start-pipeline --feature <功能目录> --spec-review  确认前请另一个模型独立审阅需求说明草稿（后台进行，结果发回对话）
   start-pipeline --feature <功能目录> --worktree     为这个需求新建 Paseo worktree 工作区并在那里开发（对话目录不变）
   start-pipeline --feature <功能目录> --at 22:00     预约在指定时间开始（也可以写"明天 8:30""2026-10-14 08:30""+2h"）
@@ -52,6 +53,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       status: { type: "boolean", default: false },
       stop: { type: "boolean", default: false },
       list: { type: "boolean", default: false },
+      "card-fields": { type: "boolean", default: false },
       "spec-review": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       "source-repo": { type: "string" },
@@ -71,7 +73,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     console.log(USAGE);
     process.exit(0);
   }
-  if (!values.feature && !values.list && !values.status) {
+  if (!values.feature && !values.list && !values.status && !values["card-fields"]) {
     throw new Error(`缺少 --feature\n\n${USAGE}`);
   }
   const profile = values.profile?.trim().toLowerCase();
@@ -121,6 +123,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     status: values.status ?? false,
     stop: values.stop ?? false,
     list: values.list ?? false,
+    cardFields: values["card-fields"] ?? false,
     specReview: values["spec-review"] ?? false,
     worktree: values.worktree ?? false,
     sourceRepo: values["source-repo"] ? path.resolve(values["source-repo"]) : null,

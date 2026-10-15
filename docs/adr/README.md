@@ -29,3 +29,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0025 联合需求：一个需求同时改几个仓库](0025-joint-requirements.md)
 - [0026 本机的需求索引、使用记录和 req api](0026-machine-records-and-api.md)
 - [0027 Paseo 插件：随 req-kit 一起发布，只通过 req api 工作](0027-paseo-plugin.md)
+- [0028 外部系统对接：命令写法在配置里，内容由 AI 整理，调用是确定的](0028-external-integrations.md)

@@ -256,6 +256,7 @@ export function apiStatus(repoArg: string, feature: string) {
       : null,
     steps: state ? state.history.map((h) => stepJson(h, state)) : [],
     gate: state?.gate ?? null,
+    external: Object.entries(state?.external ?? {}).map(([name, r]) => ({ name, id: r.id, url: r.url, status: r.status, syncedAt: r.syncedAt, pending: r.pending.length, lastError: r.pending.at(-1)?.error ?? null })),
     joint: (state?.joint ?? []).map((j) => ({ name: j.name, slug: j.slug, repo: j.repo, sourceRepo: j.sourceRepo, branch: j.branch, workspaceId: j.workspaceId, gate: j.gate ?? null })),
   };
 }
@@ -290,7 +291,7 @@ export function apiIndex(input: { rebuild: string[]; prune: boolean }) {
   return { scanned: [...dirs], registered, pruned, total: readIndex().length };
 }
 
-const RUNNABLE = ["approve", "stop", "resume", "verify"] as const;
+const RUNNABLE = ["approve", "stop", "resume", "verify", "sync"] as const;
 
 /** Runs `req <command> <需求>` where people would, and reports what it said. */
 export function apiRun(command: string, repoArg: string, feature: string, extra: string[]) {

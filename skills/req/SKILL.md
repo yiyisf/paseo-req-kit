@@ -65,6 +65,7 @@ metadata:
 | 做什么 | 命令 |
 | --- | --- |
 | 需求说明审阅 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --spec-review` |
+| 卡片字段 | `node "{{PIPELINE_LAUNCHER}}" --card-fields` |
 | 启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录>` |
 | 启动（自动新建工作区） | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --worktree` |
 | 预约启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --at <时间>`（时间写 `22:00`、`明天 8:30`、`2026-10-14 08:30` 或 `+2h`；可以和 `--worktree` 一起用） |

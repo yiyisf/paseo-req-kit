@@ -13,6 +13,7 @@ import { scheduledStartPrompt } from "./messages.js";
 import { describeTime, parseStartTime } from "./schedule-time.js";
 import { moveToOwnWorktree, type OwnWorktree } from "./worktree.js";
 import { loadConfig, PHASE_MODE_LABELS, type PipelineConfig, PROFILE_LABELS } from "./config.js";
+import { cardFieldsText } from "./integrations.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeLiveActivity, describeStatus, stopPipeline } from "./control.js";
 import { describeFeatures, featuresWithRuns, findWorktreeRun, listFeatures, resolveFeatureArg } from "./features.js";
@@ -78,6 +79,17 @@ try {
   fail((error as Error).message);
 }
 const configPath = args.configPath ?? defaultConfigPath();
+
+if (args.cardFields) {
+  try {
+    const text = cardFieldsText(loadConfig(configPath, fs.existsSync(args.repo) ? args.repo : undefined).config.integrations);
+    console.log(text ?? "没有配置外部系统对接（integrations），不需要 card.json，跳过这一步。");
+    process.exit(0);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(2);
+  }
+}
 
 if (args.list) {
   console.log(describeFeatures(listFeatures(args.repo), args.repo));

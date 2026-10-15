@@ -2,6 +2,7 @@
 // is it?" or "stop for now". Output is plain language for relaying to the user.
 
 import { describeActivity } from "./activity.js";
+import { describeExternal } from "./integrations.js";
 import { PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig, REQUIREMENT_TYPE_LABELS } from "./config.js";
 import type { AgentRuntime, RuntimeFactory } from "./runtime.js";
 import { isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
@@ -80,6 +81,7 @@ export function describeStatus(state: PipelineState | null, featureDir: string, 
   ];
   if (state.stopReason && !running) lines.push(`原因：${state.stopReason}`);
   for (const j of state.joint ?? []) lines.push(`联合开发：${j.name} 在工作区 ${j.repo}（分支 ${j.branch}）`);
+  for (const l of describeExternal(state.external)) lines.push(`外部系统 ${l}`);
   const KIND_TEXT = { reminder: "提醒", "auto-resume": "自动继续", watchdog: "定时检查", "verify-start": "开始测试验证", "approval-continue": "未确认时按方案继续" } as const;
   for (const s of state.schedules ?? []) {
     if (s.kind === "watchdog" && !running) continue;

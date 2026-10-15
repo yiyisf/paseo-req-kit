@@ -29,6 +29,8 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req digest [--notify]        项目的需求总览；--notify 同时发到外部通知（如企业 IM）
   req digest --schedule "0 9 * * 1"
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
+  req sync <需求>              把需求同步到对接的外部系统（补发失败的调用、补建卡片、更新状态）
+  req integration test [需求]  只显示对接外部系统时会执行的命令，不真正调用
 
 使用情况（可以在任何目录运行）：
   req stats [--since 30d] [--month 2026-10]
@@ -179,6 +181,12 @@ switch (command) {
     break;
   case "api":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "api.ts"), ...rest]) : 1;
+    break;
+  case "sync":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), "sync", ...rest]) : 1;
+    break;
+  case "integration":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), ...rest]) : 1;
     break;
   case "plugin":
     code = node([path.join(kitRoot, "bin", "req-plugin.mjs"), ...rest]);

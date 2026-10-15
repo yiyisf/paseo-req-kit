@@ -34,6 +34,7 @@
 | `codeBase` | object \| null | 可选，1.8.0 起。`attempt`、`commit`：这次尝试在改动任何代码之前的提交，质量门的基线和范围检查从这里比较。尝试开始时就已经写过代码的旧记录为 `commit: null` |
 | `joint` | array \| null | 可选，1.8.0 起。联合需求（spec 的 `- 联合开发：`）中其他仓库的工作区：`name`（`relatedRepos` 中的名称）、`slug`（步骤键的后缀，如 `implement@backend`）、`sourceRepo`（切出工作区的那份检出）、`repo`（工作区目录）、`workspaceId`、`branch`、`specHash`（最近一次同步过去的 spec），以及这个仓库自己的 `codeBase` 和 `gate`（格式同顶层）。见 ADR 0025 |
 | `approval` | object \| null | 可选，1.8.0 起。方案确认点：`attempt`（哪一次尝试的方案）、`status`（`waiting` / `approved`）、`at`。需求变更后的新尝试需要重新确认 |
+| `external` | object \| null | 可选，1.9.0 起。外部系统中的卡片，按集成名称：`id`（卡片编号）、`url`、`status`（最近设置的状态）、`syncedAt`、`pending`（没有成功、等待补发的调用：`action` 为 `create` / `status`、`event`、`status`、`at`、`attempts`、`error`）。见 ADR 0028 |
 | `gate` | object \| null | 可选，1.8.0 起。质量门：`baseline`（`attempt`、`commit`、`at`、`results`：每项检查改动前 `pass` / `fail`），`runs`（每次运行：`key` 步骤键、`attempt`、`at`、`checks`（`name`、`result`：`pass` / `fail` / `skipped`、`failedBefore`）、`newFailures`、`fixRounds`、`passed`）。各次运行的完整输出在 `.pipeline/checks/<步骤键>/` |
 
 `schedules[].kind` 在 1.7.0 起还可能是 `verify-start`（`--verify-at` 预约的测试验证开始），1.8.0 起还可能是 `approval-continue`（方案确认超时后按方案继续，`designApproval.autoContinueHours`）。`history` 中每条步骤记录在 1.7.0 起有可选的 `phase`（`develop` / `verify`），用于按阶段统计用时与用量；没有时按研发阶段统计。

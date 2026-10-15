@@ -33,6 +33,7 @@ import {
 import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
+import { describeExternal, type IntegrationEvent, type Runner, syncIntegration } from "./integrations.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
 import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
@@ -56,6 +57,8 @@ export interface PipelineContext {
   approveCommand?: string;
   log: (message: string) => void;
   sleep: (ms: number) => Promise<void>;
+  /** Runs integration commands; tests replace it. Default: the real command line. */
+  integrationRunner?: Runner;
   /** Paseo-managed services of this run (filled in by the pipeline). */
   services?: { names: string[] | null | undefined; started: Set<string> };
   /** Paseo tools the step agents get; looked up once (undefined: not yet). */
@@ -382,6 +385,21 @@ async function notifyExternal(ctx: PipelineContext, type: NotifierEventType, tex
     },
     ctx.log,
   );
+}
+
+/** Keeps the requirement's card in each configured external system in step (1.9). Never throws. */
+async function integrate(ctx: PipelineContext, event: IntegrationEvent): Promise<void> {
+  if (ctx.config.integrations.length === 0) return;
+  for (const config of ctx.config.integrations) {
+    await syncIntegration({
+      config,
+      ctx: { repo: ctx.repo, featureDir: ctx.featureDir, state: ctx.state, projectDefaults: ctx.config.integrationDefaults[config.name] },
+      event,
+      run: ctx.integrationRunner,
+      log: ctx.log,
+    });
+  }
+  save(ctx);
 }
 
 /** Sends a progress note once per run attempt, when enabled. */
@@ -1648,8 +1666,13 @@ async function setUpJoint(ctx: PipelineContext): Promise<void> {
 }
 
 /** What the report is told about this attempt: usage, the quality gate, the scope check. */
+/** The requirement's cards in external systems, for the report's appendix. */
+function externalLines(ctx: PipelineContext): string[] {
+  return describeExternal(ctx.state.external).map((l) => `外部系统 ${l}`);
+}
+
 function reportLines(ctx: PipelineContext): string[] {
-  const lines = [...usageLines(ctx), ...gateLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx), ...jointLines(ctx)];
+  const lines = [...usageLines(ctx), ...gateLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx), ...jointLines(ctx), ...externalLines(ctx)];
   if (ctx.config.checks.length === 0 && ctx.state.type !== "assessment") {
     lines.push("质量门：项目没有配置检查（checks），流水线没有自己运行检查，以各步骤记录的检查结果为准");
   }
@@ -1693,6 +1716,7 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
       }
       ctx.state.phase = "verify";
       save(ctx);
+      await integrate(ctx, "verify");
     }
     if (!(await verifyPhase(ctx, design))) break;
     await handBack(ctx);
@@ -1705,6 +1729,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
   ctx.state.status = "running";
   ctx.state.stopReason = null;
   save(ctx);
+  await integrate(ctx, phaseOf(ctx) === "verify" ? "verify" : "started");
   try {
     await checkQuota(ctx);
     const report = await flow(ctx);
@@ -1730,6 +1755,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     const text = developOnly
       ? `研发已完成（只做研发）：${outcomeText[report.outcome as string] ?? report.outcome}，请按提测说明人工测试。`
       : `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`;
+    await integrate(ctx, "completed");
     await notifyExternal(ctx, "completed", text, {
       outcome: report.outcome,
       summary: report.summary,
@@ -1757,6 +1783,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
           handbacks: ctx.state.handbacks ?? 0,
         }),
       );
+      await integrate(ctx, "phase_done");
       await notifyExternal(ctx, "phase_done", `研发已完成，可以提测：提测说明在 ${ctx.featureDir}/handoff.md。${verifyAt ? `已预约在 ${verifyAt} 开始测试验证。` : ""}`, {
         handoffPath: `${ctx.featureDir}/handoff.md`,
         mode: runPhases(ctx.state).mode,
@@ -1785,6 +1812,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
           autoContinueAt,
         }),
       );
+      await integrate(ctx, "approval");
       await notifyExternal(ctx, "approval", `方案已通过审核，请需求方确认"做完后会看到什么"再开始写代码：${ctx.featureDir}/preview.md`, {
         previewPath: `${ctx.featureDir}/preview.md`,
         approveCommand: approveCommandOf(ctx),
@@ -1805,6 +1833,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       const external = reproduce
         ? `没能复现这个缺陷，需要需求方补充 ${error.questions.length} 项信息，流水线已暂停，请到发起的对话中回答。`
         : `方案审核发现 ${error.questions.length} 个需要需求方决定的问题，流水线已暂停，请到发起的对话中回答。`;
+      await integrate(ctx, "blocked");
       await notifyExternal(ctx, "blocked", external, {
         questions: error.questions,
         resumeCommand: ctx.resumeCommand,
@@ -1827,6 +1856,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         autoResumeAt,
       }),
     );
+    await integrate(ctx, "failed");
     await notifyExternal(ctx, "failed", `开发流水线在「${stepTitle}」步骤中断：${(error as Error).message}`, {
       stepTitle,
       reason: (error as Error).message,

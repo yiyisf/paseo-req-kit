@@ -79,6 +79,8 @@ export interface RequirementDetail extends Requirement {
   steps: Step[];
   gate: { runs: GateRun[] } | null;
   joint: Array<{ name: string; repo: string; branch: string; workspaceId: string; gate: { runs: GateRun[] } | null }>;
+  /** Cards in external systems (req-kit 1.9.0-beta.3+; absent before). */
+  external?: Array<{ name: string; id: string | null; url: string | null; status: string | null; syncedAt: string | null; pending: number; lastError: string | null }>;
 }
 
 export interface StatsSummary {
@@ -137,7 +139,7 @@ export const statsRpc = defineRpc({
   output: z.custom<StatsSummary>(),
 });
 
-export const ACTIONS = ["approve", "stop", "resume", "verify"] as const;
+export const ACTIONS = ["approve", "stop", "resume", "verify", "sync"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 export const runRpc = defineRpc({

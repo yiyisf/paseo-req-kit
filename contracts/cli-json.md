@@ -27,7 +27,7 @@
 | `req api file <需求> <文件> [--repo <目录>]` | `{ featureDir, file, size, truncated, content }`；只能读取功能目录中的文档（见下），最多 512 KB |
 | `req api stats [--since 30d] [--month 2026-10]` | `req stats --json` 的内容，见 [使用记录](usage-record.md) |
 | `req api index [--rebuild <目录>…] [--prune]` | 不带选项：索引的全部条目；`--rebuild`：`{ scanned, registered, pruned, total }` |
-| `req api run <approve\|stop\|resume\|verify> <需求> [--repo <目录>] [选项]` | `{ command, featureDir, ok, exitCode, message }`。在 `--repo`（默认当前目录）中执行与 `req <命令> <需求>` 完全相同的操作；`ok` 为 false 时退出码为 1 |
+| `req api run <approve\|stop\|resume\|verify\|sync> <需求> [--repo <目录>] [选项]` | `{ command, featureDir, ok, exitCode, message }`。在 `--repo`（默认当前目录）中执行与 `req <命令> <需求>` 完全相同的操作；`ok` 为 false 时退出码为 1 |
 
 `<需求>` 的写法与 `req status` 相同：功能目录、目录名或名称中能唯一确定的一部分。需求在为它新建的工作区中开发时，`--repo` 写对话所在的目录或那个工作区都可以。
 
@@ -64,3 +64,4 @@
 | `steps` | 每个步骤一项：`{ key, stepId, title, phase, attempt, round, agentId, startedAt, endedAt, minutes, outcome, result, error, usage }`；`title` 是给人看的名称（如"代码评审（第 2 轮）"），`result` 是结论的文字（如"需要修改"） |
 | `gate` | 质量门：状态文件中的 `gate` |
 | `joint` | 联合需求的其他仓库：`[{ name, slug, repo, sourceRepo, branch, workspaceId, gate }]` |
+| `external` | 外部系统中的卡片（1.9.0-beta.3 起）：`[{ name, id, url, status, syncedAt, pending, lastError }]`；`pending` 是等待补发的调用数 |

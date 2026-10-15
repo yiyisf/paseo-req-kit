@@ -30,6 +30,8 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `req start <需求> [--profile quick\|standard] [--phases gated] [--at 22:00]` | 启动流水线（通常由 `/req` 在对话中启动） |
 | `req digest [--notify]` | 项目的需求总览；`--notify` 同时发到外部通知 |
 | `req digest --schedule "0 9 * * 1"` | 让 Paseo 按时间表发送需求总览；取消：`req digest --cancel <ID>` |
+| `req sync <需求>` | 把需求同步到对接的外部系统：补发没有成功的调用、补建卡片、更新状态 |
+| `req integration test [需求]` | 显示对接外部系统时每个事件会执行的命令，不真正调用 |
 | `req index --rebuild [目录…]` | 把这些仓库中运行过的需求登记进本机的需求索引（1.9 之前运行过的需求用） |
 
 ### 使用统计（任何目录）

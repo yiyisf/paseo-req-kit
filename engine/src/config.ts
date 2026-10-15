@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type IntegrationConfig, validateIntegrations } from "./integrations.js";
 import { NOTIFIER_EVENT_TYPES, type NotifierConfig } from "./notifiers.js";
 import type { StepId } from "./steps.js";
 
@@ -175,6 +176,10 @@ export interface PipelineConfig {
   reviewPanel: ReviewPanelSettings;
   /** External notifiers (e.g. an internal IM). Machine or team config only. */
   notifiers: NotifierConfig[];
+  /** External systems kept in step with requirements, e.g. an ALM's CLI (1.9). Machine or team config only: they run commands. */
+  integrations: IntegrationConfig[];
+  /** Per integration name, values for its {field.*} placeholders; a project's file may set these (e.g. its project id). */
+  integrationDefaults: Record<string, Record<string, string>>;
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -277,6 +282,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   requiredVersion: null,
   reviewPanel: { enabled: false, steps: ["design_review", "code_review"], profiles: ["standard"], members: [] },
   notifiers: [],
+  integrations: [],
+  integrationDefaults: {},
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -332,6 +339,14 @@ function readJson(file: string, label: string): Record<string, unknown> {
 function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConfig {
   const merged: PipelineConfig = { ...base, ...(raw as Partial<PipelineConfig>) };
   merged.agents = { ...base.agents, ...(isRecord(raw.agents) ? raw.agents : {}) } as PipelineConfig["agents"];
+  // Integration defaults add up by integration and field: the team sets the shared ones, a project its own.
+  if (isRecord(raw.integrationDefaults)) {
+    const combined: Record<string, Record<string, string>> = { ...base.integrationDefaults };
+    for (const [name, fields] of Object.entries(raw.integrationDefaults)) {
+      combined[name] = { ...(combined[name] ?? {}), ...(isRecord(fields) ? (fields as Record<string, string>) : {}) };
+    }
+    merged.integrationDefaults = combined;
+  }
   merged.stepTimeoutMinutes = {
     ...base.stepTimeoutMinutes,
     ...(isRecord(raw.stepTimeoutMinutes) ? raw.stepTimeoutMinutes : {}),
@@ -515,6 +530,11 @@ function validate(config: PipelineConfig): void {
       throw new ConfigError(`notifiers[${i}].events 只能包含 ${NOTIFIER_EVENT_TYPES.join("、")}`);
     }
   });
+  const integrationProblem = validateIntegrations(config.integrations);
+  if (integrationProblem) throw new ConfigError(integrationProblem);
+  if (!isRecord(config.integrationDefaults) || !Object.values(config.integrationDefaults).every((m) => isRecord(m) && Object.values(m).every((v) => typeof v === "string"))) {
+    throw new ConfigError('integrationDefaults 必须是 { "<集成名称>": { "<字段>": "<值>" } }');
+  }
   if (config.requiredVersion !== null && typeof config.requiredVersion !== "string") {
     throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
   }
@@ -550,7 +570,7 @@ export interface LoadedConfig {
 }
 
 /** Keys a project file may not set: they run code or reach outside the repository. */
-const NOT_IN_PROJECT_KEYS = ["notifiers"] as const;
+const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations"] as const;
 
 /** Notifier module paths are relative to the file that names them; "~/" is the home directory. */
 function resolveNotifiers(raw: Record<string, unknown>, file: string): Record<string, unknown> {

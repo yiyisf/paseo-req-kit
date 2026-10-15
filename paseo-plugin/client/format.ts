@@ -85,12 +85,21 @@ export function facts(r: Requirement): string {
 }
 
 /** What a person can do from here, by the requirement's state. */
-export function actionsFor(r: Pick<Requirement, "attention" | "running" | "status">): Array<"approve" | "stop" | "resume" | "verify"> {
-  if (r.running) return ["stop"];
-  if (r.attention === "approval") return ["approve"];
-  if (r.attention === "interrupted" || r.attention === "business") return ["resume"];
-  if (r.status === "phase_done") return ["verify"];
-  return [];
+export function actionsFor(
+  r: Pick<Requirement, "attention" | "running" | "status"> & { external?: Array<{ pending: number; id: string | null }> },
+): Array<"approve" | "stop" | "resume" | "verify" | "sync"> {
+  const base: Array<"approve" | "stop" | "resume" | "verify" | "sync"> = r.running
+    ? ["stop"]
+    : r.attention === "approval"
+      ? ["approve"]
+      : r.attention === "interrupted" || r.attention === "business"
+        ? ["resume"]
+        : r.status === "phase_done"
+          ? ["verify"]
+          : [];
+  // A running pipeline sends what failed by itself at its next step change.
+  if (!r.running && r.status && (r.external ?? []).some((e) => e.pending > 0 || !e.id)) base.push("sync");
+  return base;
 }
 
 export const ACTION_TEXT = {
@@ -98,4 +107,5 @@ export const ACTION_TEXT = {
   stop: { label: "停止", confirm: "停止这个需求的流水线？正在运行的步骤会被中断，之后可以继续。" },
   resume: { label: "继续", confirm: "从中断处继续？需求说明改过的话，只处理变化的部分。" },
   verify: { label: "开始测试验证", confirm: "开始测试验证？选择在哪里验证。" },
+  sync: { label: "同步到外部系统", confirm: "把这个需求同步到对接的外部系统：补发没有成功的调用、补建卡片、更新状态。" },
 } as const;

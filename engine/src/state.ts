@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { DefectHandling, PhaseMode, ProfileName, RequirementType, VerifyEnvironment } from "./config.js";
+import type { ExternalRecord } from "./integrations.js";
 import { registerRequirement } from "./records.js";
 import type { AgentUsage } from "./usage.js";
 import type { StepId } from "./steps.js";
@@ -106,6 +107,8 @@ export interface PipelineState {
   approval?: { attempt: number; status: "waiting" | "approved"; at: string; auto?: boolean } | null;
   /** Quality gate: the checks' results before the change, and every run after a step (1.8). */
   gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
+  /** External systems (1.9): the requirement's card in each, by integration name. */
+  external?: Record<string, ExternalRecord> | null;
 }
 
 export interface JointRepo {

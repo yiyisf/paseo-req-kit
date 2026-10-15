@@ -2,11 +2,13 @@
 // management actions (each one is `req <command>` on the daemon machine, after confirming).
 import type { PluginHostProps, PluginScreenProps, PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { Modal, ScrollView, useToast } from "@getpaseo/plugin/client/react-native";
+import { ExternalLink } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Action, RequirementDetail, Step } from "../shared/contracts";
 import { useAction, useDocument, usePreferences, useRequirement, useRequirements } from "./data";
 import { ACTION_TEXT, actionsFor, ago, ATTENTION_LABELS, facts, FILE_LABELS, minutes, tokens } from "./format";
+import { Markdown, tsvToMarkdown } from "./markdown";
 import { Badge, Button, Chip, Status, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
@@ -64,9 +66,7 @@ function DocumentModal({
         <Status theme={theme} loading={doc.isPending} error={doc.error} />
         {doc.data ? (
           <>
-            <Text selectable style={[s.text, { lineHeight: 21 }]}>
-              {doc.data.content}
-            </Text>
+            <Markdown theme={theme} source={doc.data.file.endsWith(".tsv") ? tsvToMarkdown(doc.data.content) : doc.data.content} />
             {doc.data.truncated ? <Text style={s.muted}>文件较大，只显示了开头的 512 KB。</Text> : null}
           </>
         ) : null}
@@ -220,6 +220,32 @@ export function RequirementView({
           </Text>
         ))}
       </View>
+
+      {(d.external ?? []).length > 0 ? (
+        <View style={s.card}>
+          <Text style={s.heading}>外部系统</Text>
+          {(d.external ?? []).map((e) => (
+            <View key={e.name} style={{ gap: 2 }}>
+              <View style={s.row}>
+                <Text style={s.text}>
+                  {e.name}：{e.id ?? "还没有建卡"}
+                </Text>
+                {e.status ? (
+                  <Badge theme={theme} tone="muted">
+                    {e.status}
+                  </Badge>
+                ) : null}
+              </View>
+              {e.url ? <ExternalLink href={e.url}>打开卡片</ExternalLink> : null}
+              {e.pending > 0 ? (
+                <Text style={s.danger}>
+                  有 {e.pending} 次调用没有成功：{e.lastError}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {d.usage ? (
         <View style={s.card}>
