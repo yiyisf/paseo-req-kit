@@ -1,0 +1,117 @@
+// 1.11: the intake process — new cards with the title tag start requirements; replies are passed on.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import type { IntegrationConfig } from "../src/integrations.js";
+
+const ROOT = path.resolve(import.meta.dirname, "..", "..");
+const FAKE_ALM = path.join(ROOT, "engine", "test", "fake-alm-cards.mjs");
+
+function alm(): IntegrationConfig {
+  return {
+    name: "ALM",
+    command: FAKE_ALM,
+    query: {
+      args: ["alm-card", "view", "{id}", "--fields", "globalId,name,state,createdBy,subsysName,description"],
+      fields: { title: "data.name", body: "data.description", state: "data.state", author: "data.createdBy", subsystem: "data.subsysName" },
+    },
+    describe: { args: ["alm-card", "edit", "{id}", "-b", "{description}"] },
+    list: {
+      args: ["alm-card", "list", "--project-id", "{projectId}", "-t", "用户故事", "-S", "新建", "-s", "AI", "-L", "{pageSize}", "-P", "{page}", "--fields", "globalId,name,state,subsysName,createdBy"],
+      pageSize: 2,
+      fields: { id: "globalId", title: "name", state: "state", subsystem: "subsysName", author: "createdBy" },
+    },
+  };
+}
+
+test("接单器：只接登记空间中标题带 [AI] 的新卡片，按子系统进对应仓库；接不了的说明原因、卡片不变就不再试；回复照常转达；每次最多开始几个", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-factory-"));
+  const cards = path.join(dir, "cards.json");
+  const card = (name: string, subsysName: string, extra: Record<string, unknown> = {}) => ({ name, state: "新建", createdBy: "张广祥", subsysName, projectId: "186149", description: "# 需求\n\n内容", ...extra });
+  fs.writeFileSync(
+    cards,
+    JSON.stringify({
+      "CM#1": card("[AI]【message-service】新增 test 接口", "CSP-CMASTER_云匠"),
+      "CM#2": card("新增导出（没有标识）", "CSP-CMASTER_云匠"),
+      "CM#3": card("[AI] 子系统没有仓库", "CSP-OTHER"),
+      "CM#4": card("【AI】账单导出", "CSP-BILLING"),
+      "CM#5": card("[AI] 已经开发中", "CSP-CMASTER_云匠", { state: "开发中" }),
+      "OT#1": card("[AI] 别的空间", "CSP-CMASTER_云匠", { projectId: "999" }),
+      "CM#6": card("[AI] 第三个", "CSP-BILLING"),
+    }),
+  );
+  const repo = (name: string, cardSource: unknown) => {
+    const r = path.join(dir, name);
+    fs.mkdirSync(r);
+    execFileSync("git", ["init", "-q"], { cwd: r });
+    fs.writeFileSync(path.join(r, ".requirement-pipeline.json"), JSON.stringify({ cardSource }));
+    return fs.realpathSync(r);
+  };
+  const backend = repo("message-service", { system: "ALM", projectId: "186149", subsystems: ["CSP-CMASTER_云匠"] });
+  const billing = repo("billing", { system: "ALM", projectId: "186149", subsystems: ["CSP-BILLING"] });
+  const configPath = path.join(dir, "config.json");
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  fs.writeFileSync(configPath, JSON.stringify({ ...base, agents: { builder: { provider: "claude/m" }, reviewer: { provider: "codex/m" } }, integrations: [alm()], factory: { maxNewPerPoll: 2 } }));
+
+  const events = path.join(dir, "events.jsonl");
+  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_EVENTS: events };
+  // The fake runtime and the fake tool read these from the process environment.
+  const saved = { ...process.env };
+  Object.assign(process.env, env);
+  try {
+    const { main: card } = await import("../src/card-cmd.js");
+    const { main, pollOnce, hasTitleTag, listItems } = await import("../src/factory.js");
+    for (const r of [backend, billing]) assert.equal(await card(["route", "--add", r], { env, out: () => undefined }), 0);
+
+    const first = await pollOnce(configPath, { env });
+    assert.deepEqual(first.started.map((s) => s.split("「")[0]), ["ALM:CM#1", "ALM:CM#4"]);
+    assert.match(first.started[0], new RegExp(`→ ${backend.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/docs/features/\\d{8}-cm-1$`));
+    assert.match(first.started[1], /→ .*billing\/docs\/features\/\d{8}-cm-4$/);
+    assert.deepEqual(first.skipped.map((s) => s.split("「")[0]), ["ALM:CM#3"]);
+    assert.match(first.skipped[0], /子系统「CSP-OTHER」没有对应的仓库/);
+    assert.match(first.notes.join("\n"), /这次已开始 2 个需求/);
+    const sessions = fs.readFileSync(events, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.type === "startSession");
+    assert.equal(sessions.length, 2);
+
+    // Next look: the third card is started, nothing is tried twice.
+    const second = await pollOnce(configPath, { env });
+    assert.deepEqual(second.started.map((s) => s.split("「")[0]), ["ALM:CM#6"]);
+    assert.deepEqual(second.skipped, []);
+    assert.deepEqual((await pollOnce(configPath, { env })).started, []);
+
+    // The requester renames the skipped card into a subsystem a repository takes: it is tried again.
+    const all = JSON.parse(fs.readFileSync(cards, "utf8"));
+    all["CM#3"].subsysName = "CSP-BILLING";
+    fs.writeFileSync(cards, JSON.stringify(all));
+    assert.deepEqual((await pollOnce(configPath, { env })).started.map((s) => s.split("「")[0]), ["ALM:CM#3"]);
+
+    // Replies are passed on in the same look.
+    const feature = path.join(backend, "docs", "features", fs.readdirSync(path.join(backend, "docs", "features"))[0]);
+    fs.writeFileSync(path.join(feature, "card-ai.md"), "### 待回答的问题\n- Q1 返回什么？\n");
+    assert.equal(await card(["publish", "ALM:CM#1", "--config", configPath], { env, out: () => undefined }), 0);
+    const now = JSON.parse(fs.readFileSync(cards, "utf8"));
+    now["CM#1"].description = now["CM#1"].description.replace("- Q1：", "- Q1：hello world");
+    fs.writeFileSync(cards, JSON.stringify(now));
+    const relay = await pollOnce(configPath, { env });
+    assert.equal(relay.relayed.length, 1);
+    assert.match(relay.relayed[0], /CM#1：已转给需求会话（需求方回答了 Q1）/);
+
+    const lines: string[] = [];
+    assert.equal(await main(["status"], { env, out: (l) => lines.push(l) }), 0);
+    assert.match(lines.join("\n"), /接单器没有在运行[\s\S]*最近一次检查：.*转达 1 条回复/);
+    const svc: string[] = [];
+    await main(["service"], { env, out: (l) => svc.push(l) });
+    assert.match(svc.join("\n"), process.platform === "win32" ? /schtasks/ : /ExecStart=.*req\.mjs" factory run/);
+
+    assert.ok(hasTitleTag("  [ai] x", ["[AI]"]));
+    assert.ok(!hasTitleTag("x [AI]", ["[AI]"]));
+    assert.deepEqual(listItems({ data: { records: [1] } }), [1]);
+    assert.throws(() => listItems({ data: { x: 1 } }), /list\.items/);
+  } finally {
+    for (const k of Object.keys(env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});

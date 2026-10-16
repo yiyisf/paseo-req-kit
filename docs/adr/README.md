@@ -31,3 +31,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0027 Paseo 插件：随 req-kit 一起发布，只通过 req api 工作](0027-paseo-plugin.md)
 - [0028 外部系统对接：命令写法在配置里，内容由 AI 整理，调用是确定的](0028-external-integrations.md)
 - [0029 从卡片开始的需求：需求会话代替人，卡片描述代替对话](0029-requirements-from-cards.md)
+- [0030 接单器：共享机器上定时接卡片、转达回复](0030-card-intake-process.md)

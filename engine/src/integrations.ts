@@ -50,6 +50,13 @@ export interface IntegrationConfig {
   query?: IntegrationAction & { fields: CardQueryFields };
   /** Replaces the card's description (1.10): {description} is the whole new description. */
   describe?: IntegrationAction;
+  /**
+   * Lists cards for the intake process (1.11): {projectId}, {page}, {pageSize} and {titleTag}
+   * can be used. The output is JSON; `items` is where the list is (a dot path; by default the
+   * first array found at data.list, data.records, data.items, data or the top level), `fields`
+   * where each card's values are within an item.
+   */
+  list?: IntegrationAction & { items?: string; pageSize?: number; maxPages?: number; fields: CardListFields };
   /** Fields the requester confirms with the spec (card.json): name → what to fill in, for /req. */
   cardFields?: Record<string, string>;
   /** Values for {field.<name>} placeholders; a project's integrationDefaults[name] adds to these. */
@@ -65,6 +72,15 @@ export interface CardQueryFields {
   author?: string;
   subsystem?: string;
   url?: string;
+}
+
+/** Where `list` finds each card's values within an item. id and title are required. */
+export interface CardListFields {
+  id: string;
+  title: string;
+  state?: string;
+  subsystem?: string;
+  author?: string;
 }
 
 /** What is known about a requirement's card, in the state file's `external[name]`. */
@@ -96,7 +112,7 @@ export function validateIntegrations(value: unknown): string | null {
     if (names.has(c.name)) return `${at}.name「${c.name}」重复了`;
     names.add(c.name);
     if (typeof c.command !== "string" || !c.command.trim()) return `${at}.command 必须是要运行的命令，例如 "shenbing"`;
-    for (const key of ["create", "status", "query", "describe"] as const) {
+    for (const key of ["create", "status", "query", "describe", "list"] as const) {
       const action = c[key] as Record<string, unknown> | undefined;
       if (action === undefined) continue;
       if (!action || !Array.isArray(action.args) || !action.args.every((a) => typeof a === "string")) return `${at}.${key}.args 必须是字符串数组`;
@@ -122,6 +138,18 @@ export function validateIntegrations(value: unknown): string | null {
         if (!["title", "body", "state", "author", "subsystem", "url"].includes(k)) return `${at}.query.fields 中的 ${k} 不认识（可用：title、body、state、author、subsystem、url）`;
         if (typeof v !== "string") return `${at}.query.fields.${k} 必须是字符串`;
       }
+    }
+    const list = c.list as Record<string, unknown> | undefined;
+    if (list) {
+      const fields = list.fields as Record<string, unknown> | undefined;
+      if (!fields || typeof fields !== "object") return `${at}.list.fields 必须写明每张卡片各值的位置，例如 { "id": "globalId", "title": "name" }`;
+      for (const k of ["id", "title"]) if (typeof fields[k] !== "string") return `${at}.list.fields.${k} 必须是卡片中的位置，例如 "globalId"`;
+      for (const [k, v] of Object.entries(fields)) {
+        if (!["id", "title", "state", "subsystem", "author"].includes(k)) return `${at}.list.fields 中的 ${k} 不认识（可用：id、title、state、subsystem、author）`;
+        if (typeof v !== "string") return `${at}.list.fields.${k} 必须是字符串`;
+      }
+      if (list.items !== undefined && typeof list.items !== "string") return `${at}.list.items 必须是输出中列表的位置，例如 "data.list"`;
+      for (const k of ["pageSize", "maxPages"]) if (list[k] !== undefined && !(Number.isInteger(list[k]) && (list[k] as number) > 0)) return `${at}.list.${k} 必须是正整数`;
     }
     if (c.statusMap !== undefined) {
       if (!c.statusMap || typeof c.statusMap !== "object") return `${at}.statusMap 必须是对象`;

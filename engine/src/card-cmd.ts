@@ -62,7 +62,7 @@ function fail(message: string): never {
   throw new CardError(message);
 }
 
-function cardIntegrations(config: PipelineConfig): IntegrationConfig[] {
+export function cardIntegrations(config: PipelineConfig): IntegrationConfig[] {
   return config.integrations.filter((i) => i.query);
 }
 
@@ -141,6 +141,84 @@ export interface CardCmdOptions {
   out?: (line: string) => void;
 }
 
+export interface BeginResult {
+  status: "started" | "exists";
+  repo: string;
+  featureDir: string;
+  title: string;
+  sessionAgentId: string | null;
+  /** Set when the repository was chosen by the card's subsystem. */
+  routed: boolean;
+}
+
+/**
+ * Starts a requirement from a card: reads it, picks the repository (repoArg, else by subsystem,
+ * else cwd), creates the feature directory and the requirement's chat. A card that already
+ * started is left alone, unless its chat was never created (then that is tried again).
+ */
+export async function beginFromCard(input: { integration: IntegrationConfig; id: string; repoArg: string | null; configPath: string; opts: CardCmdOptions }): Promise<BeginResult> {
+  const { integration, id, opts } = input;
+  const existing = findCardEntry(integration.name, id, opts.env);
+  let repo: string;
+  let featureDir: string;
+  let card: Awaited<ReturnType<typeof queryCard>> | null = null;
+  let source: SourceFile;
+  let routed = false;
+  if (existing) {
+    const where = locateCardRequirement(existing, opts.env) ?? existing.sourceRepo;
+    const known = readSource(where, existing.featureDir);
+    if (!known || known.sessionAgentId) {
+      return { status: "exists", repo: where, featureDir: existing.featureDir, title: known?.title ?? "", sessionAgentId: known?.sessionAgentId ?? null, routed: false };
+    }
+    repo = where;
+    featureDir = existing.featureDir;
+    source = known;
+  } else {
+    card = await queryCard(integration, id, opts.run);
+    const cwd = opts.cwd ?? process.cwd();
+    const byRoute = input.repoArg ? null : routeCard(card, integration.name, opts.env);
+    routed = byRoute !== null;
+    repo = gitTop(input.repoArg ? path.resolve(cwd, input.repoArg) : (byRoute ?? cwd));
+    const parts = splitDescription(card.body);
+    featureDir = `docs/features/${today()}-${cardSlug(id)}`;
+    fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
+    fs.writeFileSync(path.join(repo, featureDir, CARD_SOURCE_FILE), cardSourceText(card, parts.original));
+    source = {
+      v: 1,
+      system: integration.name,
+      id,
+      url: card.url,
+      title: card.title,
+      author: card.author,
+      subsystem: card.subsystem,
+      state: card.state,
+      fetchedAt: new Date().toISOString(),
+      sourceRepo: repo,
+      sessionAgentId: null,
+      originalHash: null,
+      replyHash: null,
+      confirmedAt: null,
+      planConfirmedAt: null,
+      progress: null,
+      publishedAt: null,
+    };
+    writeSource(repo, featureDir, source);
+    saveCardEntry({ system: integration.name, id, sourceRepo: repo, featureDir, createdAt: source.fetchedAt }, opts.env);
+  }
+  const config = loadConfig(input.configPath, repo).config;
+  source.sessionAgentId = await withRuntime(config, (runtime, resolved) =>
+    runtime.startSessionAgent({
+      title: `需求 ${id}：${source.title}`.slice(0, 120),
+      prompt: sessionStartPrompt({ system: integration.name, id, title: source.title, featureDir }),
+      cwd: repo,
+      profile: resolved.agents.builder,
+      labels: { "req-kit": "requirement-session" },
+    }),
+  );
+  writeSource(repo, featureDir, source);
+  return { status: "started", repo, featureDir, title: source.title, sessionAgentId: source.sessionAgentId, routed };
+}
+
 async function startFromCard(argv: string[], opts: CardCmdOptions): Promise<number> {
   const out = opts.out ?? console.log;
   const { values } = parseArgs({ args: argv, options: { from: { type: "string" }, repo: { type: "string" }, config: { type: "string" } }, allowPositionals: false });
@@ -148,59 +226,15 @@ async function startFromCard(argv: string[], opts: CardCmdOptions): Promise<numb
   const configPath = values.config ? path.resolve(values.config) : defaultConfigPath(opts.env);
   // Integrations live in the machine or team config, so the card can be read before the repository is known.
   const { config: integration, id } = parseCardRef(values.from, cardIntegrations(loadConfig(configPath).config));
-
-  const existing = findCardEntry(integration.name, id, opts.env);
-  if (existing) {
-    const where = locateCardRequirement(existing, opts.env) ?? existing.sourceRepo;
-    out(`卡片 ${id} 已经开始过：${path.join(where, existing.featureDir)}。用 req card check ${integration.name}:${id} 转达需求方的新回复。`);
+  const result = await beginFromCard({ integration, id, repoArg: values.repo ?? null, configPath, opts });
+  if (result.status === "exists") {
+    out(`卡片 ${id} 已经开始过：${path.join(result.repo, result.featureDir)}。用 req card check ${integration.name}:${id} 转达需求方的新回复。`);
     return 0;
   }
-
-  const card = await queryCard(integration, id, opts.run);
-  const cwd = opts.cwd ?? process.cwd();
-  const routed = values.repo ? null : routeCard(card, integration.name, opts.env);
-  const repo = gitTop(values.repo ? path.resolve(cwd, values.repo) : (routed ?? cwd));
-  if (routed) out(`按子系统「${card.subsystem}」选择仓库：${repo}`);
-  const config = loadConfig(configPath, repo).config;
-  const parts = splitDescription(card.body);
-  const featureDir = `docs/features/${today()}-${cardSlug(id)}`;
-  fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
-  fs.writeFileSync(path.join(repo, featureDir, CARD_SOURCE_FILE), cardSourceText(card, parts.original));
-  const source: SourceFile = {
-    v: 1,
-    system: integration.name,
-    id,
-    url: card.url,
-    title: card.title,
-    author: card.author,
-    subsystem: card.subsystem,
-    state: card.state,
-    fetchedAt: new Date().toISOString(),
-    sourceRepo: repo,
-    sessionAgentId: null,
-    originalHash: null,
-    replyHash: null,
-    confirmedAt: null,
-    planConfirmedAt: null,
-    progress: null,
-    publishedAt: null,
-  };
-  writeSource(repo, featureDir, source);
-  saveCardEntry({ system: integration.name, id, sourceRepo: repo, featureDir, createdAt: source.fetchedAt }, opts.env);
-
-  source.sessionAgentId = await withRuntime(config, (runtime, resolved) =>
-    runtime.startSessionAgent({
-      title: `需求 ${id}：${card.title}`.slice(0, 120),
-      prompt: sessionStartPrompt({ system: integration.name, id, title: card.title, featureDir }),
-      cwd: repo,
-      profile: resolved.agents.builder,
-      labels: { "req-kit": "requirement-session" },
-    }),
-  );
-  writeSource(repo, featureDir, source);
-  out(`已从卡片 ${id}「${card.title}」开始需求。`);
-  out(`功能目录：${path.join(repo, featureDir)}`);
-  out(`需求会话：agent ${source.sessionAgentId}（在 Paseo 中打开它可以看到整理需求的过程）。`);
+  if (result.routed) out(`按子系统选择仓库：${result.repo}`);
+  out(`已从卡片 ${id}「${result.title}」开始需求。`);
+  out(`功能目录：${path.join(result.repo, result.featureDir)}`);
+  out(`需求会话：agent ${result.sessionAgentId}（在 Paseo 中打开它可以看到整理需求的过程）。`);
   out(`需求说明和问题会写进卡片描述末尾的 AI 区；需求方回复后运行 req card check ${integration.name}:${id}（接单器会定时运行它）。`);
   return 0;
 }
@@ -309,16 +343,14 @@ export async function checkOne(target: Located, opts: CardCmdOptions, notify: (a
   return `${source.id}：已转给需求会话（${changes.join("；")}）`;
 }
 
-async function check(argv: string[], opts: CardCmdOptions): Promise<number> {
-  const out = opts.out ?? console.log;
-  const { values, positionals } = parseArgs({ args: argv, options: { all: { type: "boolean" }, config: { type: "string" } }, allowPositionals: true });
-  if (!positionals[0] && !values.all) fail(`写卡号，或用 --all 检查本机所有从卡片开始的需求\n\n${USAGE}`);
-  const configPath = values.config ? path.resolve(values.config) : defaultConfigPath(opts.env);
-  const targets = locateCards(positionals[0] ?? null, opts, configPath);
-  if (targets.length === 0) {
-    out("本机没有从卡片开始的需求。");
-    return 0;
-  }
+/**
+ * Checks cards for new replies and passes them on. `skipFinished` leaves out requirements whose
+ * pipeline has completed (the intake process uses it to spare the external system).
+ */
+export async function checkCards(ref: string | null, opts: CardCmdOptions, configPath: string, options: { skipFinished?: boolean } = {}): Promise<{ lines: string[]; failed: number; checked: number }> {
+  let targets = locateCards(ref, opts, configPath);
+  if (options.skipFinished) targets = targets.filter((t) => readState(statePath(t.repo, t.entry.featureDir))?.status !== "completed");
+  const lines: string[] = [];
   let runtime: AgentRuntime | null = null;
   const notify = async (agentId: string, text: string) => {
     runtime ??= await (await loadRuntimeFactory())({ config: targets[0].pipelineConfig, log: () => undefined });
@@ -328,16 +360,30 @@ async function check(argv: string[], opts: CardCmdOptions): Promise<number> {
   try {
     for (const target of targets) {
       try {
-        out(await checkOne(target, opts, notify));
+        lines.push(await checkOne(target, opts, notify));
       } catch (error) {
         failed += 1;
-        out(`${target.source.id}：${(error as Error).message}`);
+        lines.push(`${target.source.id}：${(error as Error).message}`);
       }
     }
   } finally {
     await (runtime as AgentRuntime | null)?.close().catch(() => undefined);
   }
-  return failed > 0 ? 1 : 0;
+  return { lines, failed, checked: targets.length };
+}
+
+async function check(argv: string[], opts: CardCmdOptions): Promise<number> {
+  const out = opts.out ?? console.log;
+  const { values, positionals } = parseArgs({ args: argv, options: { all: { type: "boolean" }, config: { type: "string" } }, allowPositionals: true });
+  if (!positionals[0] && !values.all) fail(`写卡号，或用 --all 检查本机所有从卡片开始的需求\n\n${USAGE}`);
+  const configPath = values.config ? path.resolve(values.config) : defaultConfigPath(opts.env);
+  const result = await checkCards(positionals[0] ?? null, opts, configPath);
+  if (result.checked === 0) {
+    out("本机没有从卡片开始的需求。");
+    return 0;
+  }
+  for (const line of result.lines) out(line);
+  return result.failed > 0 ? 1 : 0;
 }
 
 function route(argv: string[], opts: CardCmdOptions): number {

@@ -192,6 +192,12 @@ export interface PipelineConfig {
    * that share a subsystem (e.g. "message-service", "后端").
    */
   cardSource: { system: string; projectId: string | null; subsystems: string[]; titleKeywords: string[] } | null;
+  /**
+   * The intake process (1.11, `req factory`): how often it looks for new cards, which title tags
+   * mark a card for it, and how many requirements it starts per look at most. Machine or team
+   * config only.
+   */
+  factory: { pollMinutes: number; titleTags: string[]; maxNewPerPoll: number };
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -298,6 +304,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   integrationDefaults: {},
   push: { enabled: false, remote: "origin", branchPrefix: "req/" },
   cardSource: null,
+  factory: { pollMinutes: 5, titleTags: ["[AI]", "【AI】"], maxNewPerPoll: 3 },
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -362,6 +369,7 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
     merged.integrationDefaults = combined;
   }
   merged.push = { ...base.push, ...(isRecord(raw.push) ? raw.push : {}) } as PipelineConfig["push"];
+  merged.factory = { ...base.factory, ...(isRecord(raw.factory) ? raw.factory : {}) } as PipelineConfig["factory"];
   if (isRecord(raw.cardSource)) {
     const c = raw.cardSource;
     merged.cardSource = {
@@ -563,6 +571,10 @@ function validate(config: PipelineConfig): void {
   if (typeof push.enabled !== "boolean") throw new ConfigError("push.enabled 必须是 true 或 false");
   if (typeof push.remote !== "string" || !/^[\w.-]+$/.test(push.remote)) throw new ConfigError('push.remote 必须是远程仓库名，例如 "origin"');
   if (typeof push.branchPrefix !== "string" || !/^[A-Za-z0-9._-]+\/$/.test(push.branchPrefix)) throw new ConfigError('push.branchPrefix 必须是以 / 结尾的分支前缀，例如 "req/"');
+  const f = config.factory;
+  if (typeof f.pollMinutes !== "number" || !(f.pollMinutes >= 1)) throw new ConfigError("factory.pollMinutes 必须是至少 1 的分钟数");
+  if (!Number.isInteger(f.maxNewPerPoll) || f.maxNewPerPoll < 1) throw new ConfigError("factory.maxNewPerPoll 必须是正整数");
+  if (!Array.isArray(f.titleTags) || f.titleTags.length === 0 || !f.titleTags.every((t) => typeof t === "string" && t.trim())) throw new ConfigError('factory.titleTags 必须是非空的字符串数组，例如 ["[AI]"]');
   const cs = config.cardSource;
   if (cs !== null) {
     if (typeof cs.system !== "string" || !cs.system.trim()) throw new ConfigError('cardSource.system 必须是对接系统的名称，例如 "ALM"');
@@ -605,7 +617,7 @@ export interface LoadedConfig {
 }
 
 /** Keys a project file may not set: they run code or reach outside the repository. */
-const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations", "push"] as const;
+const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations", "push", "factory"] as const;
 
 /** Notifier module paths are relative to the file that names them; "~/" is the home directory. */
 function resolveNotifiers(raw: Record<string, unknown>, file: string): Record<string, unknown> {

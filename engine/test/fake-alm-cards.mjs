@@ -4,6 +4,8 @@
 //   alm-card view <id> --fields …          {"success":true,"data":{globalId,name,state,createdBy,subsysName,description}}
 //   alm-card edit <id> -b <description>     replaces the description
 //   alm-card edit <id> --state-detail <s>   changes the state
+//   alm-card list --project-id <p> [-S <state>] [-s <keyword>] [-L <n>] [-P <page>]
+//                                           {"success":true,"data":{"list":[…],"total":n}} (projectId, state, keyword in the title)
 import fs from "node:fs";
 import path from "node:path";
 
@@ -13,6 +15,22 @@ fs.appendFileSync(`${file}.log`, `${JSON.stringify(args)}\n`);
 const cards = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
 const [, command, id] = args;
 const card = cards[id];
+const opt = (name) => {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+};
+if (command === "list") {
+  const project = opt("--project-id");
+  const state = opt("-S");
+  const keyword = opt("-s");
+  const limit = Number(opt("-L") ?? 10);
+  const page = Number(opt("-P") ?? 1);
+  const all = Object.entries(cards)
+    .filter(([, c]) => (!project || c.projectId === project) && (!state || c.state === state) && (!keyword || c.name.includes(keyword)))
+    .map(([globalId, c]) => ({ globalId, name: c.name, state: c.state, subsysName: c.subsysName, createdBy: c.createdBy }));
+  console.log(JSON.stringify({ success: true, data: { list: all.slice((page - 1) * limit, page * limit), total: all.length } }));
+  process.exit(0);
+}
 if (command === "view") {
   if (!card) {
     console.log(JSON.stringify({ success: false, message: `卡片 ${id} 不存在` }));

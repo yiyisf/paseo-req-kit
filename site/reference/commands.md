@@ -37,6 +37,7 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | `req card publish <卡号>` | 需求会话使用：把 `card-ai.md` 写进卡片的 AI 区 |
 | `req card list` | 本机从卡片开始的需求和各自的进展 |
 | `req card route [--add <仓库> \| --remove <仓库>]` | 本机接收卡片的仓库和各自的子系统；`req start --from` 不写 `--repo` 时按它选仓库 |
+| `req factory once \| run \| start \| stop \| status \| service` | 接单器：定时为标题带 `[AI]` 的新卡片开始需求、转达需求方的回复；`once` 检查一次，`start`/`stop` 后台运行，`service` 给出作为系统服务运行的写法 |
 | `req index --rebuild [目录…]` | 把这些仓库中运行过的需求登记进本机的需求索引（1.9 之前运行过的需求用） |
 
 ### 使用统计（任何目录）

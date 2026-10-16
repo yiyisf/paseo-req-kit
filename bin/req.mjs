@@ -36,6 +36,7 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req card publish <卡号>      把需求会话写的 card-ai.md 写进卡片的 AI 区
   req card list                本机从卡片开始的需求
   req card route               本机接收卡片的仓库和子系统（--add <仓库> 登记）
+  req factory start|stop|status  接单器：定时为标题带 [AI] 的新卡片开始需求、转达回复（once 检查一次）
 
 使用情况（可以在任何目录运行）：
   req stats [--since 30d] [--month 2026-10]
@@ -159,6 +160,9 @@ switch (command) {
     break;
   case "card":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "card-cmd.ts"), ...rest]) : 1;
+    break;
+  case "factory":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "factory.ts"), ...rest]) : 1;
     break;
   case "doctor":
     code = node([path.join(kitRoot, "bin", "req-doctor.mjs"), ...rest]);

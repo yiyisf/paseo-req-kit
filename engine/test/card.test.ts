@@ -297,3 +297,30 @@ test("按子系统选仓库：仓库在 /req-setup 写 cardSource 并登记；�
   assert.equal(await main(["route", "--remove", other], { env, out: () => undefined }), 0);
   assert.equal(cardRoutes(env).routes.length, 2);
 });
+
+test("req start --from：建需求会话失败（Paseo 没在运行）后再运行一次，补建会话，不当作已经开始过", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-retry-"));
+  const cards = cardsFile(dir);
+  const repo = path.join(dir, "repo");
+  fs.mkdirSync(repo);
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  const configPath = path.join(dir, "config.json");
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  fs.writeFileSync(configPath, JSON.stringify({ ...base, agents: { builder: { provider: "claude/m" }, reviewer: { provider: "codex/m" } }, integrations: [almConfig()] }));
+  const scenario = path.join(dir, "scenario.json");
+  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: path.join(dir, "events.jsonl") };
+  const start = () => spawnSync(TSX, [path.join(ROOT, "engine", "src", "card-cmd.ts"), "start", "--from", CARD, "--config", configPath], { cwd: repo, env, encoding: "utf8", timeout: 60_000 });
+
+  fs.writeFileSync(scenario, JSON.stringify({ sessionFails: true }));
+  const failed = start();
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /daemon refused/);
+  fs.writeFileSync(scenario, "{}");
+  const retried = start();
+  assert.equal(retried.status, 0, retried.stdout + retried.stderr);
+  assert.match(retried.stdout, /已从卡片 CMASTER-BUSINESS#9902/);
+  const features = fs.readdirSync(path.join(repo, "docs", "features"));
+  assert.equal(features.length, 1, "用同一个功能目录");
+  assert.ok(JSON.parse(fs.readFileSync(path.join(repo, "docs", "features", features[0], "source.json"), "utf8")).sessionAgentId);
+  assert.match(start().stdout, /已经开始过/);
+});
