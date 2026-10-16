@@ -5,7 +5,7 @@
 # Piped into iex it is not a script file, so the execution policy does not block it.
 # Options: set them as variables before the command, e.g.
 #   $ReqKitBeta = $true; irm .../install.ps1 | iex
-#   $ReqKitVersion = "1.8.0"; irm .../install.ps1 | iex
+#   $ReqKitVersion = "1.9.0"; irm .../install.ps1 | iex
 #   $ReqKitFrom = "release"     # npm | release (default: npm, falling back to the Release)
 #   $ReqKitNoConfigure = $true  # skip the agent configuration wizard
 #   $ReqKitSkipPaseo = $true    # do not check, install or start Paseo

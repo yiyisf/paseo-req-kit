@@ -79,7 +79,7 @@ export interface RequirementDetail extends Requirement {
   steps: Step[];
   gate: { runs: GateRun[] } | null;
   joint: Array<{ name: string; repo: string; branch: string; workspaceId: string; gate: { runs: GateRun[] } | null }>;
-  /** Cards in external systems (req-kit 1.9.0-beta.3+; absent before). */
+  /** Cards in external systems (req-kit 1.9.0+; absent before). */
   external?: Array<{ name: string; id: string | null; url: string | null; status: string | null; syncedAt: string | null; pending: number; lastError: string | null }>;
 }
 

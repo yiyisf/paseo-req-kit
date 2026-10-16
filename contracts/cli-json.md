@@ -64,4 +64,4 @@
 | `steps` | 每个步骤一项：`{ key, stepId, title, phase, attempt, round, agentId, startedAt, endedAt, minutes, outcome, result, error, usage }`；`title` 是给人看的名称（如"代码评审（第 2 轮）"），`result` 是结论的文字（如"需要修改"） |
 | `gate` | 质量门：状态文件中的 `gate` |
 | `joint` | 联合需求的其他仓库：`[{ name, slug, repo, sourceRepo, branch, workspaceId, gate }]` |
-| `external` | 外部系统中的卡片（1.9.0-beta.3 起）：`[{ name, id, url, status, syncedAt, pending, lastError }]`；`pending` 是等待补发的调用数 |
+| `external` | 外部系统中的卡片（1.9.0 起）：`[{ name, id, url, status, syncedAt, pending, lastError }]`；`pending` 是等待补发的调用数 |

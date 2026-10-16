@@ -96,4 +96,4 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | macOS、Linux、Git Bash、WSL | `curl -fsSL https://paseo-req-kit.vercel.app/install.sh \| sh` |
 | Windows PowerShell | `irm https://paseo-req-kit.vercel.app/install.ps1 \| iex` |
 
-`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）、`--with-plugin`（直接安装 Paseo 插件）、`--no-plugin`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.8.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`、`$ReqKitPlugin = "yes"`（或 `"no"`）。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。
+`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）、`--with-plugin`（直接安装 Paseo 插件）、`--no-plugin`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.9.0"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`、`$ReqKitPlugin = "yes"`（或 `"no"`）。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。
