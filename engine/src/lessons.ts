@@ -66,7 +66,9 @@ export function recurringLessons(features: FeatureSummary[], handled: Set<string
       byCategory.set(lesson.category, entry);
     }
   }
+  // Requirement names start with their date: name order is stable and chronological.
   return [...byCategory.values()]
+    .map((e) => ({ ...e, features: [...e.features].sort() }))
     .filter((e) => e.features.length >= min)
     .sort((a, b) => b.features.length - a.features.length || a.category.localeCompare(b.category));
 }

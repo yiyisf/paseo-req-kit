@@ -1,6 +1,6 @@
 # 0029 从卡片开始的需求：需求会话代替人，卡片描述代替对话
 
-- 状态：已采纳（1.10.0-beta.1；建在 [0028](0028-external-integrations.md) 的外部系统对接之上）
+- 状态：已采纳（1.10.0-beta.2；建在 [0028](0028-external-integrations.md) 的外部系统对接之上）
 
 ## 背景
 
@@ -30,4 +30,4 @@
 - 新命令：`req start --from`、`req card publish | check | list`。本机新增 `~/.req-kit/cards/`（从卡片开始的需求的登记）。
 - 功能目录新增 `source.json`、`card-source.md`、`card-ai.md`。
 - 运行时新增 `startSessionAgent`：建一个不挂在任何对话下的 agent，工作目录是仓库。
-- beta.2：推送 `req/<卡号>-<简称>` 分支（只对从卡片开始的需求、默认关闭）、`/req-setup` 记录 ALM 空间和子系统并自动选仓库、使用记录加上需求方。1.11：接单器 `req factory`。
+- beta.3：推送 `req/<卡号>-<简称>` 分支（只对从卡片开始的需求、默认关闭）、`/req-setup` 记录 ALM 空间和子系统并自动选仓库、使用记录加上需求方。1.11：接单器 `req factory`。
