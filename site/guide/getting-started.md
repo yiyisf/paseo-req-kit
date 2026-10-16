@@ -33,7 +33,7 @@ curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 
 ```sh
 curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --beta             # 包括 beta 版
-curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --version 1.9.0
+curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --version 1.9.1
 curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --skip-paseo       # 不检查、不安装 Paseo
 ```
 
