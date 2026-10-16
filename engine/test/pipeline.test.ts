@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { FakeScenario } from "./fake-runtime.js";
-import { lockPath } from "../src/state.js";
+import { isAlive, lockPath } from "../src/state.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
@@ -466,19 +466,20 @@ test("启动器：立即返回，流水线在独立会话中继续运行到结�
   const ancestors = ancestorsOf(pid);
   assert.ok(!ancestors.includes(process.pid), `流水线仍是启动方的子孙进程：${ancestors.join(" <- ")}`);
 
+  // The state turns "completed" a moment before the last log line and notification are
+  // written, so wait for the process itself to exit before reading them.
   const statePath = path.join(env.repo, FEATURE, ".pipeline", "state.json");
+  const logPath = path.join(env.repo, FEATURE, ".pipeline", "pipeline.log");
   const deadline = Date.now() + 30_000;
   let status = "";
   while (Date.now() < deadline) {
-    if (fs.existsSync(statePath)) {
-      status = JSON.parse(fs.readFileSync(statePath, "utf8")).status;
-      if (status === "completed" || status === "failed") break;
-    }
+    if (fs.existsSync(statePath)) status = JSON.parse(fs.readFileSync(statePath, "utf8")).status;
+    if (!isAlive(pid)) break;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
+  if (fs.existsSync(statePath)) status = JSON.parse(fs.readFileSync(statePath, "utf8")).status;
   assert.equal(status, "completed");
-  const log = fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", "pipeline.log"), "utf8");
-  assert.match(log, /流水线结束：completed/);
+  assert.match(fs.readFileSync(logPath, "utf8"), /流水线结束：completed/);
   assert.equal(notifications(env).length, 2);
 });
 
