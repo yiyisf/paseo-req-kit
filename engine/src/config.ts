@@ -180,6 +180,18 @@ export interface PipelineConfig {
   integrations: IntegrationConfig[];
   /** Per integration name, values for its {field.*} placeholders; a project's file may set these (e.g. its project id). */
   integrationDefaults: Record<string, Record<string, string>>;
+  /**
+   * Pushing the branch of a requirement that started from a card, once development is done and
+   * the handoff is written (1.10). Off by default; machine or team config only. Never forced,
+   * only to branches under `branchPrefix`, never merged.
+   */
+  push: { enabled: boolean; remote: string; branchPrefix: string };
+  /**
+   * Which cards this repository takes (1.10, written by /req-setup in the project's file): the
+   * system, its space (project id) and subsystems; `titleKeywords` tells apart repositories
+   * that share a subsystem (e.g. "message-service", "后端").
+   */
+  cardSource: { system: string; projectId: string | null; subsystems: string[]; titleKeywords: string[] } | null;
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -284,6 +296,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   notifiers: [],
   integrations: [],
   integrationDefaults: {},
+  push: { enabled: false, remote: "origin", branchPrefix: "req/" },
+  cardSource: null,
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -346,6 +360,16 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
       combined[name] = { ...(combined[name] ?? {}), ...(isRecord(fields) ? (fields as Record<string, string>) : {}) };
     }
     merged.integrationDefaults = combined;
+  }
+  merged.push = { ...base.push, ...(isRecord(raw.push) ? raw.push : {}) } as PipelineConfig["push"];
+  if (isRecord(raw.cardSource)) {
+    const c = raw.cardSource;
+    merged.cardSource = {
+      system: c.system as string,
+      projectId: c.projectId === undefined || c.projectId === null ? null : String(c.projectId),
+      subsystems: (c.subsystems ?? []) as string[],
+      titleKeywords: (c.titleKeywords ?? []) as string[],
+    };
   }
   merged.stepTimeoutMinutes = {
     ...base.stepTimeoutMinutes,
@@ -535,6 +559,17 @@ function validate(config: PipelineConfig): void {
   if (!isRecord(config.integrationDefaults) || !Object.values(config.integrationDefaults).every((m) => isRecord(m) && Object.values(m).every((v) => typeof v === "string"))) {
     throw new ConfigError('integrationDefaults 必须是 { "<集成名称>": { "<字段>": "<值>" } }');
   }
+  const push = config.push;
+  if (typeof push.enabled !== "boolean") throw new ConfigError("push.enabled 必须是 true 或 false");
+  if (typeof push.remote !== "string" || !/^[\w.-]+$/.test(push.remote)) throw new ConfigError('push.remote 必须是远程仓库名，例如 "origin"');
+  if (typeof push.branchPrefix !== "string" || !/^[A-Za-z0-9._-]+\/$/.test(push.branchPrefix)) throw new ConfigError('push.branchPrefix 必须是以 / 结尾的分支前缀，例如 "req/"');
+  const cs = config.cardSource;
+  if (cs !== null) {
+    if (typeof cs.system !== "string" || !cs.system.trim()) throw new ConfigError('cardSource.system 必须是对接系统的名称，例如 "ALM"');
+    for (const k of ["subsystems", "titleKeywords"] as const) {
+      if (!Array.isArray(cs[k]) || !cs[k].every((v) => typeof v === "string" && v.trim())) throw new ConfigError(`cardSource.${k} 必须是字符串数组`);
+    }
+  }
   if (config.requiredVersion !== null && typeof config.requiredVersion !== "string") {
     throw new ConfigError('requiredVersion 必须是版本范围字符串，例如 ">=1.2.0 <2"');
   }
@@ -570,7 +605,7 @@ export interface LoadedConfig {
 }
 
 /** Keys a project file may not set: they run code or reach outside the repository. */
-const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations"] as const;
+const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations", "push"] as const;
 
 /** Notifier module paths are relative to the file that names them; "~/" is the home directory. */
 function resolveNotifiers(raw: Record<string, unknown>, file: string): Record<string, unknown> {

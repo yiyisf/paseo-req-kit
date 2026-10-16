@@ -87,6 +87,10 @@ export interface RequirementStats {
   waits: Record<WaitKind, number>;
   builder: string | null;
   reviewer: string | null;
+  /** The card's author, for requirements that started from a card (1.10). */
+  requester: string | null;
+  /** "<system>:<id>" of that card. */
+  card: string | null;
 }
 
 function add(a: number | null, b: number | null): number | null {
@@ -162,6 +166,8 @@ export function byRequirement(runs: RunRecord[]): RequirementStats[] {
       waits,
       builder: last.agents.builder,
       reviewer: last.agents.reviewer,
+      requester: last.requirement.requester ?? null,
+      card: last.requirement.source ? `${last.requirement.source.system}:${last.requirement.source.id}` : null,
     });
   }
   return out.sort((a, b) => b.lastEndedAt.localeCompare(a.lastEndedAt));
@@ -202,6 +208,8 @@ export interface StatsSummary {
   waits: Array<{ kind: WaitKind; label: string; requirements: number; averageMinutes: number }>;
   usage: { agentMinutes: number; inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
   byBuilder: Array<{ builder: string; requirements: number; averageReviewRounds: number | null; averageCostUsd: number | null }>;
+  /** Requirements that started from cards, by who asked for them (1.10); empty when there are none. */
+  byRequester: Array<{ requester: string; requirements: number; completed: number; medianCycleHours: number | null }>;
   requirements: RequirementStats[];
 }
 
@@ -246,6 +254,9 @@ export function summarizeRuns(all: RunRecord[], period: Period): StatsSummary {
   const builders = new Map<string, RequirementStats[]>();
   for (const q of done) builders.set(q.builder ?? "（未记录）", [...(builders.get(q.builder ?? "（未记录）") ?? []), q]);
 
+  const requesters = new Map<string, RequirementStats[]>();
+  for (const q of active) if (q.card) requesters.set(q.requester ?? "（未记录）", [...(requesters.get(q.requester ?? "（未记录）") ?? []), q]);
+
   return {
     schema: 1,
     period: { from: period.from?.toISOString() ?? null, to: period.to?.toISOString() ?? null, label: period.label },
@@ -276,6 +287,12 @@ export function summarizeRuns(all: RunRecord[], period: Period): StatsSummary {
       averageReviewRounds: avg(qs.map((q) => q.reviewRounds)),
       averageCostUsd: avg(qs.flatMap((q) => (q.costUsd === null ? [] : [q.costUsd]))),
     })),
+    byRequester: [...requesters.entries()]
+      .map(([requester, qs]) => {
+        const finished = qs.filter((q) => done.includes(q));
+        return { requester, requirements: qs.length, completed: finished.length, medianCycleHours: median(finished.flatMap((q) => (q.cycleHours === null ? [] : [q.cycleHours]))) };
+      })
+      .sort((a, b) => b.requirements - a.requirements || a.requester.localeCompare(b.requester)),
     requirements: active,
   };
 }
@@ -342,6 +359,10 @@ export function describeStats(s: StatsSummary): string {
     lines.push("", "## 按 builder 比较（已完成的需求）", "", "| builder | 需求数 | 平均评审轮数 | 平均费用 |", "| --- | --- | --- | --- |");
     for (const b of s.byBuilder) lines.push(`| ${b.builder} | ${b.requirements} | ${b.averageReviewRounds ?? "-"} | ${b.averageCostUsd === null ? "-" : `$${b.averageCostUsd.toFixed(2)}`} |`);
   }
+  if (s.byRequester.length > 0) {
+    lines.push("", "## 从卡片开始的需求（按需求方）", "", "| 需求方 | 需求数 | 已完成 | 周期中位数 |", "| --- | --- | --- | --- |");
+    for (const r of s.byRequester) lines.push(`| ${r.requester} | ${r.requirements} | ${r.completed} | ${r.medianCycleHours === null ? "-" : `${r.medianCycleHours} 小时`} |`);
+  }
   lines.push("", "## 需求", "", "| 项目 | 需求 | 类型 | 状态 | 周期 | agent 用时 | 评审轮数 | 缺陷轮数 |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const q of s.requirements) {
     const status = q.status === "completed" ? (OUTCOME_LABELS[q.outcome ?? "unknown"] ?? "已完成") : (STATUS_LABELS[q.status] ?? q.status);
@@ -378,6 +399,8 @@ const CSV_COLUMNS: Array<[string, (q: RequirementStats) => unknown]> = [
   ["wait_verify_minutes", (q) => q.waits.verify],
   ["builder", (q) => q.builder ?? ""],
   ["reviewer", (q) => q.reviewer ?? ""],
+  ["requester", (q) => q.requester ?? ""],
+  ["card", (q) => q.card ?? ""],
 ];
 
 function csvCell(v: unknown): string {

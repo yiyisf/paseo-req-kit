@@ -35,6 +35,7 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req card check [<卡号>|--all]  读取需求方在卡片中的回复，转给需求的会话
   req card publish <卡号>      把需求会话写的 card-ai.md 写进卡片的 AI 区
   req card list                本机从卡片开始的需求
+  req card route               本机接收卡片的仓库和子系统（--add <仓库> 登记）
 
 使用情况（可以在任何目录运行）：
   req stats [--since 30d] [--month 2026-10]

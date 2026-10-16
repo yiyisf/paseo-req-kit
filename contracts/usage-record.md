@@ -29,7 +29,7 @@
 | --- | --- |
 | `schema` / `kind` | `1` / `"run"` |
 | `machine` / `kitVersion` | 主机名、req-kit 版本 |
-| `requirement` | `{ key, project, name, title, type, profile }` |
+| `requirement` | `{ key, project, name, title, type, profile }`；从卡片开始的需求（1.10 起）另有 `requester`（卡片的提出人）和 `source`（`{ system, id }`） |
 | `run` | `{ startedAt, endedAt, attempt, phase, phaseMode, status, outcome, stopReason }`；`status` 是运行结束时的状态，`outcome` 是完成时报告的结论 |
 | `agents` | `{ builder, reviewer }`：当时配置的 agent（如 `claude/opus（bypassPermissions）`） |
 | `steps` | 这次运行中开始的步骤：`{ key, stepId, phase, attempt, round, startedAt, endedAt, minutes, outcome, inputTokens, outputTokens, costUsd }`；agent 没有报告的用量为 null |

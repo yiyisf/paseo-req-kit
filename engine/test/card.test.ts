@@ -198,7 +198,7 @@ test("从卡片开始的需求：流水线用这张卡片而不另建，改状�
   delete process.env.FAKE_ALM_CARDS;
 });
 
-test("从卡片开始的需求跑完流水线：不建卡，状态改为开发中、待测试，AI 区跟着进度更新", () => {
+test("从卡片开始的需求跑完流水线：不建卡，状态改为开发中、待测试，推送 req/ 分支，AI 区跟着进度更新，运行记录带上需求方", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-run-"));
   const cards = cardsFile(dir);
   const repo = path.join(dir, "repo");
@@ -206,11 +206,17 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
   fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
   execFileSync("git", ["init", "-q"], { cwd: repo });
   execFileSync("git", ["checkout", "-q", "-b", "feature/20261016-cmaster-business-9902"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "README.md"), "x\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repo });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"], { cwd: repo });
+  const remote = path.join(dir, "remote.git");
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
   fs.writeFileSync(path.join(repo, featureDir, "spec.md"), "# test 接口\n\n- 状态：已确认（2026-10-16，需求方在卡片中确认）\n- 执行方式：只做研发\n\n## 5. 功能需求与验收标准\n\n### FR-1\n- **AC-1** ...\n");
   fs.writeFileSync(path.join(repo, featureDir, "card-ai.md"), "### 需求说明摘要\n新增 test 接口。\n");
   fs.writeFileSync(
     path.join(repo, featureDir, "source.json"),
-    JSON.stringify({ v: 1, system: "ALM", id: CARD, url: null, title: "t", author: null, subsystem: null, state: "新建", fetchedAt: "2026-10-16T00:00:00Z", sourceRepo: repo, sessionAgentId: "s1", originalHash: null, replyHash: null, confirmedAt: "2026-10-16T00:00:00Z", planConfirmedAt: null, progress: null, publishedAt: null }),
+    JSON.stringify({ v: 1, system: "ALM", id: CARD, url: null, title: "t", author: "张广祥", subsystem: null, state: "新建", fetchedAt: "2026-10-16T00:00:00Z", sourceRepo: repo, sessionAgentId: "s1", originalHash: null, replyHash: null, confirmedAt: "2026-10-16T00:00:00Z", planConfirmedAt: null, progress: null, publishedAt: null }),
   );
   const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
   const configPath = path.join(dir, "config.json");
@@ -224,11 +230,12 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
       notifyMilestones: false,
       reviewAxes: { enabled: false, profiles: ["standard"] },
       integrations: [almConfig()],
+      push: { enabled: true },
     }),
   );
   const scenario = path.join(dir, "scenario.json");
   fs.writeFileSync(scenario, "{}");
-  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: `${scenario}.events` };
+  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com", REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: `${scenario}.events` };
   const r = spawnSync(TSX, [path.join(ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--config", configPath], { env, encoding: "utf8", timeout: 60_000 });
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
   const calls = fs.readFileSync(`${cards}.log`, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
@@ -236,7 +243,57 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
   assert.deepEqual(calls.filter((c) => c.includes("--state-detail")).map((c) => c.at(-1)), ["开发中", "待测试"]);
   const card = readCards(cards)[CARD];
   assert.equal(card.state, "待测试");
-  assert.match(card.description, /\*\*进度\*\*：研发完成，已写好提测说明，等待测试，分支 feature\/20261016-cmaster-business-9902/);
+  assert.match(card.description, /\*\*进度\*\*：研发完成，已写好提测说明，等待测试，代码已推送到 origin 的分支 req\/cmaster-business-9902/);
+  // The branch is on the remote, at the same commit as the requirement's branch; nothing else was pushed.
+  const pushed = execFileSync("git", ["--git-dir", remote, "for-each-ref", "--format=%(refname)"], { encoding: "utf8" }).trim().split("\n");
+  assert.deepEqual(pushed, ["refs/heads/req/cmaster-business-9902"]);
+  assert.equal(
+    execFileSync("git", ["--git-dir", remote, "rev-parse", "req/cmaster-business-9902"], { encoding: "utf8" }).trim(),
+    execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(),
+  );
+  const finalState = JSON.parse(fs.readFileSync(path.join(repo, featureDir, ".pipeline", "state.json"), "utf8"));
+  assert.equal(finalState.pushed[0].branch, "req/cmaster-business-9902");
+  assert.equal(finalState.pushed[0].error, null);
+  // The run record says who asked and which card; stats group by requester.
+  const runs = fs.readFileSync(path.join(dir, "home", "usage", "runs.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(runs.at(-1).requirement.requester, "张广祥");
+  assert.deepEqual(runs.at(-1).requirement.source, { system: "ALM", id: CARD });
+  const { summarizeRuns, describeStats, statsCsv } = await import("../src/stats.js");
+  const summary = summarizeRuns(runs, { from: null, to: null, label: "全部" });
+  assert.deepEqual(summary.byRequester.map((r) => [r.requester, r.requirements]), [["张广祥", 1]]);
+  assert.match(describeStats(summary), /## 从卡片开始的需求（按需求方）\n\n\| 需求方 \| 需求数 \| 已完成 \| 周期中位数 \|[\s\S]*\| 张广祥 \| 1 \|/);
+  assert.match(statsCsv(summary), /,张广祥,ALM:CMASTER-BUSINESS#9902\n$/);
   assert.match(card.description, /新增 test 接口。/);
   assert.match(r.stdout, /卡片 CMASTER-BUSINESS#9902 的 AI 区已更新（需求方已确认，开发中/);
+});
+
+test("按子系统选仓库：仓库在 /req-setup 写 cardSource 并登记；同一子系统有几个仓库时按标题关键字；匹配不到或分不清时说明原因", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-route-"));
+  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home") };
+  const repoWith = (name: string, cardSource: unknown) => {
+    const repo = path.join(dir, name);
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, ".requirement-pipeline.json"), JSON.stringify({ cardSource }));
+    return fs.realpathSync(repo);
+  };
+  const backend = repoWith("message-service", { system: "ALM", projectId: "186149", subsystems: ["CSP-CMASTER_云匠"], titleKeywords: ["message-service", "后端"] });
+  const web = repoWith("cmaster-web", { system: "ALM", projectId: "186149", subsystems: ["CSP-CMASTER_云匠"], titleKeywords: ["前端"] });
+  const other = repoWith("billing", { system: "ALM", subsystems: ["CSP-BILLING"] });
+  const { main } = await import("../src/card-cmd.js");
+  const { routeCard, cardRoutes } = await import("../src/card.js");
+  const lines: string[] = [];
+  for (const r of [backend, web, other]) assert.equal(await main(["route", "--add", r], { env, out: (l) => lines.push(l) }), 0);
+  assert.match(lines[0], /已登记 .*message-service：ALM 空间 186149，子系统 CSP-CMASTER_云匠/);
+  assert.equal(cardRoutes(env).routes.length, 3);
+
+  assert.equal(routeCard({ id: "X#1", title: "【message-service】【后端】新增 test 接口", subsystem: "CSP-CMASTER_云匠" }, "ALM", env), backend);
+  assert.equal(routeCard({ id: "X#2", title: "【前端】订单页加筛选", subsystem: "csp-cmaster_云匠" }, "alm", env), web);
+  assert.equal(routeCard({ id: "X#3", title: "账单导出", subsystem: "CSP-BILLING" }, "ALM", env), other);
+  assert.throws(() => routeCard({ id: "X#4", title: "改个文案", subsystem: "CSP-CMASTER_云匠" }, "ALM", env), /可能属于几个仓库[\s\S]*titleKeywords/);
+  assert.throws(() => routeCard({ id: "X#5", title: "t", subsystem: "CSP-OTHER" }, "ALM", env), /子系统「CSP-OTHER」没有对应的仓库/);
+  assert.equal(routeCard({ id: "X#6", title: "t", subsystem: "x" }, "JIRA", env), null, "没有仓库接这个系统的卡片时由调用方决定");
+
+  assert.equal(await main(["route", "--remove", other], { env, out: () => undefined }), 0);
+  assert.equal(cardRoutes(env).routes.length, 2);
 });

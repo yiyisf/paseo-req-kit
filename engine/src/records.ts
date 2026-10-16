@@ -149,6 +149,10 @@ export interface RunRecord {
     title: string;
     type: string | null;
     profile: string;
+    /** Who asked for it: the card's author for a requirement that started from a card (1.10). */
+    requester?: string | null;
+    /** The card it started from, e.g. { system: "ALM", id: "…" } (1.10). */
+    source?: { system: string; id: string } | null;
   };
   run: {
     startedAt: string;
@@ -226,6 +230,7 @@ export function runRecord(input: {
       title: input.title,
       type: state.type ?? null,
       profile: state.profile,
+      ...cardOrigin(state.repo, state.featureDir),
     },
     run: {
       startedAt: input.runStartedAt,
@@ -241,6 +246,17 @@ export function runRecord(input: {
     steps,
     gate: { runs: gateRuns.length, failed: gateRuns.filter((r) => !r.passed).length },
   };
+}
+
+/** The card a requirement started from (source.json), for the record. */
+function cardOrigin(repo: string, featureDir: string): { requester: string | null; source: { system: string; id: string } } | Record<string, never> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(repo, featureDir, "source.json"), "utf8")) as { system?: unknown; id?: unknown; author?: unknown };
+    if (typeof raw.system !== "string" || typeof raw.id !== "string") return {};
+    return { requester: typeof raw.author === "string" ? raw.author : null, source: { system: raw.system, id: raw.id } };
+  } catch {
+    return {};
+  }
 }
 
 /** Appends a run record. Never throws. */

@@ -109,6 +109,11 @@ export interface PipelineState {
   gate?: { baseline: GateBaseline | null; runs: GateRun[] } | null;
   /** External systems (1.9): the requirement's card in each, by integration name. */
   external?: Record<string, ExternalRecord> | null;
+  /**
+   * Branches pushed for a requirement that started from a card (1.10, `push` config): one entry
+   * per repository (the main one, then joint ones), the latest attempt. `error` is null when it worked.
+   */
+  pushed?: Array<{ repo: string; remote: string; branch: string; at: string; error: string | null }> | null;
 }
 
 export interface JointRepo {

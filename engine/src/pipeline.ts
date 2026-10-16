@@ -34,7 +34,7 @@ import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { describeExternal, type IntegrationEvent, type Runner, syncIntegration } from "./integrations.js";
-import { planAppendix, publishCard, readSource } from "./card.js";
+import { cardSlug, planAppendix, publishCard, readSource } from "./card.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
 import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
@@ -414,6 +414,40 @@ const CARD_PROGRESS: Record<IntegrationEvent, string> = {
   failed: "流水线中断，正在处理",
 };
 
+/**
+ * A requirement that started from a card (1.10), with `push` on: once development is done and the
+ * handoff is written, pushes each repository's branch to <remote>/<prefix><card>. Never forced
+ * (a rejected push is reported, not retried with force), never merged. Never throws.
+ */
+function pushBranch(ctx: PipelineContext): void {
+  const push = ctx.config.push;
+  if (!push.enabled) return;
+  const source = readSource(ctx.repo, ctx.featureDir);
+  if (!source) return;
+  const branch = `${push.branchPrefix}${cardSlug(source.id)}`;
+  const repos = [ctx.repo, ...(ctx.state.joint ?? []).map((j) => j.repo)];
+  const at = new Date().toISOString();
+  for (const repo of repos) {
+    let error: string | null = null;
+    try {
+      execFileSync("git", ["push", push.remote, `HEAD:refs/heads/${branch}`], { cwd: repo, stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, windowsHide: true });
+    } catch (e) {
+      const stderr = (e as { stderr?: Buffer | string }).stderr?.toString().trim();
+      error = (stderr || (e as Error).message).split("\n").filter(Boolean).slice(-2).join(" ");
+    }
+    ctx.state.pushed = [...(ctx.state.pushed ?? []).filter((p) => p.repo !== repo), { repo, remote: push.remote, branch, at, error }];
+    ctx.log(error ? `推送 ${repo} 的分支到 ${push.remote}/${branch} 失败：${error}` : `已推送 ${repo} 的分支到 ${push.remote}/${branch}`);
+  }
+  save(ctx);
+}
+
+/** Where the requirement's code is, for the card: the pushed branch, or the local one. */
+function branchText(ctx: PipelineContext): string | null {
+  const mine = ctx.state.pushed?.find((p) => p.repo === ctx.repo);
+  if (mine) return mine.error ? `分支 ${ctx.state.branch}（推送到 ${mine.remote}/${mine.branch} 失败：${mine.error}）` : `代码已推送到 ${mine.remote} 的分支 ${mine.branch}`;
+  return ctx.state.branch ? `分支 ${ctx.state.branch}` : null;
+}
+
 /** A requirement that started from a card (1.10): its AI section follows the pipeline. Never throws. */
 async function updateCard(ctx: PipelineContext, event: IntegrationEvent): Promise<void> {
   const source = readSource(ctx.repo, ctx.featureDir);
@@ -422,7 +456,7 @@ async function updateCard(ctx: PipelineContext, event: IntegrationEvent): Promis
   if (!config?.describe || !config.query) return;
   const approval = event === "approval";
   let progress = CARD_PROGRESS[event];
-  if (event === "phase_done" && ctx.state.branch) progress += `，分支 ${ctx.state.branch}`;
+  if (event === "phase_done" && branchText(ctx)) progress += `，${branchText(ctx)}`;
   if (event === "completed" && ctx.state.outcome && ctx.state.outcome !== "completed") progress = `已结束（${ctx.state.outcome === "completed_with_issues" ? "有遗留问题，见完成报告" : "没有完成，见完成报告"}）`;
   try {
     await publishCard({
@@ -1795,6 +1829,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       ? `研发已完成（只做研发）：${outcomeText[report.outcome as string] ?? report.outcome}，请按提测说明人工测试。`
       : `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`;
     // Develop-only ends where testing by people begins: for the card that is "研发完成，待测试".
+    if (developOnly && report.outcome !== "not_completed") pushBranch(ctx);
     await integrate(ctx, developOnly && report.outcome !== "not_completed" ? "phase_done" : "completed");
     await notifyExternal(ctx, "completed", text, {
       outcome: report.outcome,
@@ -1823,6 +1858,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
           handbacks: ctx.state.handbacks ?? 0,
         }),
       );
+      pushBranch(ctx);
       await integrate(ctx, "phase_done");
       await notifyExternal(ctx, "phase_done", `研发已完成，可以提测：提测说明在 ${ctx.featureDir}/handoff.md。${verifyAt ? `已预约在 ${verifyAt} 开始测试验证。` : ""}`, {
         handoffPath: `${ctx.featureDir}/handoff.md`,

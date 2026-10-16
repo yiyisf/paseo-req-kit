@@ -25,7 +25,12 @@ import {
   planAppendix,
   publishCard,
   queryCard,
+  cardRoutes,
+  readRoute,
   readSource,
+  registeredRepos,
+  routeCard,
+  setRegisteredRepos,
   replyKey,
   saveCardEntry,
   type SourceFile,
@@ -43,10 +48,11 @@ import { readState, statePath } from "./state.js";
 const REQ = `node "${path.join(KIT_ROOT, "bin", "req.mjs").split(path.sep).join("/")}"`;
 
 const USAGE = `用法：
-  req start --from <系统>:<卡号> [--repo <仓库目录>]   从需求管理系统中的一张卡片开始需求
+  req start --from <系统>:<卡号> [--repo <仓库目录>]   从需求管理系统中的一张卡片开始需求（不写 --repo 时按子系统选仓库）
   req card publish <卡号> [--progress <文字>]           把功能目录中的 card-ai.md 写进卡片的 AI 区
   req card check [<卡号> | --all]                       读取需求方在卡片中的回复，把新内容转给需求的会话
   req card list                                         本机从卡片开始的需求
+  req card route [--add <仓库> | --remove <仓库>]         本机接收卡片的仓库及其子系统（--from 不写 --repo 时按它选仓库）
 
 <卡号> 可以写成 <系统>:<卡号>，例如 ALM:CMASTER-BUSINESS#9902；只配置了一个可以读取卡片的系统时可以省略系统。`;
 
@@ -139,10 +145,9 @@ async function startFromCard(argv: string[], opts: CardCmdOptions): Promise<numb
   const out = opts.out ?? console.log;
   const { values } = parseArgs({ args: argv, options: { from: { type: "string" }, repo: { type: "string" }, config: { type: "string" } }, allowPositionals: false });
   if (!values.from) fail(`缺少 --from\n\n${USAGE}`);
-  const repo = gitTop(path.resolve(opts.cwd ?? process.cwd(), values.repo ?? "."));
   const configPath = values.config ? path.resolve(values.config) : defaultConfigPath(opts.env);
-  const config = loadConfig(configPath, repo).config;
-  const { config: integration, id } = parseCardRef(values.from, cardIntegrations(config));
+  // Integrations live in the machine or team config, so the card can be read before the repository is known.
+  const { config: integration, id } = parseCardRef(values.from, cardIntegrations(loadConfig(configPath).config));
 
   const existing = findCardEntry(integration.name, id, opts.env);
   if (existing) {
@@ -152,6 +157,11 @@ async function startFromCard(argv: string[], opts: CardCmdOptions): Promise<numb
   }
 
   const card = await queryCard(integration, id, opts.run);
+  const cwd = opts.cwd ?? process.cwd();
+  const routed = values.repo ? null : routeCard(card, integration.name, opts.env);
+  const repo = gitTop(values.repo ? path.resolve(cwd, values.repo) : (routed ?? cwd));
+  if (routed) out(`按子系统「${card.subsystem}」选择仓库：${repo}`);
+  const config = loadConfig(configPath, repo).config;
   const parts = splitDescription(card.body);
   const featureDir = `docs/features/${today()}-${cardSlug(id)}`;
   fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
@@ -330,6 +340,36 @@ async function check(argv: string[], opts: CardCmdOptions): Promise<number> {
   return failed > 0 ? 1 : 0;
 }
 
+function route(argv: string[], opts: CardCmdOptions): number {
+  const out = opts.out ?? console.log;
+  const { values } = parseArgs({ args: argv, options: { add: { type: "string" }, remove: { type: "string" }, config: { type: "string" } }, allowPositionals: false });
+  const cwd = opts.cwd ?? process.cwd();
+  const configPath = values.config ? path.resolve(values.config) : defaultConfigPath(opts.env);
+  const systems = fs.existsSync(configPath) ? cardIntegrations(loadConfig(configPath).config).map((i) => i.name) : [];
+  if (values.add) {
+    const repo = gitTop(path.resolve(cwd, values.add));
+    const r = readRoute(repo);
+    setRegisteredRepos([...registeredRepos(opts.env), repo], opts.env);
+    out(r ? `已登记 ${repo}：${r.system} 空间 ${r.projectId ?? "（未写）"}，子系统 ${r.subsystems.join("、") || "（未写）"}` : `已登记 ${repo}，但它的项目配置还没有 cardSource（运行 /req-setup 写上）`);
+    return 0;
+  }
+  if (values.remove) {
+    const repo = gitTop(path.resolve(cwd, values.remove));
+    setRegisteredRepos(registeredRepos(opts.env).filter((r) => r !== repo), opts.env);
+    out(`已取消登记 ${repo}`);
+    return 0;
+  }
+  if (systems.length === 0) out("没有配置可以读取卡片的外部系统（本机或团队配置的 integrations 中没有写 query）。");
+  const { routes, missing } = cardRoutes(opts.env);
+  if (routes.length === 0 && missing.length === 0) {
+    out("本机还没有登记接收卡片的仓库：在仓库中运行 /req-setup（或 req card route --add <仓库目录>）。");
+    return 0;
+  }
+  for (const r of routes) out(`${r.system}  空间 ${r.projectId ?? "-"}  子系统 ${r.subsystems.join("、") || "-"}  标题关键字 ${r.titleKeywords.join("、") || "-"}  ${r.repo}`);
+  for (const m of missing) out(`（没有 cardSource 或目录不存在）${m}`);
+  return 0;
+}
+
 function list(opts: CardCmdOptions): number {
   const out = opts.out ?? console.log;
   const entries = listCardEntries(opts.env);
@@ -360,6 +400,8 @@ export async function main(argv: string[], opts: CardCmdOptions = {}): Promise<n
       case "list":
       case "ls":
         return list(opts);
+      case "route":
+        return route(rest, opts);
       default:
         console.log(USAGE);
         return command === undefined || command === "help" || command === "--help" ? 0 : 2;

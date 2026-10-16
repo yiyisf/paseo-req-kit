@@ -395,3 +395,87 @@ export function planAppendix(repo: string, featureDir: string): string | null {
   const shown = preview.length > 4000 ? `${preview.slice(0, 4000)}\n\n……（完整内容见功能目录中的 preview.md）` : preview;
   return `### 待确认的方案\n\n${shown.replace(/^(#{1,4})\s/gm, "$1## ")}\n\n确认没问题就在回复区写“方案确认：同意”；要改就在那一行后写明要改什么。`;
 }
+
+// ---------------------------------------------------------------------------
+// Which repository a card belongs to (1.10): each repository says in its project file
+// (cardSource, written by /req-setup) which system, space and subsystems it takes; the
+// machine keeps a list of repositories that take cards (~/.req-kit/card-repos.json).
+
+export interface CardRoute {
+  repo: string;
+  system: string;
+  projectId: string | null;
+  subsystems: string[];
+  titleKeywords: string[];
+}
+
+function cardReposFile(env: NodeJS.ProcessEnv): string {
+  return path.join(kitHome(env), "card-repos.json");
+}
+
+export function registeredRepos(env: NodeJS.ProcessEnv = process.env): string[] {
+  try {
+    const list = JSON.parse(fs.readFileSync(cardReposFile(env), "utf8")) as unknown;
+    return Array.isArray(list) ? list.filter((r): r is string => typeof r === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setRegisteredRepos(repos: string[], env: NodeJS.ProcessEnv = process.env): void {
+  fs.mkdirSync(path.dirname(cardReposFile(env)), { recursive: true });
+  fs.writeFileSync(cardReposFile(env), `${JSON.stringify([...new Set(repos)].sort(), null, 2)}\n`);
+}
+
+/** The repository's cardSource, read from its project file (not merged with other layers). */
+export function readRoute(repo: string): CardRoute | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(repo, ".requirement-pipeline.json"), "utf8")) as { cardSource?: Record<string, unknown> };
+    const c = raw.cardSource;
+    if (!c || typeof c.system !== "string") return null;
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : []);
+    return { repo, system: c.system, projectId: c.projectId === undefined || c.projectId === null ? null : String(c.projectId), subsystems: strings(c.subsystems), titleKeywords: strings(c.titleKeywords) };
+  } catch {
+    return null;
+  }
+}
+
+/** Routes of the repositories this machine knows: registered ones, and those cards started in. */
+export function cardRoutes(env: NodeJS.ProcessEnv = process.env): { routes: CardRoute[]; missing: string[] } {
+  const repos = [...new Set([...registeredRepos(env), ...listCardEntries(env).map((e) => e.sourceRepo)])];
+  const routes: CardRoute[] = [];
+  const missing: string[] = [];
+  for (const repo of repos) {
+    const route = fs.existsSync(repo) ? readRoute(repo) : null;
+    if (route) routes.push(route);
+    else missing.push(repo);
+  }
+  return { routes, missing };
+}
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * The repository for a card: the one whose cardSource names the card's system and subsystem;
+ * when several share the subsystem, the one whose titleKeywords appear in the card's title.
+ * Null when no repository on this machine takes cards (then the caller uses --repo or the
+ * current directory). Throws when repositories take cards but none or several match.
+ */
+export function routeCard(card: Pick<CardData, "id" | "title" | "subsystem">, system: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const { routes } = cardRoutes(env);
+  const ofSystem = routes.filter((r) => same(r.system, system));
+  if (ofSystem.length === 0) return null;
+  const bySubsystem = card.subsystem ? ofSystem.filter((r) => r.subsystems.some((s) => same(s, card.subsystem!))) : [];
+  if (bySubsystem.length === 0) {
+    throw new Error(
+      `卡片 ${card.id} 的子系统「${card.subsystem ?? "（没有）"}」没有对应的仓库。本机登记的仓库：${ofSystem.map((r) => `${r.repo}（${r.subsystems.join("、") || "未写子系统"}）`).join("；")}。请在对应仓库运行 /req-setup 写上这个子系统，或用 --repo 指定。`,
+    );
+  }
+  if (bySubsystem.length === 1) return bySubsystem[0].repo;
+  const title = card.title.toLowerCase();
+  const byKeyword = bySubsystem.filter((r) => r.titleKeywords.some((k) => title.includes(k.toLowerCase())));
+  if (byKeyword.length === 1) return byKeyword[0].repo;
+  throw new Error(
+    `卡片 ${card.id}「${card.title}」可能属于几个仓库：${(byKeyword.length ? byKeyword : bySubsystem).map((r) => `${r.repo}（标题关键字：${r.titleKeywords.join("、") || "未写"}）`).join("；")}。请在各仓库的 cardSource.titleKeywords 中写上能区分它们的词（例如服务名、"前端""后端"），或用 --repo 指定。`,
+  );
+}

@@ -60,6 +60,7 @@ metadata:
 - 有没有相关的其他仓库（例如这是前端，接口在另一个后端仓库）：在这台机器上的位置、它提供什么。登记后流水线的步骤可以只读参考它，不会改动它
 - 多模块的仓库（例如 `web/` 和 `server/` 各有自己的测试）：确认各模块的检查命令，第 5 步按模块写进 `checks`
 - 项目已经有 `paseo.json` 时，要不要由你补充；没有时，要不要生成（推荐生成，见第 5 步）
+- **从卡片接需求**（团队对接了需求管理系统时）：先执行 `node "{{REQ_KIT_ROOT}}/bin/req.mjs" card route`。输出"没有配置可以读取卡片的外部系统"或团队不用卡片开始需求时跳过；否则问：这个仓库属于需求管理系统中的哪个空间（项目编号，如 ALM 的 projectId）、接哪些子系统的卡片（卡片上显示的子系统名称，可以多个）；同一个子系统还有别的仓库时（例如前端和后端各一个），卡片标题中用什么词区分（例如服务名"message-service"、"后端"）。第 5 步写进 `cardSource`
 
 ## 4. 实际运行验证命令
 
@@ -106,6 +107,7 @@ metadata:
     }
     ```
   - `relatedRepos`（有关联仓库时）：`[{ "name": "后端", "path": "../backend", "role": "提供登录和订单接口" }]`。`path` 写相对项目目录的路径（团队约定把相关仓库放在同一个上级目录最方便），也可以写 `~/` 开头的路径。平时流水线的步骤只读不改；需求说明写了"联合开发"时，流水线会为这个需求在它那里新建工作区，一起开发。关联仓库最好也运行过 `/req-setup`，它自己的检查命令、验证方法和项目说明会用在它的步骤里。
+  - `cardSource`（第 3 步确认了从卡片接需求时）：`{ "system": "ALM", "projectId": "186149", "subsystems": ["CSP-CMASTER_云匠"], "titleKeywords": ["message-service"] }`。`system` 是团队对接配置中的系统名称；`titleKeywords` 只在同一子系统有几个仓库时写。之后 `req start --from` 不写仓库时，按卡片的子系统和标题选到这个仓库
   - 其他设置只在需要和本机配置不同时才写，例如 `"defaultProfile": "quick"`。不要写 `daemonUrl`、`daemonPasswordEnv`、`teamConfig`，写了也会被忽略。
 - `.gitignore`：确认包含 `docs/features/*/.pipeline/`（流水线的运行状态），没有就建议加上。
 
@@ -114,5 +116,7 @@ metadata:
 ## 6. 确认后提交
 
 用户确认后，只提交这几个文件（以及 `GLOSSARY.md`、`scripts/paseo/` 和 `.gitignore` 的改动）。`paseo.json` 必须提交：Paseo 新建 worktree 时读取的是基准分支上已提交的版本，提交信息例如 `chore(req-kit): 项目接入说明与验证方法`。不 push。
+
+写了 `cardSource` 的，提交后执行 `node "{{REQ_KIT_ROOT}}/bin/req.mjs" card route --add .`，在这台机器上登记这个仓库接收卡片（每台接单的机器各登记一次）。
 
 最后告诉用户：之后项目的构建、测试或启动方式有变化时，再运行一次 `/req-setup`；也可以直接编辑这些文件。可以运行 `/req-doctor` 确认项目检查全部正常。
