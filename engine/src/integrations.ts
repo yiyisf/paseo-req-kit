@@ -43,11 +43,28 @@ export interface IntegrationConfig {
   status?: IntegrationAction;
   /** Card state for each pipeline event; "completed_with_issues" and "not_completed" refine "completed". */
   statusMap?: Partial<Record<IntegrationEvent | "completed_with_issues" | "not_completed", string>>;
+  /**
+   * Reads one card (1.10, cards as the source of a requirement): {id} is the card id. The output
+   * is JSON; `fields` says where each value is, as a dot path such as "data.name".
+   */
+  query?: IntegrationAction & { fields: CardQueryFields };
+  /** Replaces the card's description (1.10): {description} is the whole new description. */
+  describe?: IntegrationAction;
   /** Fields the requester confirms with the spec (card.json): name → what to fill in, for /req. */
   cardFields?: Record<string, string>;
   /** Values for {field.<name>} placeholders; a project's integrationDefaults[name] adds to these. */
   defaults?: Record<string, string>;
   timeoutSeconds?: number;
+}
+
+/** Where `query` finds each value in the tool's JSON output. title and body are required. */
+export interface CardQueryFields {
+  title: string;
+  body: string;
+  state?: string;
+  author?: string;
+  subsystem?: string;
+  url?: string;
 }
 
 /** What is known about a requirement's card, in the state file's `external[name]`. */
@@ -79,7 +96,7 @@ export function validateIntegrations(value: unknown): string | null {
     if (names.has(c.name)) return `${at}.name「${c.name}」重复了`;
     names.add(c.name);
     if (typeof c.command !== "string" || !c.command.trim()) return `${at}.command 必须是要运行的命令，例如 "shenbing"`;
-    for (const key of ["create", "status"] as const) {
+    for (const key of ["create", "status", "query", "describe"] as const) {
       const action = c[key] as Record<string, unknown> | undefined;
       if (action === undefined) continue;
       if (!action || !Array.isArray(action.args) || !action.args.every((a) => typeof a === "string")) return `${at}.${key}.args 必须是字符串数组`;
@@ -94,6 +111,16 @@ export function validateIntegrations(value: unknown): string | null {
         } catch (error) {
           return `${at}.create.${k} 不是有效的正则表达式：${(error as Error).message}`;
         }
+      }
+    }
+    const query = c.query as Record<string, unknown> | undefined;
+    if (query) {
+      const fields = query.fields as Record<string, unknown> | undefined;
+      if (!fields || typeof fields !== "object") return `${at}.query.fields 必须写明输出中各值的位置，例如 { "title": "data.name", "body": "data.description" }`;
+      for (const k of ["title", "body"]) if (typeof fields[k] !== "string") return `${at}.query.fields.${k} 必须是输出中的位置，例如 "data.name"`;
+      for (const [k, v] of Object.entries(fields)) {
+        if (!["title", "body", "state", "author", "subsystem", "url"].includes(k)) return `${at}.query.fields 中的 ${k} 不认识（可用：title、body、state、author、subsystem、url）`;
+        if (typeof v !== "string") return `${at}.query.fields.${k} 必须是字符串`;
       }
     }
     if (c.statusMap !== undefined) {
@@ -189,7 +216,11 @@ export function readCard(repo: string, featureDir: string): CardFile {
 }
 
 /** The values arguments can name: {title}, {body}, {card.<field>}, {field.<name>}, {id}, {status}… */
-export function placeholderValues(config: IntegrationConfig, ctx: IntegrationContext, extra: { status?: string | null; event?: IntegrationEvent } = {}): Record<string, string> {
+export function placeholderValues(
+  config: IntegrationConfig,
+  ctx: IntegrationContext,
+  extra: { status?: string | null; event?: IntegrationEvent; description?: string } = {},
+): Record<string, string> {
   const spec = readFile(path.join(ctx.repo, ctx.featureDir, "spec.md")) ?? "";
   const card = readCard(ctx.repo, ctx.featureDir);
   const record = ctx.state.external?.[config.name];
@@ -207,6 +238,7 @@ export function placeholderValues(config: IntegrationConfig, ctx: IntegrationCon
     url: record?.url ?? "",
     status: extra.status ?? "",
     event: extra.event ?? "",
+    description: extra.description ?? "",
   };
   for (const [k, v] of Object.entries({ ...(config.defaults ?? {}), ...(ctx.projectDefaults ?? {}) })) values[`field.${k}`] = v;
   for (const [k, v] of Object.entries(card.fields ?? {})) values[`card.${k}`] = String(v);
@@ -251,6 +283,19 @@ export function statusFor(config: IntegrationConfig, event: IntegrationEvent, ou
   return map[event] ?? null;
 }
 
+/** The card a requirement started from (source.json, 1.10), as far as integrations need it. */
+export function readSourceCard(repo: string, featureDir: string): { system: string; id: string; url: string | null } | null {
+  const raw = readFile(path.join(repo, featureDir, "source.json"));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { system?: unknown; id?: unknown; url?: unknown };
+    if (typeof parsed.system !== "string" || typeof parsed.id !== "string") return null;
+    return { system: parsed.system, id: parsed.id, url: typeof parsed.url === "string" ? parsed.url : null };
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Syncing
 
@@ -276,6 +321,15 @@ export async function syncIntegration(input: {
   ctx.state.external ??= {};
   const record = (ctx.state.external[config.name] ??= emptyRecord());
   const now = () => new Date().toISOString();
+  // A requirement that started from a card in this system (1.10) uses that card, never a new one.
+  if (!record.id) {
+    const source = readSourceCard(ctx.repo, ctx.featureDir);
+    if (source && source.system === config.name) {
+      record.id = source.id;
+      record.url = source.url;
+      record.pending = record.pending.filter((p) => p.action !== "create");
+    }
+  }
 
   const attempt = async (action: "create" | "status", event: IntegrationEvent, status: string | null): Promise<boolean> => {
     const def = action === "create" ? config.create : config.status;

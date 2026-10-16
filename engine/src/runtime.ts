@@ -111,6 +111,12 @@ export interface AgentRuntime {
    */
   verifyOrigin(agentId: string, cwd: string): Promise<void>;
   startAgent(input: StartAgentInput): Promise<StepAgent>;
+  /**
+   * Starts a requirement's own chat (1.10): a top-level agent working in the repository, given
+   * `prompt` and not waited for. It is the chat the requirement's pipeline is later launched
+   * from. Returns the agent's ID.
+   */
+  startSessionAgent(input: { title: string; prompt: string; cwd: string; profile: import("./config.js").AgentProfile; labels: Record<string, string> }): Promise<string>;
   /** Delivers a message into an existing agent's conversation without interrupting it. */
   notifyAgent(agentId: string, text: string): Promise<void>;
   /** Interrupts the agent's current turn and gives it `text` instead (used to stop a step). */

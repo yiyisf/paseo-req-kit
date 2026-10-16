@@ -1,0 +1,242 @@
+// 1.10: requirements that start from a card — the description's two sections, req start --from,
+// req card publish / check, and the pipeline keeping the card up to date.
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import {
+  AI_HEADING,
+  composeDescription,
+  parseReply,
+  publishCard,
+  questionIds,
+  REPLY_HEADING,
+  replyKey,
+  replySection,
+  splitDescription,
+} from "../src/card.js";
+import { type IntegrationConfig, syncIntegration, validateIntegrations } from "../src/integrations.js";
+import type { PipelineState } from "../src/state.js";
+
+const ROOT = path.resolve(import.meta.dirname, "..", "..");
+const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+const FAKE_ALM = path.join(ROOT, "engine", "test", "fake-alm-cards.mjs");
+const CARD = "CMASTER-BUSINESS#9902";
+
+function almConfig(): IntegrationConfig {
+  return {
+    name: "ALM",
+    command: FAKE_ALM,
+    query: {
+      args: ["alm-card", "view", "{id}", "--fields", "globalId,name,state,createdBy,subsysName,description"],
+      fields: { title: "data.name", body: "data.description", state: "data.state", author: "data.createdBy", subsystem: "data.subsysName" },
+    },
+    describe: { args: ["alm-card", "edit", "{id}", "-b", "{description}"] },
+    status: { args: ["alm-card", "edit", "{id}", "--state-detail", "{status}"] },
+    statusMap: { started: "开发中", phase_done: "待测试" },
+    create: { args: ["alm-card", "create", "--title", "{title}"], id: "(#\\d+)" },
+  };
+}
+
+function cardsFile(dir: string, description = "# 业务活动 PRD：调用 test 接口\n\n- AC-1 正常请求返回 200 与固定字符串\n"): string {
+  const file = path.join(dir, "cards.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ [CARD]: { name: "[AI]【message-service】新增 test 接口返回 hello world", state: "新建", createdBy: "张广祥", subsysName: "CSP-CMASTER_云匠", description } }),
+  );
+  return file;
+}
+
+function readCards(file: string): Record<string, { description: string; state: string }> {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+test("卡片描述：两个区块的拆分与组合，回复区保留需求方写的内容，解析回答和确认", () => {
+  const original = "# 需求\n\n需求方写的内容";
+  assert.deepEqual(splitDescription(original), { original, ai: null, reply: null });
+  const composed = composeDescription({ original, ai: "**进度**：整理中\n\n- Q1 日期按哪个时间？", reply: replySection(null, ["Q1"]) });
+  assert.ok(composed.startsWith(`${original}\n\n---\n\n${AI_HEADING}`));
+  const parts = splitDescription(composed);
+  assert.equal(parts.original, original);
+  assert.match(parts.ai ?? "", /Q1 日期/);
+  assert.equal(parts.reply, "- Q1：\n- 确认：");
+
+  // New questions go above the confirmation line; what the requester wrote stays.
+  const written = "- Q1：按支付时间\n另外导出要带表头\n- 确认：";
+  const merged = replySection(written, ["Q1", "Q2"]);
+  assert.equal(merged, "- Q1：按支付时间\n另外导出要带表头\n- Q2：\n- 确认：");
+  assert.match(replySection(merged, ["Q1", "Q2"], { planConfirm: true }), /- 方案确认：$/);
+
+  const reply = parseReply("- Q1：按支付时间\n  精确到秒\n- Q2：\n- 确认：同意\n- 方案确认：修改：按钮放右边");
+  assert.deepEqual(reply.answers, { Q1: "按支付时间\n精确到秒" });
+  assert.equal(reply.confirmed, true);
+  assert.equal(reply.planConfirmed, false);
+  assert.equal(reply.planConfirmText, "修改：按钮放右边");
+  assert.equal(parseReply("- 确认：修改：再加一个字段").confirmed, false);
+  assert.equal(parseReply("确认:OK").confirmed, true);
+  assert.equal(parseReply("- 确认：是否可以改成按周导出").confirmed, false);
+  // Template lines do not count as a reply.
+  assert.equal(replyKey(parseReply("- Q1：\n- 确认：")), replyKey(parseReply("- Q1：\n- Q2：\n- 确认：")));
+
+  assert.deepEqual(questionIds("### 待回答的问题\n- Q1 …？\n- **Q2** …\n1. Q3 …\n- Q1 重复"), ["Q1", "Q2", "Q3"]);
+  assert.match(validateIntegrations([{ name: "ALM", command: "x", query: { args: [], fields: { title: "data.name" } } }]) ?? "", /query\.fields\.body/);
+  assert.equal(validateIntegrations([almConfig()]), null);
+});
+
+test("req start --from：读卡片、建功能目录和需求会话；publish 写 AI 区；check 只转新内容，确认后记下", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-"));
+  const cards = cardsFile(dir);
+  const repo = path.join(dir, "repo");
+  fs.mkdirSync(repo);
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  const configPath = path.join(dir, "config.json");
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  fs.writeFileSync(configPath, JSON.stringify({ ...base, agents: { builder: { provider: "claude/m" }, reviewer: { provider: "codex/m" } }, integrations: [almConfig()] }));
+  const events = path.join(dir, "events.jsonl");
+  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_EVENTS: events };
+  const req = (...args: string[]) => spawnSync(TSX, [path.join(ROOT, "engine", "src", "card-cmd.ts"), ...args, "--config", configPath], { cwd: repo, env, encoding: "utf8", timeout: 60_000 });
+  const log = () => (fs.existsSync(events) ? fs.readFileSync(events, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+
+  const started = req("start", "--from", `alm:${CARD}`);
+  assert.equal(started.status, 0, started.stdout + started.stderr);
+  assert.match(started.stdout, /已从卡片 CMASTER-BUSINESS#9902/);
+  const featureDir = fs.readdirSync(path.join(repo, "docs", "features"))[0];
+  assert.match(featureDir, /^\d{8}-cmaster-business-9902$/);
+  const feature = path.join(repo, "docs", "features", featureDir);
+  const source = JSON.parse(fs.readFileSync(path.join(feature, "source.json"), "utf8"));
+  assert.equal(source.system, "ALM");
+  assert.equal(source.author, "张广祥");
+  assert.equal(source.subsystem, "CSP-CMASTER_云匠");
+  assert.equal(source.sessionAgentId, "fake-session-1");
+  assert.match(fs.readFileSync(path.join(feature, "card-source.md"), "utf8"), /<card-description>\n# 业务活动 PRD/);
+  const session = log().find((e) => e.type === "startSession");
+  assert.equal(fs.realpathSync(session.cwd), fs.realpathSync(repo));
+  assert.match(session.prompt, /^\/req 无人值守/);
+  assert.match(session.prompt, /playbooks\/unattended\.md/);
+  assert.match(session.prompt, new RegExp(`card publish "ALM:${CARD}"`));
+
+  assert.match(req("start", "--from", CARD).stdout, /已经开始过/, "同一张卡片不再开始一次");
+
+  // Before anything is published there is nothing to pass on.
+  assert.match(req("check", CARD).stdout, /没有新内容/);
+
+  fs.writeFileSync(path.join(feature, "card-ai.md"), "### 需求说明摘要\n新增 test 接口。\n\n### 待回答的问题\n- Q1 返回体是纯文本还是 JSON？\n- Q2 需要鉴权吗？\n");
+  const published = req("publish", CARD);
+  assert.equal(published.status, 0, published.stdout + published.stderr);
+  assert.match(published.stdout, /提了 2 个问题（Q1、Q2）/);
+  let description = readCards(cards)[CARD].description;
+  assert.ok(description.startsWith("# 业务活动 PRD：调用 test 接口\n\n- AC-1"), "需求方的描述原样保留在前面");
+  assert.match(description, /\*\*进度\*\*：正在整理需求说明/);
+  assert.ok(description.endsWith(`${REPLY_HEADING}\n\n- Q1：\n- Q2：\n- 确认：\n`));
+  assert.match(req("check", "--all").stdout, /没有新内容/, "刚写进去的空行不算回复");
+
+  // The requester answers Q1.
+  const answer = (from: string, to: string) => {
+    const all = readCards(cards);
+    all[CARD].description = all[CARD].description.replace(from, to);
+    fs.writeFileSync(cards, JSON.stringify(all));
+  };
+  answer("- Q1：", "- Q1：纯文本");
+  const checked = req("check", CARD);
+  assert.match(checked.stdout, /已转给需求会话（需求方回答了 Q1）/);
+  const relayed = log().filter((e) => e.type === "notify");
+  assert.equal(relayed.length, 1);
+  assert.equal(relayed[0].agentId, "fake-session-1");
+  assert.match(relayed[0].text, /<card-reply>\n- Q1：纯文本\n- Q2：\n- 确认：\n<\/card-reply>/);
+  assert.match(req("check", CARD).stdout, /没有新内容/, "同样的内容只转一次");
+
+  // A new publish keeps the answer.
+  fs.writeFileSync(path.join(feature, "card-ai.md"), "### 待回答的问题\n- Q2 需要鉴权吗？\n- Q3 返回码？\n");
+  req("publish", CARD, "--progress", "已根据回复更新");
+  description = readCards(cards)[CARD].description;
+  assert.match(description, /- Q1：纯文本\n- Q2：\n- Q3：\n- 确认：\n$/);
+  assert.match(description, /\*\*进度\*\*：已根据回复更新/);
+
+  answer("- 确认：", "- 确认：同意");
+  assert.match(req("check", CARD).stdout, /确认了需求说明/);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(feature, "source.json"), "utf8")).confirmedAt);
+
+  // The requester edits their own text: the session hears about it and card-source.md follows.
+  answer("正常请求返回 200 与固定字符串", "正常请求返回 200 与字符串 hello world");
+  assert.match(req("check", CARD).stdout, /修改了卡片描述/);
+  assert.match(fs.readFileSync(path.join(feature, "card-source.md"), "utf8"), /hello world/);
+
+  assert.match(req("list").stdout, new RegExp(`ALM:${CARD}.*已确认，等待启动`));
+  const missing = req("check", "ALM:NO#1");
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /本机没有从卡片 ALM:NO#1 开始的需求/);
+});
+
+test("从卡片开始的需求：流水线用这张卡片而不另建，改状态并更新 AI 区（方案待确认时附上方案）", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-sync-"));
+  const cards = cardsFile(dir);
+  process.env.FAKE_ALM_CARDS = cards;
+  const repo = path.join(dir, "repo");
+  const featureDir = "docs/features/20261016-cmaster-business-9902";
+  fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
+  const source = {
+    v: 1 as const, system: "ALM", id: CARD, url: null, title: "t", author: null, subsystem: null, state: "新建", fetchedAt: "2026-10-16T00:00:00Z",
+    sourceRepo: repo, sessionAgentId: "s1", originalHash: null, replyHash: null, confirmedAt: null, planConfirmedAt: null, progress: null, publishedAt: null,
+  };
+  fs.writeFileSync(path.join(repo, featureDir, "source.json"), JSON.stringify(source));
+  const state = { branch: "feature/x", profile: "standard", type: null, outcome: null, external: null } as unknown as PipelineState;
+  const logs: string[] = [];
+  await syncIntegration({ config: almConfig(), ctx: { repo, featureDir, state }, event: "started", log: (m) => logs.push(m) });
+  const calls = fs.readFileSync(`${cards}.log`, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
+  assert.deepEqual(calls, [["alm-card", "edit", CARD, "--state-detail", "开发中"]], "不建卡，直接改这张卡片的状态");
+  assert.equal(state.external?.ALM.id, CARD);
+  assert.equal(readCards(cards)[CARD].state, "开发中");
+
+  fs.writeFileSync(path.join(repo, featureDir, "preview.md"), "# 确认预览\n\n## 做完后你会看到什么\n调用 GET /test 返回 hello world\n");
+  const { planAppendix } = await import("../src/card.js");
+  await publishCard({ config: almConfig(), repo, featureDir, source, progress: "等待确认方案", appendix: planAppendix(repo, featureDir) ?? undefined, planConfirm: true });
+  const description = readCards(cards)[CARD].description;
+  assert.match(description, /### 待确认的方案\n\n### 确认预览\n\n#### 做完后你会看到什么/);
+  assert.match(description, /- 确认：\n- 方案确认：\n$/);
+  delete process.env.FAKE_ALM_CARDS;
+});
+
+test("从卡片开始的需求跑完流水线：不建卡，状态改为开发中、待测试，AI 区跟着进度更新", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-run-"));
+  const cards = cardsFile(dir);
+  const repo = path.join(dir, "repo");
+  const featureDir = "docs/features/20261016-cmaster-business-9902";
+  fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  execFileSync("git", ["checkout", "-q", "-b", "feature/20261016-cmaster-business-9902"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, featureDir, "spec.md"), "# test 接口\n\n- 状态：已确认（2026-10-16，需求方在卡片中确认）\n- 执行方式：只做研发\n\n## 5. 功能需求与验收标准\n\n### FR-1\n- **AC-1** ...\n");
+  fs.writeFileSync(path.join(repo, featureDir, "card-ai.md"), "### 需求说明摘要\n新增 test 接口。\n");
+  fs.writeFileSync(
+    path.join(repo, featureDir, "source.json"),
+    JSON.stringify({ v: 1, system: "ALM", id: CARD, url: null, title: "t", author: null, subsystem: null, state: "新建", fetchedAt: "2026-10-16T00:00:00Z", sourceRepo: repo, sessionAgentId: "s1", originalHash: null, replyHash: null, confirmedAt: "2026-10-16T00:00:00Z", planConfirmedAt: null, progress: null, publishedAt: null }),
+  );
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      ...base,
+      agents: { builder: { provider: "claude/test-model", modeId: "bypassPermissions" }, reviewer: { provider: "codex/test-model", modeId: "full-access" } },
+      waitChunkSeconds: 0.05,
+      permissionPollSeconds: 0.01,
+      notifyMilestones: false,
+      reviewAxes: { enabled: false, profiles: ["standard"] },
+      integrations: [almConfig()],
+    }),
+  );
+  const scenario = path.join(dir, "scenario.json");
+  fs.writeFileSync(scenario, "{}");
+  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: `${scenario}.events` };
+  const r = spawnSync(TSX, [path.join(ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--config", configPath], { env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  const calls = fs.readFileSync(`${cards}.log`, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
+  assert.ok(!calls.some((c) => c[1] === "create"), "不另建卡片");
+  assert.deepEqual(calls.filter((c) => c.includes("--state-detail")).map((c) => c.at(-1)), ["开发中", "待测试"]);
+  const card = readCards(cards)[CARD];
+  assert.equal(card.state, "待测试");
+  assert.match(card.description, /\*\*进度\*\*：研发完成，已写好提测说明，等待测试，分支 feature\/20261016-cmaster-business-9902/);
+  assert.match(card.description, /新增 test 接口。/);
+  assert.match(r.stdout, /卡片 CMASTER-BUSINESS#9902 的 AI 区已更新（需求方已确认，开发中/);
+});

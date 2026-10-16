@@ -187,6 +187,15 @@ export function createRuntimeWithClient(
       }
       return wrap(handle);
     },
+    async startSessionAgent(input) {
+      const handle = await client.agents.create({ config: agentConfig(input.profile), cwd: input.cwd, title: input.title, labels: input.labels, prompt: input.prompt });
+      const actual = await agentCwd(handle).catch(() => null);
+      if (actual !== null && !samePath(actual, input.cwd)) {
+        await handle.archive().catch(() => undefined);
+        throw new Error(`新建的需求会话工作目录是 ${actual}，不是仓库目录 ${input.cwd}，已停止它`);
+      }
+      return handle.id;
+    },
     async notifyAgent(agentId, text) {
       await client.agents.ref(agentId).send(text, { activeTurnBehavior: "steer" });
     },

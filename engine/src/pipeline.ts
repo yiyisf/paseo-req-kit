@@ -34,6 +34,7 @@ import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { describeExternal, type IntegrationEvent, type Runner, syncIntegration } from "./integrations.js";
+import { planAppendix, publishCard, readSource } from "./card.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
 import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
@@ -400,6 +401,44 @@ async function integrate(ctx: PipelineContext, event: IntegrationEvent): Promise
     });
   }
   save(ctx);
+  await updateCard(ctx, event);
+}
+
+const CARD_PROGRESS: Record<IntegrationEvent, string> = {
+  started: "需求方已确认，开发中（方案设计、实现、评审）",
+  approval: "方案已通过审核，等待需求方确认方案（见下方“待确认的方案”）",
+  blocked: "等待需求方决定（见需求会话中的问题）",
+  phase_done: "研发完成，已写好提测说明，等待测试",
+  verify: "测试验证中",
+  completed: "已完成",
+  failed: "流水线中断，正在处理",
+};
+
+/** A requirement that started from a card (1.10): its AI section follows the pipeline. Never throws. */
+async function updateCard(ctx: PipelineContext, event: IntegrationEvent): Promise<void> {
+  const source = readSource(ctx.repo, ctx.featureDir);
+  if (!source) return;
+  const config = ctx.config.integrations.find((i) => i.name === source.system);
+  if (!config?.describe || !config.query) return;
+  const approval = event === "approval";
+  let progress = CARD_PROGRESS[event];
+  if (event === "phase_done" && ctx.state.branch) progress += `，分支 ${ctx.state.branch}`;
+  if (event === "completed" && ctx.state.outcome && ctx.state.outcome !== "completed") progress = `已结束（${ctx.state.outcome === "completed_with_issues" ? "有遗留问题，见完成报告" : "没有完成，见完成报告"}）`;
+  try {
+    await publishCard({
+      config,
+      repo: ctx.repo,
+      featureDir: ctx.featureDir,
+      source,
+      progress,
+      appendix: approval ? (planAppendix(ctx.repo, ctx.featureDir) ?? undefined) : undefined,
+      planConfirm: approval,
+      run: ctx.integrationRunner,
+    });
+    ctx.log(`${config.name}：卡片 ${source.id} 的 AI 区已更新（${progress}）`);
+  } catch (error) {
+    ctx.log(`${config.name}：更新卡片 ${source.id} 的 AI 区失败：${(error as Error).message}`);
+  }
 }
 
 /** Sends a progress note once per run attempt, when enabled. */
@@ -1755,7 +1794,8 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     const text = developOnly
       ? `研发已完成（只做研发）：${outcomeText[report.outcome as string] ?? report.outcome}，请按提测说明人工测试。`
       : `开发流水线已结束：${outcomeText[report.outcome as string] ?? report.outcome}。`;
-    await integrate(ctx, "completed");
+    // Develop-only ends where testing by people begins: for the card that is "研发完成，待测试".
+    await integrate(ctx, developOnly && report.outcome !== "not_completed" ? "phase_done" : "completed");
     await notifyExternal(ctx, "completed", text, {
       outcome: report.outcome,
       summary: report.summary,

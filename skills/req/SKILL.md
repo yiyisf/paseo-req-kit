@@ -33,6 +33,7 @@ metadata:
 | 验收 | "做完了，我来验收""帮我对一下验收标准" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/accept.md` |
 | 上线后发现问题 | "线上发现……不对""用户反馈……" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/incident.md` |
 | 接手或回顾一个需求 | "这个需求是之前同事提的""这个需求现在什么情况" | `{{REQ_KIT_ROOT}}/skills/req/playbooks/takeover.md` |
+| 从卡片自动开始的需求（没有人在对话里） | 消息以"/req 无人值守"开头，或这个对话由 req-kit 接单创建、功能目录中有 `source.json` | `{{REQ_KIT_ROOT}}/skills/req/playbooks/unattended.md` |
 
 判断方法：
 

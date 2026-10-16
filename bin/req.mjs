@@ -31,6 +31,10 @@ const HELP = `req-kit ${version}（${kitRoot}）
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
   req sync <需求>              把需求同步到对接的外部系统（补发失败的调用、补建卡片、更新状态）
   req integration test [需求]  只显示对接外部系统时会执行的命令，不真正调用
+  req start --from <系统>:<卡号>  从需求管理系统中的一张卡片开始需求（没有人开着对话也可以）
+  req card check [<卡号>|--all]  读取需求方在卡片中的回复，转给需求的会话
+  req card publish <卡号>      把需求会话写的 card-ai.md 写进卡片的 AI 区
+  req card list                本机从卡片开始的需求
 
 使用情况（可以在任何目录运行）：
   req stats [--since 30d] [--month 2026-10]
@@ -148,7 +152,12 @@ switch (command) {
     code = node([launcher, "--approve", ...feature(rest, true)]);
     break;
   case "start":
-    code = node([launcher, ...feature(rest, true)]);
+    // From a card in the requirement management system (1.10): no chat needed to begin.
+    if (rest.some((a) => a === "--from" || a.startsWith("--from="))) code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "card-cmd.ts"), "start", ...rest]) : 1;
+    else code = node([launcher, ...feature(rest, true)]);
+    break;
+  case "card":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "card-cmd.ts"), ...rest]) : 1;
     break;
   case "doctor":
     code = node([path.join(kitRoot, "bin", "req-doctor.mjs"), ...rest]);

@@ -42,6 +42,8 @@ export interface FakeScenario {
   /** Behaviors by step key ("code_review-r2") or step id ("code_review"). */
   steps?: Record<string, FakeBehavior>;
   notifyFails?: boolean;
+  /** startSessionAgent throws. */
+  sessionFails?: boolean;
   /** Agent profiles the daemon reports; null means they cannot be read. */
   paseoProfiles?: PaseoProfile[] | null;
   /** paseo.json service scripts of the chat's workspace. */
@@ -231,6 +233,13 @@ export const createRuntime: RuntimeFactory = async () => {
     },
     async interruptAgent(agentId, text) {
       record({ type: "interrupt", agentId, text });
+    },
+    async startSessionAgent(input) {
+      counter += 1;
+      const id = `fake-session-${counter}`;
+      record({ type: "startSession", agentId: id, title: input.title, cwd: input.cwd, prompt: input.prompt, labels: input.labels });
+      if (scenario.sessionFails) throw new Error("daemon refused");
+      return id;
     },
     async notifyAgent(agentId, text) {
       record({ type: "notify", agentId, text });
