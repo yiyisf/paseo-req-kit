@@ -223,7 +223,7 @@ const profile = z.record(z.string(), z.unknown());
 
 /** Writes the agents to this machine's req-kit config (refused when the plugin is read-only). */
 export const setAgentsRpc = defineRpc({
-  name: "req.setAgents",
+  name: "req.set-agents",
   input: z.object({ builder: profile, reviewer: profile, fallback: profile.nullable() }),
   output: z.object({ ok: z.boolean(), message: z.string() }),
 });

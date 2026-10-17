@@ -2,6 +2,10 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.12.0-beta.4
+
+- **修正**：1.12.0-beta.3 的 Paseo 插件加载失败（"Invalid plugin RPC method: req.setAgents"）。Paseo 要求插件接口名只用小写字母、数字和 `. _ -`，改为 `req.set-agents`；测试中加上了这条规则的检查。其余内容同 1.12.0-beta.3。
+
 ## 1.12.0-beta.3
 
 接单机器能自己发现问题；插件里可以直接处理等你的事、看到全部配置。

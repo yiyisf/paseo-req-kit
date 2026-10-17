@@ -57,6 +57,12 @@ test("插件的清单与 req-kit 一致：同一个版本、同样的 Paseo 范�
       assert.doesNotMatch(text, /\b(document|window|localStorage|navigator)\.|className=|onClick=/, `${dir}/${f} 不能用 DOM`);
     }
   }
+  // Paseo refuses the whole plugin when an RPC name breaks its rule (packages/plugin/src/rpc.ts).
+  const contracts = fs.readFileSync(path.join(PLUGIN, "shared", "contracts.ts"), "utf8");
+  const names = [...contracts.matchAll(/defineRpc\(\{\s*name:\s*"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(names.length >= 9);
+  for (const name of names) assert.match(name, /^[a-z][a-z0-9._-]*$/, `RPC 名称 ${name} 不符合 Paseo 的规则（只能用小写字母、数字、. _ -）`);
+  assert.equal(new Set(names).size, names.length, "RPC 名称不能重复");
   for (const f of fs.readdirSync(path.join(PLUGIN, "server"))) {
     assert.doesNotMatch(fs.readFileSync(path.join(PLUGIN, "server", f), "utf8"), /from "\.\.\/client|from "react/, `server/${f} 不能用 client 的代码`);
   }
