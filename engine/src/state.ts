@@ -43,6 +43,13 @@ export interface StepRecord {
   usage?: AgentUsage | null;
   /** Phase the step ran in; absent before 1.7 (develop or verify by step). */
   phase?: PhaseName;
+  /**
+   * 1.11: the step failed while its agent was still at work (timed out, or its status could
+   * not be read). The next run of the step checks that agent before starting another one.
+   */
+  leftRunning?: boolean;
+  /** 1.11: how many times a later run went on waiting for this record's agent instead of starting a new one. */
+  reattached?: number;
 }
 
 export interface PipelineState {

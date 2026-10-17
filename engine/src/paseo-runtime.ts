@@ -199,6 +199,9 @@ export function createRuntimeWithClient(
     async notifyAgent(agentId, text) {
       await client.agents.ref(agentId).send(text, { activeTurnBehavior: "steer" });
     },
+    attachAgent(agentId) {
+      return wrap(client.agents.ref(agentId));
+    },
     async interruptAgent(agentId, text) {
       await client.agents.ref(agentId).send(text, { activeTurnBehavior: "interrupt" });
     },

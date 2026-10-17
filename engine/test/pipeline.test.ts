@@ -359,6 +359,58 @@ test("步骤超时：判定失败并说明 agent 可能仍在运行", () => {
   const { code, out } = runMain(env, { steps: { implement: { hang: true } } });
   assert.equal(code, 1, out);
   assert.match(notifications(env)[0].text ?? "", /超过 0\.003 分钟仍未完成/);
+  assert.match(notifications(env)[0].text ?? "", /还在运行，没有停止它/);
+});
+
+function timedOutImplement() {
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  const env = setup({ stepTimeoutMinutes: { ...base.stepTimeoutMinutes, implement: 0.003 } });
+  const first = runMain(env, { steps: { implement: { hang: true } } });
+  assert.equal(first.code, 1, first.out);
+  const old = events(env).find((e) => e.type === "start" && e.key === "implement");
+  assert.ok(old?.agentId);
+  return { env, oldId: old.agentId };
+}
+
+const implementStarts = (env: Env) => events(env).filter((e) => e.type === "start" && e.key === "implement").length;
+
+test("超时后继续：旧 agent 已经做完时沿用它的结果，不另起 agent", () => {
+  const { env, oldId } = timedOutImplement();
+  const resumed = runMain(env, { leftovers: { [oldId]: "idle" } }, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.equal(implementStarts(env), 1);
+  const state = JSON.parse(fs.readFileSync(path.join(env.repo, FEATURE, ".pipeline", "state.json"), "utf8"));
+  assert.deepEqual(state.results.implement, { status: "done" });
+});
+
+test("超时后继续：旧 agent 还在做时接着等它；再次超时才停止它并新建", () => {
+  const { env, oldId } = timedOutImplement();
+  // Still working, finishes while we wait again: no second agent.
+  const { env: env2, oldId: oldId2 } = timedOutImplement();
+  const waited = runMain(env, { leftovers: { [oldId]: "finishes" } }, ["--resume"]);
+  assert.equal(waited.code, 0, waited.out);
+  assert.equal(implementStarts(env), 1);
+  assert.equal(events(env).filter((e) => e.type === "interrupt").length, 0);
+
+  // Stuck: waited once more (times out again), then stopped before a new agent starts.
+  const again = runMain(env2, { leftovers: { [oldId2]: "hang" } }, ["--resume"]);
+  assert.equal(again.code, 1, again.out);
+  assert.equal(implementStarts(env2), 1);
+  const last = runMain(env2, { leftovers: { [oldId2]: "hang" } }, ["--resume"]);
+  assert.equal(last.code, 0, last.out);
+  const stops = events(env2).filter((e) => e.type === "interrupt");
+  assert.deepEqual(stops.map((e) => e.agentId), [oldId2]);
+  assert.equal(implementStarts(env2), 2);
+  const stopAt = events(env2).findIndex((e) => e.type === "interrupt");
+  const newStartAt = events(env2).findIndex((e, i) => i > stopAt && e.type === "start" && e.key === "implement");
+  assert.ok(newStartAt > stopAt);
+});
+
+test("状态读不到的旧 agent：新建 agent", () => {
+  const { env } = timedOutImplement();
+  const resumed = runMain(env, {}, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.equal(implementStarts(env), 2);
 });
 
 test("没有发起对话：步骤 agent 独立创建，通知只写日志", () => {

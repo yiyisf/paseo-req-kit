@@ -36,7 +36,7 @@ import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
 import { describeExternal, type IntegrationEvent, type Runner, syncIntegration } from "./integrations.js";
 import { cardSlug, planAppendix, publishCard, readSource } from "./card.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
-import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent } from "./runtime.js";
+import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent, WaitOutcome } from "./runtime.js";
 import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
 import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult, VERIFY_PHASE_STEPS } from "./steps.js";
 
@@ -123,6 +123,9 @@ class StepFailure extends Error {
     this.name = "StepFailure";
   }
 }
+
+/** The step gave up on its agent while the agent may still be working (1.11). */
+class AgentLeftRunning extends StepFailure {}
 
 /**
  * Errors that usually go away by themselves: provider rate limits and overload,
@@ -490,9 +493,9 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
   for (;;) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      throw new StepFailure(
+      throw new AgentLeftRunning(
         def.title,
-        `超过 ${ctx.config.stepTimeoutMinutes[def.id]} 分钟仍未完成。该 agent 可能仍在运行，可以在 Paseo 中查看「${agentTitle}」。`,
+        `超过 ${ctx.config.stepTimeoutMinutes[def.id]} 分钟仍未完成。agent「${agentTitle}」还在运行，没有停止它；继续时会先看它的情况：做完了就用它的结果，还在做就接着等它，不会另起一个 agent 重复做。`,
       );
     }
     let outcome;
@@ -503,7 +506,7 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
       consecutiveErrors += 1;
       ctx.log(`等待 ${agentTitle} 时出错（第 ${consecutiveErrors} 次）：${(error as Error).message}`);
       if (consecutiveErrors >= 5) {
-        throw new StepFailure(def.title, `连续 ${consecutiveErrors} 次无法获取 agent 状态：${(error as Error).message}`);
+        throw new AgentLeftRunning(def.title, `连续 ${consecutiveErrors} 次无法获取 agent 状态：${(error as Error).message}`);
       }
       await ctx.sleep(Math.min(60_000, 5_000 * consecutiveErrors));
       continue;
@@ -604,7 +607,11 @@ async function runStepOnce(
   const resultRel = `${ctx.featureDir}/.pipeline/results/${key}.json`;
   const resultAbs = path.join(stepRepo, resultRel);
   fs.mkdirSync(path.dirname(resultAbs), { recursive: true });
-  fs.rmSync(resultAbs, { force: true });
+
+  // An earlier run of this step may have left its agent working: use it, never run a second one.
+  const leftover = await checkLeftover(ctx, key, def, resultAbs);
+  if (leftover.done) return leftover.done;
+  if (!leftover.agent) fs.rmSync(resultAbs, { force: true });
 
   // Services, the browser and the deployed environment belong to the steps in this repository.
   const managed = target
@@ -638,10 +645,14 @@ async function runStepOnce(
     error: null,
     phase: phaseOf(ctx),
   };
-  ctx.log(`开始 ${key}（${def.title}）`);
+  if (leftover.agent) {
+    record.agentId = leftover.agent.id;
+    record.reattached = leftover.reattached;
+  }
+  ctx.log(leftover.agent ? `继续等待 ${key}（${def.title}）上一次的 agent ${leftover.agent.id}` : `开始 ${key}（${def.title}）`);
 
   try {
-    const agent = await ctx.runtime.startAgent({
+    const agent = leftover.agent ?? await ctx.runtime.startAgent({
       role: def.role,
       title: agentTitle,
       prompt: buildPrompt(ctx, def, round, maxRounds, resultRel, extras),
@@ -699,11 +710,75 @@ async function runStepOnce(
     record.outcome = "failed";
     record.endedAt = new Date().toISOString();
     record.error = (error as Error).message;
+    if (error instanceof AgentLeftRunning) record.leftRunning = true;
     if (!ctx.state.history.includes(record)) ctx.state.history.push(record);
     save(ctx);
     if (error instanceof StepFailure) throw error;
     throw new StepFailure(def.title, (error as Error).message);
   }
+}
+
+/**
+ * Before a step starts an agent, looks at the agent an earlier run of the same step left
+ * working (a timeout, unreadable status, or a pipeline process that died mid-step):
+ * - it has finished and written a valid result: that result is the step's result;
+ * - it is still working: the step waits for it again (once); the second time it is stopped
+ *   and a new agent starts, so a stuck agent does not hold the step forever;
+ * - it cannot be reached, or finished without a valid result: a new agent starts.
+ * Two agents on one step would edit the same files, commit in the same worktree and write
+ * the same result file, so a new one never starts while the old one may be working.
+ */
+async function checkLeftover(
+  ctx: PipelineContext,
+  key: string,
+  def: StepDef,
+  resultAbs: string,
+): Promise<{ done?: Record<string, unknown>; agent?: StepAgent; reattached?: number }> {
+  const last = [...ctx.state.history].reverse().find((h) => h.key === key);
+  if (!last?.agentId || last.outcome === "completed") return {};
+  if (last.outcome !== "running" && !last.leftRunning) return {};
+  last.leftRunning = false;
+  if (last.outcome === "running") {
+    last.outcome = "failed";
+    last.endedAt = new Date().toISOString();
+    last.error ??= "流水线进程在这一步运行时退出";
+  }
+  save(ctx);
+  const agent = ctx.runtime.attachAgent(last.agentId);
+  let status: WaitOutcome["status"] | "unreachable";
+  try {
+    status = (await agent.wait(Math.min(5_000, ctx.config.waitChunkSeconds * 1000))).status;
+  } catch (error) {
+    ctx.log(`无法读取 ${key} 上一次的 agent ${last.agentId} 的状态（${(error as Error).message}），新建一个 agent`);
+    status = "unreachable";
+  }
+  if (status === "idle") {
+    const validation = readResultFile(resultAbs, def);
+    if (validation.ok) {
+      last.outcome = "completed";
+      last.endedAt = new Date().toISOString();
+      last.error = null;
+      last.result = validation.value;
+      ctx.state.results[key] = validation.value;
+      save(ctx);
+      ctx.log(`${key} 上一次的 agent ${last.agentId} 已经做完，沿用它的结果：${JSON.stringify(validation.value)}`);
+      if (ctx.config.archiveStepAgents) await agent.archive().catch(() => undefined);
+      return { done: validation.value };
+    }
+    ctx.log(`${key} 上一次的 agent ${last.agentId} 已经停下，但没有有效的结果文件（${validation.error}），新建一个 agent`);
+    return {};
+  }
+  if (status === "timeout" || status === "permission") {
+    if ((last.reattached ?? 0) < 1) return { agent, reattached: (last.reattached ?? 0) + 1 };
+    ctx.log(`${key} 上一次的 agent ${last.agentId} 已经等过两轮仍未完成，停止它并新建一个 agent`);
+    await ctx.runtime
+      .interruptAgent(last.agentId, "这一步已超时，流水线会另起一个 agent 重做。请立即停止当前工作，不要再修改任何文件，也不要写结果文件，直接结束。")
+      .catch((error: Error) => ctx.log(`无法停止 agent ${last.agentId}：${error.message}`));
+    // Give it a moment to wind down before the new agent touches the same files.
+    await agent.wait(Math.min(60_000, ctx.config.waitChunkSeconds * 1000 * 2)).catch(() => undefined);
+    return {};
+  }
+  return {};
 }
 
 /** phases.verify.agents applies to the verify-phase steps. */

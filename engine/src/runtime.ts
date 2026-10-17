@@ -111,6 +111,8 @@ export interface AgentRuntime {
    */
   verifyOrigin(agentId: string, cwd: string): Promise<void>;
   startAgent(input: StartAgentInput): Promise<StepAgent>;
+  /** An agent started earlier (possibly by another pipeline process), to check on, wait for or follow up. */
+  attachAgent(agentId: string): StepAgent;
   /**
    * Starts a requirement's own chat (1.10): a top-level agent working in the repository, given
    * `prompt` and not waited for. It is the chat the requirement's pipeline is later launched

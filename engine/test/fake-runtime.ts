@@ -54,6 +54,12 @@ export interface FakeScenario {
   setup?: { status: "completed" | "failed" | "none" | "timeout"; error: string | null };
   /** Paseo cannot schedule (older daemon). */
   noSchedules?: boolean;
+  /**
+   * Agents started by an earlier run (by ID), as attachAgent finds them: "idle" has finished
+   * and written its result, "finishes" is still working and finishes at the next wait,
+   * "hang" never finishes, "gone" cannot be reached. Unlisted agents are "gone".
+   */
+  leftovers?: Record<string, "idle" | "finishes" | "hang" | "gone">;
 }
 
 const DEFAULT_RESULTS: Record<string, Record<string, unknown>> = {
@@ -95,6 +101,16 @@ function record(event: Record<string, unknown>): void {
   if (file) fs.appendFileSync(file, `${JSON.stringify({ ...event, at: Date.now() })}\n`);
 }
 
+/** Agents started in any run of this test, so a later run can attach to them. */
+function registryFile(): string | null {
+  return process.env.FAKE_EVENTS ? `${process.env.FAKE_EVENTS}.agents.json` : null;
+}
+
+function readRegistry(): Record<string, { resultAbs: string; result: Record<string, unknown> }> {
+  const file = registryFile();
+  return file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+}
+
 function contextValue(prompt: string, label: string): string {
   // Only the <pipeline-context> block: prompt text may start a line with the same words.
   const block = prompt.slice(prompt.lastIndexOf("<pipeline-context>"));
@@ -106,7 +122,8 @@ function contextValue(prompt: string, label: string): string {
 export const createRuntime: RuntimeFactory = async () => {
   const scenarioFile = process.env.FAKE_SCENARIO;
   const scenario: FakeScenario = scenarioFile ? JSON.parse(fs.readFileSync(scenarioFile, "utf8")) : {};
-  let counter = 0;
+  // IDs stay unique across the runs of one test (a resumed run can meet an earlier run's agent).
+  let counter = Object.keys(readRegistry()).length;
   let scheduleCounter = 0;
   let worktreeCounter = 0;
   const startsByKey = new Map<string, number>();
@@ -136,6 +153,8 @@ export const createRuntime: RuntimeFactory = async () => {
       startsByKey.set(key, startNumber);
       const result = behavior.resultsByStart?.[startNumber - 1] ?? behavior.result ?? DEFAULT_RESULTS[stepId];
       const transient = startNumber <= (behavior.transientErrors ?? 0);
+      const registry = registryFile();
+      if (registry) fs.writeFileSync(registry, JSON.stringify({ ...readRegistry(), [id]: { resultAbs, result } }));
 
       record({
         type: "start",
@@ -230,6 +249,32 @@ export const createRuntime: RuntimeFactory = async () => {
         },
       };
       return agent;
+    },
+    attachAgent(agentId) {
+      const state = scenario.leftovers?.[agentId] ?? "gone";
+      const known = readRegistry()[agentId];
+      let waits = 0;
+      return {
+        id: agentId,
+        async wait(timeoutMs): Promise<WaitOutcome> {
+          record({ type: "attachWait", agentId, state });
+          waits += 1;
+          const base = { error: null, lastMessage: "完成", pendingPermissions: [], usage: null };
+          if (state === "gone" || !known) throw new Error(`agent ${agentId} not found`);
+          if (state === "hang" || (state === "finishes" && waits === 1)) {
+            await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 50)));
+            return { ...base, status: "timeout" };
+          }
+          if (!fs.existsSync(known.resultAbs)) fs.writeFileSync(known.resultAbs, JSON.stringify(known.result));
+          return { ...base, status: "idle" };
+        },
+        async followUp(text) {
+          record({ type: "followUp", agentId, text });
+        },
+        async archive() {
+          record({ type: "archive", agentId });
+        },
+      };
     },
     async interruptAgent(agentId, text) {
       record({ type: "interrupt", agentId, text });
