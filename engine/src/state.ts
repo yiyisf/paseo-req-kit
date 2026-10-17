@@ -99,6 +99,8 @@ export interface PipelineState {
   stopKind?: StopKind | null;
   /** 1.12: what the pipeline handled by itself instead of stopping (retries, waiting longer, a fallback model…). */
   recoveries?: Recovery[];
+  /** 1.12: the questions a run waiting for the requester (waiting_for_business) asks; cleared when it runs again. */
+  pendingQuestions?: string[] | null;
   outcome: string | null;
   /** "quick" or "standard"; decides loop rounds and optional steps. */
   profile: ProfileName;
@@ -150,7 +152,15 @@ export interface PipelineState {
    * Branches pushed for a requirement that started from a card (1.10, `push` config): one entry
    * per repository (the main one, then joint ones), the latest attempt. `error` is null when it worked.
    */
-  pushed?: Array<{ repo: string; remote: string; branch: string; at: string; error: string | null }> | null;
+  pushed?: Array<{
+    repo: string;
+    remote: string;
+    branch: string;
+    at: string;
+    error: string | null;
+    /** 1.12: the draft merge request made after the push (push.mergeRequest); made once per repository. */
+    mergeRequest?: { url: string | null; at: string; error: string | null } | null;
+  }> | null;
 }
 
 export interface JointRepo {

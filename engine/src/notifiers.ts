@@ -6,7 +6,7 @@
 
 import { pathToFileURL } from "node:url";
 
-export const NOTIFIER_EVENT_TYPES = ["milestone", "blocked", "permission", "failed", "completed", "digest", "phase_done", "approval"] as const;
+export const NOTIFIER_EVENT_TYPES = ["milestone", "blocked", "permission", "failed", "completed", "digest", "phase_done", "approval", "alert"] as const;
 export type NotifierEventType = (typeof NOTIFIER_EVENT_TYPES)[number];
 
 export interface NotifierConfig {
@@ -34,6 +34,37 @@ export interface NotifierEvent {
   text: string;
   /** Type-specific fields; see contracts/notifier-event.md. */
   details: Record<string, unknown>;
+  /**
+   * 1.12: who the event is for. `audience` "requester" (something the requester has to do, or
+   * the result) or "team" (progress, interruptions, the machine's own alerts). `requester` is the
+   * card's author for requirements that started from a card; `recipients` are the people to send
+   * to, with their accounts from the `people` config. Absent before 1.12.
+   */
+  people?: {
+    audience: "requester" | "team";
+    requester: string | null;
+    card: { system: string; id: string; url: string | null } | null;
+    recipients: Array<{ name: string; accounts: Record<string, string> }>;
+  };
+}
+
+/** Events that are the requester's to act on, or their result (1.12). */
+export const REQUESTER_EVENTS: readonly NotifierEventType[] = ["blocked", "approval", "phase_done", "completed"];
+
+/** Who an event is for, from the requester's name and the `people` config. */
+export function peopleOf(
+  type: NotifierEventType,
+  requester: string | null,
+  card: { system: string; id: string; url: string | null } | null,
+  people: Record<string, Record<string, string>>,
+): NonNullable<NotifierEvent["people"]> {
+  const audience = REQUESTER_EVENTS.includes(type) && requester ? "requester" : "team";
+  return {
+    audience,
+    requester,
+    card,
+    recipients: audience === "requester" && requester ? [{ name: requester, accounts: people[requester] ?? {} }] : [],
+  };
 }
 
 export type NotifierFunction = (event: NotifierEvent, options: Record<string, unknown>) => unknown;

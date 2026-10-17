@@ -95,6 +95,11 @@ test("插件后台：只读时拒绝管理操作；操作转成 req api run；�
   assert.deepEqual(await handlers.run({ action: "verify", repo: "/repo", featureDir: "docs/features/a", verifyEnv: "deployed" }), { ok: true, message: "已在后台启动" });
   assert.deepEqual(calls.at(-1), ["run", "verify", "docs/features/a", "--repo", "/repo", "--verify-env", "deployed"]);
 
+  // 1.12: the inbox's answers become req api run reply with the text; an empty one is refused.
+  await handlers.run({ action: "reply", repo: "/repo", featureDir: "docs/features/a", text: " 1. 只有新订单 " } as never);
+  assert.deepEqual(calls.at(-1), ["run", "reply", "docs/features/a", "--repo", "/repo", "1. 只有新订单"]);
+  assert.equal((await handlers.run({ action: "reply", repo: "/repo", featureDir: "docs/features/a", text: "  " } as never)).ok, false);
+
   // 1.12: the model settings page writes through req api set-agents; read-only refuses it too.
   const agents = { builder: { provider: "claude/x" }, reviewer: { provider: "codex/y" }, fallback: null };
   readOnly = true;

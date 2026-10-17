@@ -19,6 +19,7 @@ import {
 } from "../src/card.js";
 import { type IntegrationConfig, syncIntegration, validateIntegrations } from "../src/integrations.js";
 import type { PipelineState } from "../src/state.js";
+import type { SourceFile } from "../src/card.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
@@ -234,12 +235,19 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
       notifyMilestones: false,
       reviewAxes: { enabled: false, profiles: ["standard"] },
       integrations: [almConfig()],
-      push: { enabled: true },
+      push: {
+        enabled: true,
+        mergeRequest: {
+          command: path.join(ROOT, "engine", "test", "fake-glab.mjs"),
+          args: ["mr", "create", "--draft", "--source-branch", "{branch}", "--target-branch", "{target}", "--title", "{title}", "--description", "{description}", "--yes"],
+        },
+      },
     }),
   );
+  const glabLog = path.join(dir, "glab.log");
   const scenario = path.join(dir, "scenario.json");
   fs.writeFileSync(scenario, "{}");
-  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com", REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: `${scenario}.events` };
+  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com", REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: `${scenario}.events`, FAKE_GLAB_LOG: glabLog };
   const r = spawnSync(TSX, [path.join(ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--config", configPath], { env, encoding: "utf8", timeout: 60_000 });
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
   const calls = fs.readFileSync(`${cards}.log`, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
@@ -247,7 +255,16 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
   assert.deepEqual(calls.filter((c) => c.includes("--state-detail")).map((c) => c.at(-1)), ["开发中", "待测试"]);
   const card = readCards(cards)[CARD];
   assert.equal(card.state, "待测试");
-  assert.match(card.description, /\*\*进度\*\*：研发完成，已写好提测说明，等待测试，代码已推送到 origin 的分支 req\/cmaster-business-9902/);
+  assert.match(card.description, /\*\*进度\*\*：研发完成，已写好提测说明，等待测试，代码已推送到 origin 的分支 req\/cmaster-business-9902，草稿合并请求 https:\/\/gitlab\.example\/team\/shop\/-\/merge_requests\/7/);
+  // 1.12: a draft merge request, made in the repository, described by the handoff note and the card.
+  const glab = fs.readFileSync(glabLog, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { cwd: string; args: string[] });
+  assert.equal(glab.length, 1);
+  assert.equal(fs.realpathSync(glab[0].cwd), fs.realpathSync(repo));
+  const arg = (name: string) => glab[0].args[glab[0].args.indexOf(name) + 1];
+  assert.equal(arg("--source-branch"), "req/cmaster-business-9902");
+  assert.equal(arg("--target-branch"), "main");
+  assert.match(arg("--title"), new RegExp(`^\\[${CARD.replace("#", "\\#")}\\] `));
+  assert.match(arg("--description"), /草稿，合并前请人工评审[\s\S]*需求卡片：ALM CMASTER-BUSINESS#9902/);
   // The branch is on the remote, at the same commit as the requirement's branch; nothing else was pushed.
   const pushed = execFileSync("git", ["--git-dir", remote, "for-each-ref", "--format=%(refname)"], { encoding: "utf8" }).trim().split("\n");
   assert.deepEqual(pushed, ["refs/heads/req/cmaster-business-9902"]);
@@ -258,6 +275,7 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
   const finalState = JSON.parse(fs.readFileSync(path.join(repo, featureDir, ".pipeline", "state.json"), "utf8"));
   assert.equal(finalState.pushed[0].branch, "req/cmaster-business-9902");
   assert.equal(finalState.pushed[0].error, null);
+  assert.equal(finalState.pushed[0].mergeRequest.url, "https://gitlab.example/team/shop/-/merge_requests/7");
   // The run record says who asked and which card; stats group by requester.
   const runs = fs.readFileSync(path.join(dir, "home", "usage", "runs.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(runs.at(-1).requirement.requester, "张广祥");
@@ -327,4 +345,47 @@ test("req start --from：建需求会话失败（Paseo 没在运行）后再运�
   assert.equal(features.length, 1, "用同一个功能目录");
   assert.ok(JSON.parse(fs.readFileSync(path.join(repo, "docs", "features", features[0], "source.json"), "utf8")).sessionAgentId);
   assert.match(start().stdout, /已经开始过/);
+});
+
+test("自动确认（1.12，autoConfirm.hours）：快速档、没有待答问题的卡片，到时没有异议就当作确认；有问题、标准档或需求方写了内容的不自动确认", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-card-auto-"));
+  const cards = cardsFile(dir);
+  process.env.FAKE_ALM_CARDS = cards;
+  const repo = path.join(dir, "repo");
+  const featureDir = "docs/features/20261017-cmaster-business-9902";
+  fs.mkdirSync(path.join(repo, featureDir), { recursive: true });
+  const fresh = (): SourceFile => ({
+    v: 1 as const, system: "ALM", id: CARD, url: null, title: "[AI]【message-service】新增 test 接口返回 hello world", author: null, subsystem: null, state: "新建", fetchedAt: "2026-10-17T00:00:00Z",
+    sourceRepo: repo, sessionAgentId: "s1", originalHash: null, replyHash: null, confirmedAt: null, planConfirmedAt: null, progress: null, publishedAt: null,
+  });
+  fs.writeFileSync(path.join(repo, featureDir, "spec.md"), "# 改文案\n\n- 状态：草稿\n- 档位：快速\n");
+  fs.writeFileSync(path.join(repo, featureDir, "card-ai.md"), "### 需求说明摘要\n把按钮文案改为“提交”。\n");
+  const { checkOne } = await import("../src/card-cmd.js");
+  const { autoConfirmEligible } = await import("../src/card.js");
+  const t0 = new Date("2026-10-17T02:00:00Z");
+  const notified: string[] = [];
+  const check = (source: SourceFile, at: Date) =>
+    checkOne({ entry: { featureDir }, config: almConfig(), repo, source } as never, { now: at }, async (_id, text) => {
+      notified.push(text);
+    });
+
+  const source = fresh();
+  await publishCard({ config: almConfig(), repo, featureDir, source, autoConfirmHours: 4, now: t0 });
+  assert.match(readCards(cards)[CARD].description, /\*\*自动确认\*\*：这是一个小改动，没有需要你回答的问题。到 .* 前没有异议，就按上面的说明开始开发/);
+  assert.equal(source.autoConfirmAt, "2026-10-17T06:00:00.000Z");
+  assert.match(await check(source, new Date("2026-10-17T05:00:00Z")), /没有新内容/);
+  assert.match(await check(source, new Date("2026-10-17T06:01:00Z")), /按自动确认处理/);
+  assert.match(notified.at(-1) ?? "", /没有提出异议，按自动确认处理/);
+  assert.ok(source.confirmedAt);
+  assert.equal(source.autoConfirmed, true);
+
+  // Not for: open questions, the standard profile, or a confirmation already given.
+  assert.equal(autoConfirmEligible(repo, featureDir, "### 待回答的问题\n- Q1 用哪个文案？", fresh()), false);
+  fs.writeFileSync(path.join(repo, featureDir, "spec.md"), "# 改文案\n\n- 档位：标准\n");
+  assert.equal(autoConfirmEligible(repo, featureDir, "摘要", fresh()), false);
+  const standard = fresh();
+  await publishCard({ config: almConfig(), repo, featureDir, source: standard, autoConfirmHours: 4, now: t0 });
+  assert.doesNotMatch(readCards(cards)[CARD].description, /自动确认/);
+  assert.equal(standard.autoConfirmAt, null);
+  delete process.env.FAKE_ALM_CARDS;
 });

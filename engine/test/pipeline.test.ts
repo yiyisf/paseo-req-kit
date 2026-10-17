@@ -458,7 +458,7 @@ test("自愈：超时后同一个 agent 再等一轮；报错、结果无效时�
   );
 });
 
-test("方案审核要需求方决定时：builder 先自答，只把剩下的业务问题（带推荐答案）交给需求方；都答了就不停", () => {
+test("方案审核要需求方决定时：builder 先自答，只把剩下的业务问题（带推荐答案）交给需求方；都答了就不停", async () => {
   const blocked = { verdict: "blocked", questions: ["导出用什么格式？", "历史订单要不要显示？"] };
   const all = setup({ answerQuestionsFirst: true });
   const allRun = runMain(all, { steps: { "design_review-r1": { result: blocked }, "design_revise-r1": { result: { status: "done", business_questions: [] } } } });
@@ -475,6 +475,17 @@ test("方案审核要需求方决定时：builder 先自答，只把剩下的业
   assert.equal(state(some).stopKind, "business");
   assert.match(notifications(some).at(-1)?.text ?? "", /推荐：不显示/);
   assert.doesNotMatch(notifications(some).at(-1)?.text ?? "", /导出用什么格式/);
+
+  // 1.12: the plugin's inbox sees the question and passes an answer to the chat.
+  const { apiList } = await import("../src/api.js");
+  const listed = apiList({ repo: some.repo, all: false }).find((i) => i.featureDir === FEATURE);
+  assert.deepEqual(listed?.waiting?.questions, [left]);
+  assert.equal(listed?.waiting?.canReply, true);
+  const reply = spawnSync(process.execPath, [path.join(ROOT, "bin", "req.mjs"), "reply", FEATURE, "历史订单不显示"], { cwd: some.repo, env: fakeEnv(some, {}), encoding: "utf8" });
+  assert.equal(reply.status, 0, reply.stdout + reply.stderr);
+  const relayed = notifications(some).at(-1);
+  assert.equal(relayed?.agentId, ORIGIN);
+  assert.match(relayed?.text ?? "", /来自 req-kit 插件[\s\S]*<plugin-reply>\n历史订单不显示\n<\/plugin-reply>/);
 });
 
 test("状态读不到的旧 agent：新建 agent", () => {
@@ -1071,6 +1082,8 @@ test("外部通知：按配置把事件交给通知模块；模块出错或超�
   assert.deepEqual(first.details.questions, ["过期的验证码能否重发？"]);
   assert.match(first.text, /1 个需要需求方决定的问题/);
   assert.deepEqual(sent[0].options, { group: "dev" });
+  // 1.12: not from a card: nobody in particular, the group.
+  assert.deepEqual(first.people, { audience: "team", requester: null, card: null, recipients: [] });
   assert.equal(sent[3].event.details.outcome, "completed");
   assert.match(sent[3].event.details.summary, /可以验收/);
 

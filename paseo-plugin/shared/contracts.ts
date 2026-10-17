@@ -34,6 +34,14 @@ export interface Requirement {
   updatedAt: string;
   usage: Usage | null;
   present: boolean;
+  /** req-kit 1.12+: what a requirement that needs a person is waiting for; absent before. */
+  waiting?: {
+    since: string;
+    questions: string[];
+    reason: string | null;
+    card: { system: string; id: string; url: string | null; requester: string | null } | null;
+    canReply: boolean;
+  } | null;
 }
 
 export interface Step {
@@ -139,7 +147,7 @@ export const statsRpc = defineRpc({
   output: z.custom<StatsSummary>(),
 });
 
-export const ACTIONS = ["approve", "stop", "resume", "verify", "sync"] as const;
+export const ACTIONS = ["approve", "stop", "resume", "verify", "sync", "reply"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 export const runRpc = defineRpc({
@@ -148,8 +156,39 @@ export const runRpc = defineRpc({
     action: z.enum(ACTIONS),
     /** For verify: local | deployed. */
     verifyEnv: z.enum(["local", "deployed"]).optional(),
+    /** For reply (1.12): the answer, passed to the requirement's chat. */
+    text: z.string().max(8000).optional(),
   }),
   output: z.object({ ok: z.boolean(), message: z.string() }),
+});
+
+/** req api config (1.12): every setting, its value in words and which file set it. */
+export type ConfigLayer = "machine" | "team" | "project";
+
+export interface ConfigItemData {
+  key: string;
+  label: string;
+  description: string;
+  display: string;
+  value: unknown;
+  setBy: ConfigLayer[];
+  scope: "any" | "machine" | "machine_team";
+  changed: boolean;
+}
+
+export interface ConfigViewData {
+  sources: Array<{ layer: ConfigLayer; path: string }>;
+  ignored: string[];
+  error: string | null;
+  repo: string | null;
+  groups: Array<{ id: string; title: string; description: string; items: ConfigItemData[] }>;
+}
+
+/** The configuration in a project (repo), or this machine's without a project. */
+export const configRpc = defineRpc({
+  name: "req.config",
+  input: z.object({ repo: z.string().optional() }),
+  output: z.custom<ConfigViewData>(),
 });
 
 /** Agent settings, as req-kit writes them (1.12). */

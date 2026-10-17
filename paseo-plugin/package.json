@@ -1,6 +1,6 @@
 {
   "name": "req-kit-paseo-plugin",
-  "version": "1.12.0-beta.2",
+  "version": "1.12.0-beta.3",
   "private": true,
   "description": "The req-kit plugin for Paseo. Ships inside the paseo-req-kit package; installed with req plugin install.",
   "type": "module",

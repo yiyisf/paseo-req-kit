@@ -6,7 +6,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.js";
 import { defaultConfigPath, kitVersion } from "./locations.js";
-import { dispatchNotifiers, NOTIFIER_EVENT_TYPES, type NotifierEvent, type NotifierEventType } from "./notifiers.js";
+import { dispatchNotifiers, peopleOf, NOTIFIER_EVENT_TYPES, type NotifierEvent, type NotifierEventType } from "./notifiers.js";
 
 /** A realistic event of the given type, with the details the pipeline would send. */
 export function sampleEvent(type: NotifierEventType, repo: string): NotifierEvent {
@@ -33,6 +33,10 @@ export function sampleEvent(type: NotifierEventType, repo: string): NotifierEven
     phase_done: {
       text: `研发已完成，可以提测：提测说明在 ${featureDir}/handoff.md。`,
       details: { handoffPath: `${featureDir}/handoff.md`, mode: "gated", verifyCommand: `${resume} --phase verify`, verifyAt: null, handbacks: 0 },
+    },
+    alert: {
+      text: "接单器自检没有通过，暂停接新卡片：builder 用的 claude 不可用（needs_login）：在 Paseo 中登录它",
+      details: { source: "factory", machine: "dev-box", problems: ["builder 用的 claude 不可用（needs_login）：在 Paseo 中登录它"], recovered: false },
     },
     approval: {
       text: `方案已通过审核，请需求方确认"做完后会看到什么"再开始写代码：${featureDir}/preview.md`,
@@ -83,7 +87,9 @@ async function main(): Promise<number> {
   let failed = false;
   // Lets a module show what it would send (the template does) without a real IM.
   process.env.REQ_KIT_NOTIFY_TEST = "1";
-  await dispatchNotifiers(config.notifiers, sampleEvent(type, repo), (message) => {
+  // 1.12: a sample requester, so a module that sends to people can be tried; accounts from the config.
+  const event = { ...sampleEvent(type, repo), people: peopleOf(type, "张三（示例需求方）", { system: "ALM", id: "DEMO#1", url: null }, config.people) };
+  await dispatchNotifiers(config.notifiers, event, (message) => {
     if (message.startsWith("外部通知失败")) failed = true;
     console.log(message);
   });

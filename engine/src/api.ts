@@ -12,6 +12,7 @@
 //   req api run <approve|stop|resume|verify> <需求> [--repo <dir>] [其他选项]
 //   req api models                         agents the daemon offers, the current and the recommended ones (1.12)
 //   req api set-agents --json <设置>       writes builder, reviewer and fallback to the local config (1.12)
+//   req api config [--repo <dir>] [--machine]  every setting, its value in words and which file set it (1.12)
 //
 // Reading never changes anything. `run` performs the same command as `req <command>` in that
 // directory, so the engine stays the only one that changes a requirement's state.
@@ -21,7 +22,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { resultText, stepName } from "./control.js";
 import { FEATURES_DIR, findWorktreeRun, listFeatures, resolveFeatureArg, summarize } from "./features.js";
-import { KIT_ROOT, kitVersion } from "./locations.js";
+import { defaultConfigPath, KIT_ROOT, kitVersion } from "./locations.js";
+import { configView } from "./config-view.js";
 import { pruneIndex, readIndex, registerRequirement, requirementKey } from "./records.js";
 import { isAlive, type PipelineState, readState, statePath, type StepRecord } from "./state.js";
 import { parsePeriod, summarizeRuns } from "./stats.js";
@@ -120,6 +122,18 @@ export interface ListItem {
   usage: ReturnType<typeof usageOf>;
   /** False when the index still lists a requirement whose directory is gone. */
   present: boolean;
+  /**
+   * 1.12: for a requirement that needs a person (attention): since when, what it asks, why it
+   * stopped, and the card it came from. Null otherwise.
+   */
+  waiting: {
+    since: string;
+    questions: string[];
+    reason: string | null;
+    card: { system: string; id: string; url: string | null; requester: string | null } | null;
+    /** Whether a reply can be sent to the requirement's chat (req reply). */
+    canReply: boolean;
+  } | null;
 }
 
 function item(repo: string, branch: string | null, featureDir: string, extra: { sourceRepo: string | null; workspaceId: string | null; project: string }): ListItem | null {
@@ -148,6 +162,25 @@ function item(repo: string, branch: string | null, featureDir: string, extra: { 
     updatedAt: summary.updatedAt,
     usage: usageOf(state),
     present: true,
+    waiting: waitingOf(repo, featureDir, state),
+  };
+}
+
+function waitingOf(repo: string, featureDir: string, state: PipelineState | null): ListItem["waiting"] {
+  if (!state || !attentionOf(state)) return null;
+  let card: NonNullable<ListItem["waiting"]>["card"] = null;
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(repo, featureDir, "source.json"), "utf8")) as { system?: string; id?: string; url?: string | null; author?: string | null };
+    if (s.system && s.id) card = { system: s.system, id: s.id, url: s.url ?? null, requester: s.author ?? null };
+  } catch {
+    card = null;
+  }
+  return {
+    since: state.updatedAt,
+    questions: state.pendingQuestions ?? [],
+    reason: state.stopReason,
+    card,
+    canReply: Boolean(state.originAgentId) && (state.status === "waiting_for_business" || state.status === "waiting_for_approval"),
   };
 }
 
@@ -188,6 +221,7 @@ export function apiList(input: { repo: string; all: boolean }): ListItem[] {
         updatedAt: e.registeredAt,
         usage: null,
         present: false,
+        waiting: null,
       },
     );
   }
@@ -293,7 +327,7 @@ export function apiIndex(input: { rebuild: string[]; prune: boolean }) {
   return { scanned: [...dirs], registered, pruned, total: readIndex().length };
 }
 
-const RUNNABLE = ["approve", "stop", "resume", "verify", "sync"] as const;
+const RUNNABLE = ["approve", "stop", "resume", "verify", "sync", "reply"] as const;
 
 /** Runs `req <command> <需求>` where people would, and reports what it said. */
 export function apiRun(command: string, repoArg: string, feature: string, extra: string[]) {
@@ -398,6 +432,11 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       const what = need("命令（approve、stop、resume、verify）");
       return apiRun(what, repo, need("需求"), argv.splice(0));
     }
+    case "config": {
+      // --machine: this machine's settings without any project's.
+      const machineOnly = flag(argv, "--machine");
+      return configView(defaultConfigPath(), machineOnly ? null : fs.realpathSync(repo));
+    }
     case "models": {
       const { current, choices, recommended } = configureJson(["--catalog-json"]);
       return { current, choices, recommended };
@@ -409,7 +448,7 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       return { ok: true, message };
     }
     default:
-      throw new ApiError("bad_arguments", `没有 "${command ?? ""}" 这个 api 命令。可用：version、list、status、file、stats、index、run、models、set-agents`);
+      throw new ApiError("bad_arguments", `没有 "${command ?? ""}" 这个 api 命令。可用：version、list、status、file、stats、index、run、models、set-agents、config`);
   }
 }
 

@@ -143,6 +143,8 @@ export interface AgentRuntime {
   recentActivity(agentId: string, limit: number): Promise<ActivityItem[] | null>;
   /** Which Paseo tools step agents get (Settings → Agents); null when unknown. */
   capabilities(): Promise<{ paseoTools: boolean; browser: boolean } | null>;
+  /** 1.12: whether each agent provider is installed and logged in ("ready"); null when the daemon does not say. */
+  providerStatus(): Promise<Array<{ provider: string; status: string }> | null>;
   /**
    * Paseo schedule that sends `prompt` into an existing agent's conversation (the chat):
    * once at `at`, or on `cron` (5 fields, local time zone). Returns the schedule ID, or

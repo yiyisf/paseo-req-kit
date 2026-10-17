@@ -30,6 +30,7 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req digest --schedule "0 9 * * 1"
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
   req sync <需求>              把需求同步到对接的外部系统（补发失败的调用、补建卡片、更新状态）
+  req reply <需求> <回复>      把回答或方案意见转给需求的对话（插件的"等你处理"用它）
   req integration test [需求]  只显示对接外部系统时会执行的命令，不真正调用
   req start --from <系统>:<卡号>  从需求管理系统中的一张卡片开始需求（没有人开着对话也可以）
   req card check [<卡号>|--all]  读取需求方在卡片中的回复，转给需求的会话
@@ -196,6 +197,9 @@ switch (command) {
     break;
   case "api":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "api.ts"), ...rest]) : 1;
+    break;
+  case "reply":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "reply.ts"), ...rest]) : 1;
     break;
   case "sync":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), "sync", ...rest]) : 1;

@@ -6,7 +6,7 @@
 2. **团队配置**：本机配置的 `teamConfig` 指向的文件，适合放进团队共用的仓库；
 3. **项目配置**：仓库根目录的 `.requirement-pipeline.json`，只写和本机不同的部分。
 
-`daemonUrl`、`daemonPasswordEnv`、`teamConfig` 只能写在本机配置中；`notifiers` 不能写在项目配置中（会运行代码）。写错时，流水线启动前会说明哪一项、为什么。完整的示例见仓库的 [config.example.json](https://github.com/yiyisf/paseo-req-kit/blob/main/config.example.json)。
+`daemonUrl`、`daemonPasswordEnv`、`teamConfig` 只能写在本机配置中；`notifiers`、`integrations`、`push`、`factory`、`people` 不能写在项目配置中（会运行命令、推送或发消息）。在 Paseo 插件首页的"配置"中可以看到每一项现在的值和来自哪个文件。写错时，流水线启动前会说明哪一项、为什么。完整的示例见仓库的 [config.example.json](https://github.com/yiyisf/paseo-req-kit/blob/main/config.example.json)。
 
 ## agent
 
@@ -76,6 +76,9 @@
 | --- | --- | --- |
 | `notifyMilestones` | `true` | 关键节点（方案确定、开始验证、修复缺陷）在对话里说一句 |
 | `notifiers` | `[]` | 外部通知模块（企业 IM 等），见 [外部通知事件](/reference/contracts/notifier-event) |
+| `people` | `{}` | 1.12：需求方姓名到 IM 账号的对应，按人通知时用；只能写在本机或团队配置中 |
+| `push.mergeRequest` | 无 | 1.12：推送后用 `glab` 等命令建草稿合并请求，参数可用 `{branch}` `{target}` `{title}` `{description}` |
+| `autoConfirm.hours` | 0（关闭） | 1.12：快速档、没有待答问题的卡片，过这么久没有异议就开始 |
 | `waitingReminderHours` | 24 | 等待需求方回答、或研发完成待测试超过这么久，提醒一次；0 关闭 |
 | `autoResumeMinutes` / `autoResumeMax` | 30 / 2 | 临时错误中断后自动继续的等待时间和次数；0 关闭 |
 | `watchdogMinutes` | 60 | 运行期间定时检查，进程意外退出时自动继续；0 关闭（1.12 起默认 60） |

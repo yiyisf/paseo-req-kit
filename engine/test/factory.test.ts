@@ -160,3 +160,50 @@ test("接单器（1.12）：本机流水线的后台进程已退出但仍标着�
     Object.assign(process.env, saved);
   }
 });
+
+test("接单器自检（1.12）：Paseo 连不上、agent 没登录、额度用完时不接新卡片；同样的问题只告警一次，恢复时再说一次", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-factory-health-"));
+  const alerts = path.join(dir, "alerts.jsonl");
+  const notifier = path.join(dir, "im.mjs");
+  fs.writeFileSync(notifier, `import fs from "node:fs";\nexport default (e) => fs.appendFileSync(${JSON.stringify(alerts)}, JSON.stringify(e) + "\\n");\n`);
+  const configPath = path.join(dir, "config.json");
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  fs.writeFileSync(configPath, JSON.stringify({ ...base, agents: { builder: { provider: "claude/m" }, reviewer: { provider: "codex/m" } }, notifiers: [{ module: notifier, events: ["alert"] }] }));
+  const scenario = path.join(dir, "scenario.json");
+  const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_EVENTS: path.join(dir, "events.jsonl"), FAKE_SCENARIO: scenario };
+  const saved = { ...process.env };
+  Object.assign(process.env, env);
+  const sent = () => (fs.existsSync(alerts) ? fs.readFileSync(alerts, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+  try {
+    const { pollOnce } = await import("../src/factory.js");
+    fs.writeFileSync(scenario, JSON.stringify({ providerStatus: [{ provider: "claude", status: "needs_login" }, { provider: "codex", status: "ready" }] }));
+    const first = await pollOnce(configPath, { env });
+    assert.deepEqual(first.problems, ["builder 用的 claude 不可用（needs_login）：在 Paseo 中登录它"]);
+    assert.match(first.notes.join(), /自检没有通过，这次不接新卡片/);
+    assert.equal(sent().length, 1);
+    assert.equal(sent()[0].type, "alert");
+    assert.match(sent()[0].text, /暂停接新卡片：builder 用的 claude 不可用/);
+    assert.equal(sent()[0].people.audience, "team");
+
+    await pollOnce(configPath, { env });
+    assert.equal(sent().length, 1, "同样的问题只告警一次");
+
+    fs.writeFileSync(scenario, JSON.stringify({ quota: [{ provider: "claude", displayName: "Claude", window: "5 小时", usedPct: 100, resetsAt: null, tone: "danger" }] }));
+    assert.match((await pollOnce(configPath, { env })).problems.join(), /Claude 的「5 小时」额度已用完/);
+    assert.equal(sent().length, 2, "问题变了再说一次");
+
+    fs.writeFileSync(scenario, JSON.stringify({ daemonDown: true }));
+    assert.match((await pollOnce(configPath, { env })).problems.join(), /连不上 Paseo（connect ECONNREFUSED/);
+
+    fs.writeFileSync(scenario, JSON.stringify({}));
+    const ok = await pollOnce(configPath, { env });
+    assert.deepEqual(ok.problems, []);
+    assert.match(sent().at(-1).text, /自检恢复正常，继续接卡片/);
+    assert.equal(sent().at(-1).details.recovered, true);
+    await pollOnce(configPath, { env });
+    assert.equal(sent().length, 4);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});

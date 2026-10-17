@@ -1,4 +1,5 @@
 import type { PluginClientContext, PluginScreenProps } from "@getpaseo/plugin/client";
+import { ConfigScreen } from "./client/config";
 import { RequirementScreen } from "./client/detail";
 import { contributeLive } from "./client/live";
 import { OverviewScreen } from "./client/overview";
@@ -14,6 +15,7 @@ export default function contribute(client: PluginClientContext) {
   client.addScreen({ id: "overview", title: "需求", Component: Overview });
   client.addScreen({ id: "requirement", title: (params) => params.title || params.name || "需求", Component: RequirementScreen });
   client.addScreen({ id: "stats", title: "需求统计", Component: StatsScreen });
+  client.addScreen({ id: "config", title: "req-kit 配置", Component: ConfigScreen });
   client.addSidebarHeaderItem({ id: "requirements", title: "需求（req-kit）", Component: RequirementsItem });
   client.addWorkspacePanel({
     id: "requirements",
@@ -39,6 +41,14 @@ export default function contribute(client: PluginClientContext) {
     keywords: ["req", "stats", "统计", "用量"],
     context: "global",
     onSelect: ({ openScreen: open }) => open({ screenId: "stats" }),
+  });
+  client.addCommandCenterItem({
+    id: "open-config",
+    title: "req-kit 配置",
+    icon: "Settings",
+    keywords: ["req", "config", "配置", "设置"],
+    context: "global",
+    onSelect: ({ openScreen: open }) => open({ screenId: "config" }),
   });
   client.addCommandCenterItem({
     id: "open-panel",

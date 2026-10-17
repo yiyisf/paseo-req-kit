@@ -352,6 +352,15 @@ export function createRuntimeWithClient(
       const api = await getScripts();
       if (api) await api.deleteSchedule(id);
     },
+    async providerStatus() {
+      if (!client.providers) return null;
+      try {
+        const snapshot = await client.providers.waitForReady({ timeoutMs: 15_000 });
+        return snapshot.entries.map((e) => ({ provider: e.provider, status: e.status }));
+      } catch {
+        return null;
+      }
+    },
     async capabilities() {
       if (!client.config) return null;
       try {

@@ -6,6 +6,7 @@ import { Text, View } from "react-native";
 import type { Requirement } from "../shared/contracts";
 import { useRequirements } from "./data";
 import { type Group, GROUP_LABELS, groupOf } from "./format";
+import { Inbox } from "./inbox";
 import { RequirementRow } from "./row";
 import { Button, Chip, Status, useStyles } from "./ui";
 
@@ -19,7 +20,8 @@ export function RequirementGroups({
   layout,
   items,
   open,
-}: Pick<PluginScreenProps, "theme" | "layout"> & { items: Requirement[]; open: OpenRequirement }) {
+  skip = [],
+}: Pick<PluginScreenProps, "theme" | "layout"> & { items: Requirement[]; open: OpenRequirement; skip?: Group[] }) {
   const s = useStyles(theme, layout.compact);
   const [showOther, setShowOther] = useState(false);
   const groups = useMemo(() => {
@@ -29,7 +31,7 @@ export function RequirementGroups({
   }, [items]);
   return (
     <View style={{ gap: 20 }}>
-      {ORDER.filter((g) => groups.has(g)).map((g) => (
+      {ORDER.filter((g) => groups.has(g) && !skip.includes(g)).map((g) => (
         <View key={g} style={{ gap: 8 }}>
           <View style={s.row}>
             <Text style={s.heading}>
@@ -67,6 +69,7 @@ export function OverviewScreen(props: PluginScreenProps & { openScreen: ScreenOp
       <ScrollView contentContainerStyle={s.body}>
         <View style={s.row}>
           <Button theme={theme} label="使用统计" onPress={() => props.openScreen({ screenId: "stats" })} />
+          <Button theme={theme} label="配置" onPress={() => props.openScreen({ screenId: "config" })} />
         </View>
         {projects.length > 1 ? (
           <View style={s.row}>
@@ -82,7 +85,8 @@ export function OverviewScreen(props: PluginScreenProps & { openScreen: ScreenOp
           error={query.error}
           empty={query.data && items.length === 0 ? "这台机器上还没有记录任何需求。在 Paseo 对话中用 /req 开始一个；1.9 之前运行过的需求，在项目目录运行 req index --rebuild。" : null}
         />
-        <RequirementGroups theme={theme} layout={layout} items={shown} open={open} />
+        {query.data && items.length > 0 ? <Inbox theme={theme} layout={layout} items={shown} open={open} /> : null}
+        <RequirementGroups theme={theme} layout={layout} items={shown} open={open} skip={["attention"]} />
       </ScrollView>
     </View>
   );

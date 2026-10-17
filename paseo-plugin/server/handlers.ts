@@ -1,7 +1,7 @@
 // The daemon side: each RPC is one `req api` call. Management actions are refused here too
 // when the plugin is set to read-only, not only hidden in the app.
 import type { RpcInput } from "@getpaseo/plugin";
-import type { fileRpc, KitInfo, ModelsData, Requirement, RequirementDetail, runRpc, setAgentsRpc, statsRpc, StatsSummary, statusRpc } from "../shared/contracts";
+import type { configRpc, ConfigViewData, fileRpc, KitInfo, ModelsData, Requirement, RequirementDetail, runRpc, setAgentsRpc, statsRpc, StatsSummary, statusRpc } from "../shared/contracts";
 import { coalesce, type ReqRunner } from "./req";
 
 export interface Handlers {
@@ -12,6 +12,7 @@ export interface Handlers {
   stats(input: RpcInput<typeof statsRpc>): Promise<StatsSummary>;
   run(input: RpcInput<typeof runRpc>): Promise<{ ok: boolean; message: string }>;
   models(): Promise<ModelsData>;
+  config(input: RpcInput<typeof configRpc>): Promise<ConfigViewData>;
   setAgents(input: RpcInput<typeof setAgentsRpc>): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -37,11 +38,15 @@ export function createHandlers(input: { req: ReqRunner; kitHome: () => string; r
       else if (since) args.push("--since", since);
       return (await req(args)) as StatsSummary;
     },
-    async run({ action, repo, featureDir, verifyEnv }) {
+    async run({ action, repo, featureDir, verifyEnv, text }) {
       if (await input.readOnly()) return { ok: false, message: "插件设置为只读：不能在这里操作需求。可以在插件设置中关闭只读，或在终端用 req 命令。" };
-      const extra = action === "verify" && verifyEnv ? ["--verify-env", verifyEnv] : [];
+      if (action === "reply" && !text?.trim()) return { ok: false, message: "回复是空的" };
+      const extra = action === "verify" && verifyEnv ? ["--verify-env", verifyEnv] : action === "reply" ? [text!.trim()] : [];
       const result = (await req(["run", action, featureDir, "--repo", repo, ...extra], { timeoutMs: 200_000 })) as { ok: boolean; message: string };
       return { ok: result.ok, message: result.message };
+    },
+    async config({ repo }) {
+      return (await req(repo ? ["config", "--repo", repo] : ["config", "--machine"])) as ConfigViewData;
     },
     async models() {
       return (await req(["models"], { timeoutMs: 120_000 })) as ModelsData;

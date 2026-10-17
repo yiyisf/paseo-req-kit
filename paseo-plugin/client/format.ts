@@ -108,4 +108,5 @@ export const ACTION_TEXT = {
   resume: { label: "继续", confirm: "从中断处继续？需求说明改过的话，只处理变化的部分。" },
   verify: { label: "开始测试验证", confirm: "开始测试验证？选择在哪里验证。" },
   sync: { label: "同步到外部系统", confirm: "把这个需求同步到对接的外部系统：补发没有成功的调用、补建卡片、更新状态。" },
+  reply: { label: "发送回复", confirm: "把回复转给这个需求的对话，由它更新需求说明并继续开发。" },
 } as const;

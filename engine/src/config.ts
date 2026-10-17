@@ -147,6 +147,21 @@ export interface RelatedRepo {
   role?: string;
 }
 
+/**
+ * 1.12: after the push, a draft merge request made with the machine's own GitLab (or other)
+ * command, logged in beforehand. Placeholders: {branch} {target} {title} {description} {card}
+ * {cardUrl}. Never merged by req-kit.
+ */
+export interface MergeRequestSettings {
+  command: string;
+  args: string[];
+  /** Branch the merge request targets; default: the remote's default branch (origin/HEAD), else main. */
+  target?: string | null;
+  /** Arguments that check the command is logged in (req doctor), e.g. ["auth", "status"]. */
+  check?: string[] | null;
+  timeoutSeconds?: number;
+}
+
 export interface PipelineConfig {
   daemonUrl: string;
   /** Name of the environment variable holding the daemon password, if the daemon has one. */
@@ -192,6 +207,12 @@ export interface PipelineConfig {
   reviewPanel: ReviewPanelSettings;
   /** External notifiers (e.g. an internal IM). Machine or team config only. */
   notifiers: NotifierConfig[];
+  /**
+   * 1.12: how to reach people by name, for notifiers that send to a person: the requester's
+   * name as the card shows it → their accounts, e.g. { "张广祥": { "um": "ZHANGGX001" } }.
+   * Machine or team config only.
+   */
+  people: Record<string, Record<string, string>>;
   /** External systems kept in step with requirements, e.g. an ALM's CLI (1.9). Machine or team config only: they run commands. */
   integrations: IntegrationConfig[];
   /** Per integration name, values for its {field.*} placeholders; a project's file may set these (e.g. its project id). */
@@ -201,7 +222,7 @@ export interface PipelineConfig {
    * the handoff is written (1.10). Off by default; machine or team config only. Never forced,
    * only to branches under `branchPrefix`, never merged.
    */
-  push: { enabled: boolean; remote: string; branchPrefix: string };
+  push: { enabled: boolean; remote: string; branchPrefix: string; mergeRequest?: MergeRequestSettings | null };
   /**
    * Which cards this repository takes (1.10, written by /req-setup in the project's file): the
    * system, its space (project id) and subsystems; `titleKeywords` tells apart repositories
@@ -214,6 +235,11 @@ export interface PipelineConfig {
    * config only.
    */
   factory: { pollMinutes: number; titleTags: string[]; maxNewPerPoll: number };
+  /**
+   * 1.12: a requirement from a card that is small (quick profile) and has nothing to answer
+   * starts this many hours after its summary is on the card, unless the requester objects; 0: off.
+   */
+  autoConfirm: { hours: number };
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -316,11 +342,13 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   requiredVersion: null,
   reviewPanel: { enabled: false, steps: ["design_review", "code_review"], profiles: ["standard"], members: [] },
   notifiers: [],
+  people: {},
   integrations: [],
   integrationDefaults: {},
   push: { enabled: false, remote: "origin", branchPrefix: "req/" },
   cardSource: null,
   factory: { pollMinutes: 5, titleTags: ["[AI]", "【AI】"], maxNewPerPoll: 3 },
+  autoConfirm: { hours: 0 },
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -388,6 +416,7 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
   }
   merged.push = { ...base.push, ...(isRecord(raw.push) ? raw.push : {}) } as PipelineConfig["push"];
   merged.factory = { ...base.factory, ...(isRecord(raw.factory) ? raw.factory : {}) } as PipelineConfig["factory"];
+  merged.autoConfirm = { ...base.autoConfirm, ...(isRecord(raw.autoConfirm) ? raw.autoConfirm : {}) } as PipelineConfig["autoConfirm"];
   if (isRecord(raw.cardSource)) {
     const c = raw.cardSource;
     merged.cardSource = {
@@ -592,6 +621,17 @@ function validate(config: PipelineConfig): void {
   if (typeof push.enabled !== "boolean") throw new ConfigError("push.enabled 必须是 true 或 false");
   if (typeof push.remote !== "string" || !/^[\w.-]+$/.test(push.remote)) throw new ConfigError('push.remote 必须是远程仓库名，例如 "origin"');
   if (typeof push.branchPrefix !== "string" || !/^[A-Za-z0-9._-]+\/$/.test(push.branchPrefix)) throw new ConfigError('push.branchPrefix 必须是以 / 结尾的分支前缀，例如 "req/"');
+  const mr = push.mergeRequest;
+  if (mr !== undefined && mr !== null) {
+    if (!isRecord(mr) || typeof mr.command !== "string" || !mr.command.trim() || !Array.isArray(mr.args) || !mr.args.every((a) => typeof a === "string")) {
+      throw new ConfigError('push.mergeRequest 必须写成 { "command": "glab", "args": ["mr", "create", "--draft", …] }，参数中可以用 {branch} {target} {title} {description}');
+    }
+    if (!mr.args.some((a) => a.includes("{branch}"))) throw new ConfigError("push.mergeRequest.args 中要有 {branch}（推送的分支）");
+  }
+  if (!isRecord(config.people) || !Object.values(config.people).every((v) => isRecord(v) && Object.values(v).every((x) => typeof x === "string"))) {
+    throw new ConfigError('people 必须写成 { "<姓名>": { "<账号类型>": "<账号>" } }，例如 { "张广祥": { "um": "ZHANGGX001" } }');
+  }
+  if (typeof config.autoConfirm.hours !== "number" || config.autoConfirm.hours < 0) throw new ConfigError("autoConfirm.hours 必须是不小于 0 的小时数（0 表示关闭）");
   const f = config.factory;
   if (typeof f.pollMinutes !== "number" || !(f.pollMinutes >= 1)) throw new ConfigError("factory.pollMinutes 必须是至少 1 的分钟数");
   if (!Number.isInteger(f.maxNewPerPoll) || f.maxNewPerPoll < 1) throw new ConfigError("factory.maxNewPerPoll 必须是正整数");
@@ -638,7 +678,7 @@ export interface LoadedConfig {
 }
 
 /** Keys a project file may not set: they run code or reach outside the repository. */
-const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations", "push", "factory"] as const;
+export const NOT_IN_PROJECT_KEYS = ["notifiers", "integrations", "push", "factory", "people"] as const;
 
 /** Notifier module paths are relative to the file that names them; "~/" is the home directory. */
 function resolveNotifiers(raw: Record<string, unknown>, file: string): Record<string, unknown> {

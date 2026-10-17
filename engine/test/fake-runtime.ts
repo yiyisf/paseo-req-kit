@@ -60,6 +60,10 @@ export interface FakeScenario {
   setup?: { status: "completed" | "failed" | "none" | "timeout"; error: string | null };
   /** Paseo cannot schedule (older daemon). */
   noSchedules?: boolean;
+  /** Provider login states the daemon reports (default: claude and codex ready); null: unknown. */
+  providerStatus?: Array<{ provider: string; status: string }> | null;
+  /** Creating the runtime fails, like a daemon that is not running. */
+  daemonDown?: boolean;
   /**
    * Agents started by an earlier run (by ID), as attachAgent finds them: "idle" has finished
    * and written its result, "finishes" is still working and finishes at the next wait,
@@ -128,6 +132,7 @@ function contextValue(prompt: string, label: string): string {
 export const createRuntime: RuntimeFactory = async () => {
   const scenarioFile = process.env.FAKE_SCENARIO;
   const scenario: FakeScenario = scenarioFile ? JSON.parse(fs.readFileSync(scenarioFile, "utf8")) : {};
+  if (scenario.daemonDown) throw new Error("connect ECONNREFUSED 127.0.0.1:6767");
   // IDs stay unique across the runs of one test (a resumed run can meet an earlier run's agent).
   let counter = Object.keys(readRegistry()).length;
   let scheduleCounter = 0;
@@ -353,6 +358,9 @@ export const createRuntime: RuntimeFactory = async () => {
     },
     async capabilities() {
       return scenario.capabilities ?? null;
+    },
+    async providerStatus() {
+      return scenario.providerStatus === undefined ? [{ provider: "claude", status: "ready" }, { provider: "codex", status: "ready" }] : scenario.providerStatus;
     },
     async scheduleMessage(input) {
       if (scenario.noSchedules) return null;

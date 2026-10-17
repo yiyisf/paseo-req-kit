@@ -32,8 +32,8 @@ import {
 } from "./messages.js";
 import { kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
-import { dispatchNotifiers, type NotifierEventType } from "./notifiers.js";
-import { describeExternal, type IntegrationEvent, type Runner, syncIntegration } from "./integrations.js";
+import { dispatchNotifiers, type NotifierEventType, peopleOf } from "./notifiers.js";
+import { describeExternal, type IntegrationEvent, renderArgs, resolveCommand, type Runner, syncIntegration } from "./integrations.js";
 import { cardSlug, planAppendix, publishCard, readSource } from "./card.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent, WaitOutcome } from "./runtime.js";
@@ -417,6 +417,10 @@ async function notifyExternal(ctx: PipelineContext, type: NotifierEventType, tex
       originAgentId: ctx.state.originAgentId,
       text,
       details,
+      people: (() => {
+        const source = readSource(ctx.repo, ctx.featureDir);
+        return peopleOf(type, source?.author ?? null, source ? { system: source.system, id: source.id, url: source.url } : null, ctx.config.people);
+      })(),
     },
     ctx.log,
   );
@@ -469,16 +473,67 @@ function pushBranch(ctx: PipelineContext): void {
       const stderr = (e as { stderr?: Buffer | string }).stderr?.toString().trim();
       error = (stderr || (e as Error).message).split("\n").filter(Boolean).slice(-2).join(" ");
     }
-    ctx.state.pushed = [...(ctx.state.pushed ?? []).filter((p) => p.repo !== repo), { repo, remote: push.remote, branch, at, error }];
+    const before = ctx.state.pushed?.find((p) => p.repo === repo);
     ctx.log(error ? `推送 ${repo} 的分支到 ${push.remote}/${branch} 失败：${error}` : `已推送 ${repo} 的分支到 ${push.remote}/${branch}`);
+    // A merge request is made once; later pushes (after testing sent defects back) update it by themselves.
+    const mergeRequest = !error && push.mergeRequest && !before?.mergeRequest?.url ? makeMergeRequest(ctx, repo, branch, source) : (before?.mergeRequest ?? null);
+    ctx.state.pushed = [...(ctx.state.pushed ?? []).filter((p) => p.repo !== repo), { repo, remote: push.remote, branch, at, error, mergeRequest }];
   }
   save(ctx);
+}
+
+/** The remote's default branch (origin/HEAD), for the merge request's target; main when unknown. */
+function defaultBranch(repo: string, remote: string): string {
+  try {
+    const ref = execFileSync("git", ["symbolic-ref", "--short", `refs/remotes/${remote}/HEAD`], { cwd: repo, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString().trim();
+    return ref.startsWith(`${remote}/`) ? ref.slice(remote.length + 1) : ref || "main";
+  } catch {
+    return "main";
+  }
+}
+
+/**
+ * 1.12: a draft merge request for the pushed branch, with the machine's own command (push.mergeRequest).
+ * Its description is the handoff note and the card. Never merged here. Never throws.
+ */
+function makeMergeRequest(ctx: PipelineContext, repo: string, branch: string, source: NonNullable<ReturnType<typeof readSource>>): { url: string | null; at: string; error: string | null } {
+  const mr = ctx.config.push.mergeRequest!;
+  const at = new Date().toISOString();
+  const handoff = path.join(repo, ctx.featureDir, "handoff.md");
+  const note = fs.existsSync(handoff) ? fs.readFileSync(handoff, "utf8").trim() : "";
+  const cardLine = `需求卡片：${source.system} ${source.id}${source.url ? ` ${source.url}` : ""}`;
+  const values: Record<string, string> = {
+    branch,
+    target: mr.target || defaultBranch(repo, ctx.config.push.remote),
+    title: `[${source.id}] ${specTitle(ctx)}`,
+    description: [`> 由 req-kit 在研发完成后创建的草稿，合并前请人工评审。`, "", cardLine, "", note.slice(0, 20_000)].join("\n"),
+    card: source.id,
+    cardUrl: source.url ?? "",
+  };
+  try {
+    const { file, prefix } = resolveCommand(mr.command);
+    const output = execFileSync(file, [...prefix, ...renderArgs(mr.args, values)], {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: (mr.timeoutSeconds ?? 60) * 1000,
+      windowsHide: true,
+    }).toString();
+    const url = /https?:\/\/\S+/.exec(output)?.[0]?.replace(/[)。，,.]+$/, "") ?? null;
+    ctx.log(`已为 ${branch} 建草稿合并请求${url ? `：${url}` : "（输出中没有找到地址）"}`);
+    return { url, at, error: null };
+  } catch (e) {
+    const stderr = (e as { stderr?: Buffer | string }).stderr?.toString().trim();
+    const error = (stderr || (e as Error).message).split("\n").filter(Boolean).slice(-2).join(" ").slice(0, 300);
+    ctx.log(`为 ${branch} 建合并请求失败：${error}。分支已推送，可以手工建`);
+    return { url: null, at, error };
+  }
 }
 
 /** Where the requirement's code is, for the card: the pushed branch, or the local one. */
 function branchText(ctx: PipelineContext): string | null {
   const mine = ctx.state.pushed?.find((p) => p.repo === ctx.repo);
-  if (mine) return mine.error ? `分支 ${ctx.state.branch}（推送到 ${mine.remote}/${mine.branch} 失败：${mine.error}）` : `代码已推送到 ${mine.remote} 的分支 ${mine.branch}`;
+  if (mine?.error) return `分支 ${ctx.state.branch}（推送到 ${mine.remote}/${mine.branch} 失败：${mine.error}）`;
+  if (mine) return `代码已推送到 ${mine.remote} 的分支 ${mine.branch}${mine.mergeRequest?.url ? `，草稿合并请求 ${mine.mergeRequest.url}` : ""}`;
   return ctx.state.branch ? `分支 ${ctx.state.branch}` : null;
 }
 
@@ -2007,6 +2062,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
   ctx.state.status = "running";
   ctx.state.stopReason = null;
   ctx.state.stopKind = null;
+  ctx.state.pendingQuestions = null;
   save(ctx);
   await integrate(ctx, phaseOf(ctx) === "verify" ? "verify" : "started");
   try {
@@ -2108,6 +2164,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
       const reproduce = error.source === "reproduce";
       ctx.state.status = "waiting_for_business";
       ctx.state.stopKind = reproduce ? "reproduce" : "business";
+      ctx.state.pendingQuestions = error.questions;
       ctx.state.stopReason = `${reproduce ? "没能复现缺陷，需要需求方补充信息" : "方案审核需要需求方决定"}：${error.questions.join("；")}`;
       save(ctx);
       const reminderHours = await scheduleReminder(ctx, error.questions);

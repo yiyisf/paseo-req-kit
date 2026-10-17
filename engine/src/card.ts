@@ -55,6 +55,10 @@ export interface SourceFile {
   /** The progress line at the top of the AI section. */
   progress: string | null;
   publishedAt: string | null;
+  /** 1.12 (autoConfirm.hours): when the requirement starts by itself if nobody objects; null when it does not. */
+  autoConfirmAt?: string | null;
+  /** 1.12: set when the confirmation was the automatic one. */
+  autoConfirmed?: boolean;
 }
 
 export interface CardData {
@@ -351,8 +355,25 @@ export interface PublishInput {
   appendix?: string;
   /** Adds the "方案确认" line to the reply section. */
   planConfirm?: boolean;
+  /** 1.12 (autoConfirm.hours): a small requirement with nothing to answer starts this many hours after it is shown, unless someone objects; 0: off. */
+  autoConfirmHours?: number;
   run?: Runner;
   now?: Date;
+}
+
+/**
+ * 1.12: whether a card's requirement may start without a "确认：同意": the quick profile, nothing
+ * left to answer, and not confirmed yet. The requester can always object in the reply section.
+ */
+export function autoConfirmEligible(repo: string, featureDir: string, aiText: string, source: SourceFile): boolean {
+  if (source.confirmedAt) return false;
+  let spec = "";
+  try {
+    spec = fs.readFileSync(path.join(repo, featureDir, "spec.md"), "utf8");
+  } catch {
+    return false;
+  }
+  return /^\s*-\s*档位\s*[:：]\s*快速/m.test(spec) && questionIds(aiText).length === 0;
 }
 
 /**
@@ -374,6 +395,14 @@ export async function publishCard(input: PublishInput): Promise<{ description: s
   const progress = input.progress ?? source.progress ?? "正在整理需求说明";
   const blocks = [progressLine(progress, input.now), session || "需求说明正在整理中，稍后会写在这里。"];
   if (input.appendix?.trim()) blocks.push(input.appendix.trim());
+  // Each new version of the summary gets the whole window again.
+  const hours = input.autoConfirmHours ?? 0;
+  if (hours > 0 && session && autoConfirmEligible(repo, featureDir, session, source)) {
+    const at = new Date((input.now ?? new Date()).getTime() + hours * 3600_000);
+    source.autoConfirmAt = at.toISOString();
+    const when = at.toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    blocks.push(`**自动确认**：这是一个小改动，没有需要你回答的问题。到 ${when} 前没有异议，就按上面的说明开始开发；想先确认就在"确认："后写"同意"，要改就写在回复区。`);
+  } else if (!source.confirmedAt) source.autoConfirmAt = null;
   const ai = blocks.join("\n\n");
   const questions = questionIds(session);
   const reply = replySection(parts.reply, questions, { planConfirm: input.planConfirm });

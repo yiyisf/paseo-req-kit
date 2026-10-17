@@ -13,6 +13,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { cardRoutes, findCardEntry, hashText, parseJsonOutput } from "./card.js";
@@ -20,9 +21,10 @@ import { beginFromCard, type CardCmdOptions, cardIntegrations, checkCards, withR
 import { resumeCommand, statusCommand } from "./cli-args.js";
 import { loadConfig, type PipelineConfig } from "./config.js";
 import { watchdogPrompt } from "./messages.js";
+import { dispatchNotifiers } from "./notifiers.js";
 import { readIndex } from "./records.js";
 import { type IntegrationConfig, renderArgs, runCommand, type Runner } from "./integrations.js";
-import { defaultConfigPath, ENGINE_DIR, KIT_ROOT, kitHome } from "./locations.js";
+import { defaultConfigPath, ENGINE_DIR, KIT_ROOT, kitHome, kitVersion } from "./locations.js";
 import { isAlive, readState, statePath } from "./state.js";
 
 const USAGE = `用法：
@@ -54,6 +56,8 @@ export interface PollResult {
   relayed: string[];
   /** 1.12: interrupted pipelines whose chat was asked to continue them. */
   resumed: string[];
+  /** 1.12: what the self-check found wrong; no new cards are taken while it is not empty. */
+  problems: string[];
   errors: string[];
   notes: string[];
 }
@@ -148,7 +152,7 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
   const env = opts.env ?? process.env;
   const dir = factoryDir(env);
   fs.mkdirSync(dir, { recursive: true });
-  const result: PollResult = { started: [], skipped: [], relayed: [], resumed: [], errors: [], notes: [] };
+  const result: PollResult = { started: [], skipped: [], relayed: [], resumed: [], problems: [], errors: [], notes: [] };
 
   // One look at a time on this machine.
   const lock = path.join(dir, "poll.lock");
@@ -163,13 +167,22 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
     fs.writeFileSync(lock, String(process.pid));
   }
 
+  let config: PipelineConfig | null = null;
   try {
-    const config = loadConfig(configPath).config;
+    config = loadConfig(configPath).config;
+    // 1.12: Paseo, the agents and their quota must work before anything is taken on.
+    result.problems = opts.skipHealthCheck ? [] : await healthProblems(config);
+    if (result.problems.length > 0) {
+      result.notes.push("自检没有通过，这次不接新卡片、不转达回复");
+      throw new HealthStop();
+    }
     const tags = config.factory.titleTags;
     const skippedFile = path.join(dir, "skipped.json");
     const skipped = readJson<Record<string, Skipped>>(skippedFile, {});
     const { routes } = cardRoutes(env);
     let newOnes = 0;
+    let listAttempts = 0;
+    const listFailures: string[] = [];
     const integrations = cardIntegrations(config).filter((i) => i.list);
     if (integrations.length === 0) result.notes.push("没有配置可以列出卡片的外部系统（integrations 中的 list），只转达回复");
     for (const integration of integrations) {
@@ -180,9 +193,11 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
       }
       for (const space of spaces) {
         let cards: ListedCard[];
+        listAttempts += 1;
         try {
           cards = await listCards(integration, space, tags[0], opts.run);
         } catch (error) {
+          listFailures.push(`${integration.name} 空间 ${space}：${(error as Error).message}`);
           result.errors.push(`${integration.name} 空间 ${space}：${(error as Error).message}`);
           continue;
         }
@@ -211,6 +226,9 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
       }
     }
     writeJson(skippedFile, skipped);
+    if (listAttempts > 0 && listFailures.length === listAttempts) {
+      result.problems.push(`列不出卡片，需求管理系统的命令可能不可用：${listFailures[0].slice(0, 200)}`);
+    }
 
     try {
       await nudgeInterrupted(config, env, dir, result);
@@ -229,12 +247,103 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
       result.errors.push(`转达回复：${(error as Error).message}`);
     }
   } catch (error) {
-    result.errors.push((error as Error).message);
+    if (!(error instanceof HealthStop)) result.errors.push((error as Error).message);
   } finally {
     fs.rmSync(lock, { force: true });
   }
+  if (config) await alertOnce(config, dir, result.problems, now);
   writeJson(path.join(dir, "status.json"), { lastPollAt: now.toISOString(), pid: process.pid, ...result });
   return result;
+}
+
+class HealthStop extends Error {}
+
+/** Runs `work`, giving up after `ms` (a daemon that is not running may never answer). */
+async function within<T>(ms: number, what: string, work: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(`${what}超过 ${ms / 1000} 秒没有响应`)), ms)))]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 1.12: what keeps this machine from working on a new requirement: Paseo not reachable, an
+ * agent provider not logged in, the subscription used up. Empty when all is well.
+ */
+export async function healthProblems(config: PipelineConfig): Promise<string[]> {
+  const problems: string[] = [];
+  try {
+    await within(30_000, "连接 Paseo ", withRuntime(config, async (runtime, resolved) => {
+      const roles: Array<[string, string]> = [
+        ["builder", resolved.agents.builder.provider ?? ""],
+        ["reviewer", resolved.agents.reviewer.provider ?? ""],
+      ];
+      const status = await runtime.providerStatus();
+      for (const [role, full] of roles) {
+        const provider = full.split("/")[0];
+        if (!provider || !status) continue;
+        const found = status.find((s) => s.provider === provider);
+        if (!found || found.status !== "ready") problems.push(`${role} 用的 ${provider} ${found ? `不可用（${found.status}）` : "没有安装"}：在 Paseo 中登录它`);
+      }
+      // A used-up subscription matters when there is nothing else to fall back on.
+      const usable = [resolved.agents.builder, ...(resolved.agents.fallback ? [resolved.agents.fallback] : [])].map((p) => (p.provider ?? "").split("/")[0]).filter(Boolean);
+      const quotas = (await runtime.providerQuota([...new Set(usable)])) ?? [];
+      const exhausted = (provider: string) => quotas.some((q) => q.provider === provider && q.usedPct !== null && q.usedPct >= 100);
+      if (usable.length > 0 && usable.every(exhausted)) {
+        const q = quotas.find((x) => x.provider === usable[0] && x.usedPct !== null && x.usedPct >= 100)!;
+        problems.push(`${q.displayName} 的「${q.window}」额度已用完${q.resetsAt ? `，${new Date(q.resetsAt).toLocaleString("zh-CN", { hour12: false })} 恢复` : ""}`);
+      }
+    }));
+  } catch (error) {
+    problems.push(`连不上 Paseo（${(error as Error).message}）：确认这台机器上的 Paseo 正在运行`);
+  }
+  return problems;
+}
+
+/**
+ * Tells people once when the self-check starts failing (or what fails changes), and once when
+ * it passes again — not on every look. Through the configured notifiers (event "alert").
+ */
+async function alertOnce(config: PipelineConfig, dir: string, problems: string[], now: Date): Promise<void> {
+  const file = path.join(dir, "health.json");
+  const before = readJson<{ key: string; since: string | null }>(file, { key: "", since: null });
+  const key = problems.join("\n");
+  if (key === before.key) return;
+  writeJson(file, { key, since: problems.length > 0 ? now.toISOString() : null });
+  if (!key && !before.key) return;
+  const text = problems.length > 0
+    ? `接单器自检没有通过，暂停接新卡片：${problems.join("；")}`
+    : `接单器自检恢复正常，继续接卡片${before.since ? `（自 ${new Date(before.since).toLocaleString("zh-CN", { hour12: false })} 起暂停）` : ""}`;
+  appendLog(dir, text, now);
+  if (config.notifiers.length === 0) return;
+  await dispatchNotifiers(
+    config.notifiers,
+    {
+      schema: 1,
+      type: "alert",
+      at: now.toISOString(),
+      kitVersion: kitVersion(),
+      feature: { dir: "", name: "", title: "接单器" },
+      repo: "",
+      branch: null,
+      profile: "",
+      originAgentId: null,
+      text,
+      details: { source: "factory", machine: os.hostname(), problems, recovered: problems.length === 0 },
+      people: { audience: "team", requester: null, card: null, recipients: [] },
+    },
+    () => undefined,
+  );
+}
+
+function appendLog(dir: string, text: string, now: Date): void {
+  try {
+    fs.appendFileSync(path.join(dir, "factory.log"), `[${now.toLocaleString("zh-CN", { hour12: false })}] ${text}\n`);
+  } catch {
+    // The log is a convenience.
+  }
 }
 
 /**
@@ -275,6 +384,7 @@ function describe(result: PollResult, now = new Date()): string[] {
   for (const s of result.started) lines.push(`[${stamp}] 已开始：${s}`);
   for (const s of result.relayed) lines.push(`[${stamp}] ${s}`);
   for (const s of result.resumed) lines.push(`[${stamp}] 续跑：${s}`);
+  for (const s of result.problems) lines.push(`[${stamp}] 自检：${s}`);
   for (const s of result.skipped) lines.push(`[${stamp}] 没能接：${s}`);
   for (const s of result.errors) lines.push(`[${stamp}] 出错：${s}`);
   for (const s of result.notes) lines.push(`[${stamp}] ${s}`);
@@ -373,6 +483,7 @@ function status(opts: CardCmdOptions): number {
   const last = readJson<(PollResult & { lastPollAt: string }) | null>(path.join(factoryDir(env), "status.json"), null);
   if (last) {
     out(`最近一次检查：${new Date(last.lastPollAt).toLocaleString("zh-CN", { hour12: false })}；开始 ${last.started.length} 个需求，转达 ${last.relayed.length} 条回复，${last.errors.length} 个错误。`);
+    for (const p of last.problems ?? []) out(`  自检：${p}（这期间不接新卡片）`);
     for (const e of last.errors) out(`  出错：${e}`);
     for (const n of last.notes) out(`  ${n}`);
   }

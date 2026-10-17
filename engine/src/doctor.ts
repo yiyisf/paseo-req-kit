@@ -18,6 +18,7 @@ import { defaultConfigPath, findDependency, KIT_ROOT, kitVersion } from "./locat
 import { PROJECT_DIR } from "./prompts.js";
 import { describeAgentProfile, ProfileResolutionError, profilesFromDaemonConfig, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { isAlive, STATE_VERSION } from "./state.js";
+import { resolveCommand } from "./integrations.js";
 
 const counts = { fail: 0, warn: 0 };
 const SYMBOL = { ok: "✓", warn: "⚠", fail: "✗" } as const;
@@ -139,6 +140,19 @@ function configuration(configPath: string, repo: string | null): PipelineConfig 
         const dir = resolveRelatedRepo(r, repo);
         if (fs.existsSync(dir)) report("ok", `关联仓库（只读参考）：${r.name} → ${dir}`);
         else report("warn", `关联仓库「${r.name}」不在这台机器上：${dir}`, "把它克隆到这个位置；或修改 relatedRepos 中的路径（相对项目目录，团队约定把相关仓库放在同一个上级目录最方便）");
+      }
+    }
+    const push = loaded.config.push;
+    if (push.enabled) {
+      report("ok", `推送分支：${push.remote}/${push.branchPrefix}<卡号>（只对从卡片开始的需求）`);
+      const mr = push.mergeRequest;
+      if (mr) {
+        if (mr.check && mr.check.length > 0) {
+          const { file, prefix } = resolveCommand(mr.command);
+          const r = spawnSync(file, [...prefix, ...mr.check], { encoding: "utf8", timeout: 30_000, windowsHide: true, cwd: repo ?? undefined });
+          if (r.status === 0) report("ok", `草稿合并请求：${mr.command} 已登录`);
+          else report("warn", `草稿合并请求：${mr.command} ${mr.check.join(" ")} 没有通过（${(r.error?.message ?? `${r.stderr ?? ""}${r.stdout ?? ""}`).trim().split("\n").slice(-1)[0] || `退出码 ${r.status}`}）`, `在这台机器上登录 ${mr.command}（例如 ${mr.command} auth login），否则分支照常推送，但不会建合并请求`);
+        } else report("ok", `草稿合并请求：推送后用 ${mr.command} 建（没有配置 check，无法检查是否已登录）`);
       }
     }
     const required = loaded.config.requiredVersion;

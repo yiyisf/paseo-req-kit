@@ -140,6 +140,10 @@ export interface CardCmdOptions {
   env?: NodeJS.ProcessEnv;
   run?: Runner;
   out?: (line: string) => void;
+  /** Tests of the intake process without a daemon to check (1.12). */
+  skipHealthCheck?: boolean;
+  /** The time, for tests (1.12). */
+  now?: Date;
 }
 
 export interface BeginResult {
@@ -288,6 +292,7 @@ async function publish(argv: string[], opts: CardCmdOptions): Promise<number> {
   const state = fs.existsSync(statePath(target.repo, target.entry.featureDir)) ? readState(statePath(target.repo, target.entry.featureDir)) : null;
   const waitingPlan = state?.status === "waiting_for_approval";
   const result = await publishCard({
+    autoConfirmHours: target.pipelineConfig.autoConfirm.hours,
     config: target.config,
     repo: target.repo,
     featureDir: target.entry.featureDir,
@@ -336,6 +341,14 @@ export async function checkOne(target: Located, opts: CardCmdOptions, notify: (a
       changes.push("需求方确认了方案（方案确认：同意），可以继续开发");
     } else if (reply.planConfirmText && !reply.planConfirmed) changes.push(`需求方在“方案确认”一行写了：${reply.planConfirmText}`);
     if (changes.length === 0) changes.push("需求方修改了回复区");
+  }
+  // 1.12 (autoConfirm.hours): nobody objected in time to a small requirement with nothing to answer.
+  const replied = Object.keys(reply.answers).length > 0 || Boolean(reply.notes) || Boolean(reply.confirmText) || Boolean(reply.planConfirmText);
+  const now = opts.now ?? new Date();
+  if (!confirmed && !source.confirmedAt && source.autoConfirmAt && now.getTime() >= new Date(source.autoConfirmAt).getTime() && !replied && changes.length === 0) {
+    confirmed = true;
+    source.autoConfirmed = true;
+    changes.push(`到 ${new Date(source.autoConfirmAt).toLocaleString("zh-CN", { hour12: false })} 需求方没有提出异议，按自动确认处理（autoConfirm）：这就是"确认：同意"，可以启动开发`);
   }
   if (changes.length === 0) return `${source.id}：没有新内容`;
   if (!source.sessionAgentId) return `${source.id}：有新内容，但没有需求会话（source.json 中没有 sessionAgentId）`;
