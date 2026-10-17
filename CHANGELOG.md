@@ -2,6 +2,28 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.12.0
+
+稳定版：少等人，内容同 1.12.0-beta.1 至 beta.4（详见下面各条），设计决定见 ADR 0031。
+
+### 使用者会看到的变化
+
+- **自愈**：超时时 agent 还在做就多等一轮；agent 报错、结果文件无效时新开 agent 重做一次；限流时按 Paseo 的额度恢复时间预约自动继续；可选的备用模型（`agents.fallback`）。
+- **方案审核的问题先自答**，只把业务取舍连同推荐答案交给需求方。
+- **后台进程意外退出后自动继续**：定时检查默认每 60 分钟；接单器也会发现并续跑。
+- **装好就选好模型**：安装时自动选 builder、reviewer 和备用模型；插件设置中有"模型"页。
+- **`/req` 少问**：工作区、档位、执行方式、开始时间按推荐值走，确认摘要写明；卡片回复写"好的"也算同意。
+- **插件**："等你处理"收件箱（直接确认方案、回答问题、继续），"配置"页列出全部设置和来源。
+- **接单器**：自检与告警、草稿合并请求（`push.mergeRequest`）、小改动自动确认（`autoConfirm.hours`）、按人通知（`people`）。
+- **`req stats`**："人工介入"一节：停下等人的原因、自动处理的次数和比例。
+
+### 升级须知
+
+- 默认行为的变化：`selfHeal`、`answerQuestionsFirst` 默认打开，`watchdogMinutes` 默认从 0 改为 60。想保持 1.11 的行为，分别设为 `false`、`false`、`0`。
+- 新配置都可选：`agents.fallback`、`push.mergeRequest`、`autoConfirm`、`people`。
+- 外部通知新增事件 `alert` 和字段 `people`；状态文件和使用记录新增 `stopKind`、`recoveries`，旧文件照常可用。
+- 从 1.11 升级后运行 `paseo plugin reload req-kit`（或重启 Paseo）加载新插件。
+
 ## 1.12.0-beta.4
 
 - **修正**：1.12.0-beta.3 的 Paseo 插件加载失败（"Invalid plugin RPC method: req.setAgents"）。Paseo 要求插件接口名只用小写字母、数字和 `. _ -`，改为 `req.set-agents`；测试中加上了这条规则的检查。其余内容同 1.12.0-beta.3。
