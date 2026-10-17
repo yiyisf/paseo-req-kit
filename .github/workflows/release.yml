@@ -68,6 +68,7 @@ jobs:
     needs: tag
     if: ${{ needs.tag.outputs.tag != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     env:
       TAG: ${{ needs.tag.outputs.tag }}
     steps:

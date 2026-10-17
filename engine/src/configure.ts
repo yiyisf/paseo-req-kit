@@ -297,7 +297,14 @@ async function main(): Promise<number> {
   if (!values["catalog-json"]) console.log(`配置向导：连接 Paseo daemon ${settings.daemonUrl} ……`);
   let client;
   try {
-    client = await connect(settings as never);
+    // A daemon that is not running must not hold up the installer: give up after 20 seconds.
+    let timer: NodeJS.Timeout | undefined;
+    client = await Promise.race([
+      connect(settings as never),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("20 秒内没有连上")), 20_000);
+      }),
+    ]).finally(() => clearTimeout(timer));
   } catch (error) {
     const why = `无法连接 daemon：${(error as Error).message}。请确认 Paseo 正在运行；设置了密码时，确认环境变量 ${settings.daemonPasswordEnv} 已设置。`;
     if (values["catalog-json"]) json({ ok: false, message: why });
