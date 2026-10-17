@@ -48,6 +48,10 @@ function setup(configOverrides: Record<string, unknown> = {}, specStatus = "已�
     notifyMilestones: false,
     // Most tests count steps; the two review axes have their own test.
     reviewAxes: { enabled: false, profiles: ["standard"] },
+    // Most tests count schedules and failures; the watchdog and self-healing have their own tests.
+    watchdogMinutes: 0,
+    selfHeal: false,
+    answerQuestionsFirst: false,
     ...configOverrides,
   };
   const configPath = path.join(repo, "..", `${path.basename(repo)}.config.json`);
@@ -404,6 +408,73 @@ test("超时后继续：旧 agent 还在做时接着等它；再次超时才停�
   const stopAt = events(env2).findIndex((e) => e.type === "interrupt");
   const newStartAt = events(env2).findIndex((e, i) => i > stopAt && e.type === "start" && e.key === "implement");
   assert.ok(newStartAt > stopAt);
+});
+
+test("自愈：超时后同一个 agent 再等一轮；报错、结果无效时新开 agent 重做一次；有备用模型时换备用", () => {
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  const fallback = { provider: "opencode/backup-model" };
+
+  // Runs over its time but finishes within a second period: no failure, no second agent.
+  const slow = setup({ selfHeal: true, stepTimeoutMinutes: { ...base.stepTimeoutMinutes, implement: 0.003 } });
+  const slowRun = runMain(slow, { steps: { implement: { finishAfterWaits: 6 } } });
+  assert.equal(slowRun.code, 0, slowRun.out);
+  assert.equal(implementStarts(slow), 1);
+  assert.match(slowRun.out, /自动处理（implement）：超过 0\.003 分钟仍未完成，agent 还在做，再给它同样长的时间/);
+  assert.deepEqual(state(slow).recoveries.map((r: { kind: string }) => r.kind), ["extend_timeout"]);
+
+  // Never finishes: fails after twice the time, the stop is recorded as a timeout.
+  const stuck = setup({ selfHeal: true, stepTimeoutMinutes: { ...base.stepTimeoutMinutes, implement: 0.003 } });
+  assert.equal(runMain(stuck, { steps: { implement: { hang: true } } }).code, 1);
+  assert.match(notifications(stuck)[0].text ?? "", /超过 0\.006 分钟仍未完成/);
+  assert.equal(state(stuck).stopKind, "timeout");
+
+  // An agent error: redone once with the fallback model.
+  const errored = setup({ selfHeal: true, agents: { ...base.agents, builder: { provider: "claude/test-model" }, reviewer: { provider: "codex/test-model" }, fallback } });
+  const erroredRun = runMain(errored, { steps: { implement: { errorStarts: 1 } } });
+  assert.equal(erroredRun.code, 0, erroredRun.out);
+  const starts = events(errored).filter((e) => e.type === "start" && e.key === "implement");
+  assert.deepEqual(starts.map((e) => e.provider), ["claude/test-model", "opencode/backup-model"]);
+  assert.match(starts[1].prompt ?? "", /自动重试：本步骤上一次中断了（agent 报告错误：tool crashed/);
+  assert.deepEqual(state(errored).recoveries.map((r: { kind: string }) => r.kind), ["fallback"]);
+
+  // Twice in a row: redone only once, then it stops.
+  const twice = setup({ selfHeal: true });
+  assert.equal(runMain(twice, { steps: { implement: { errorStarts: 2 } } }).code, 1);
+  assert.equal(implementStarts(twice), 2);
+  assert.equal(state(twice).stopKind, "agent_error");
+
+  // No valid result even after the reminders: a new agent (same model) redoes it.
+  const invalid = setup({ selfHeal: true });
+  assert.equal(runMain(invalid, { steps: { implement: { noResultStarts: 1 } } }).code, 0);
+  assert.equal(implementStarts(invalid), 2);
+  assert.deepEqual(state(invalid).recoveries.map((r: { kind: string }) => r.kind), ["redo"]);
+
+  // Rate limits after all the retries: one more try with the fallback model.
+  const limited = setup({ retry: { attempts: 1, backoffSeconds: [0.01] }, agents: { ...base.agents, builder: { provider: "claude/test-model" }, reviewer: { provider: "codex/test-model" }, fallback } });
+  assert.equal(runMain(limited, { steps: { implement: { transientErrors: 2 } } }).code, 0);
+  assert.deepEqual(
+    events(limited).filter((e) => e.type === "start" && e.key === "implement").map((e) => e.provider),
+    ["claude/test-model", "claude/test-model", "opencode/backup-model"],
+  );
+});
+
+test("方案审核要需求方决定时：builder 先自答，只把剩下的业务问题（带推荐答案）交给需求方；都答了就不停", () => {
+  const blocked = { verdict: "blocked", questions: ["导出用什么格式？", "历史订单要不要显示？"] };
+  const all = setup({ answerQuestionsFirst: true });
+  const allRun = runMain(all, { steps: { "design_review-r1": { result: blocked }, "design_revise-r1": { result: { status: "done", business_questions: [] } } } });
+  assert.equal(allRun.code, 0, allRun.out);
+  const revise = events(all).find((e) => e.type === "start" && e.key === "design_revise-r1");
+  assert.match(revise?.prompt ?? "", /审核结论：需要需求方决定（2 个问题/);
+  assert.ok(starts(all).includes("design_review-r2"), "自答后照常再审一轮");
+  assert.deepEqual(state(all).recoveries.map((r: { kind: string }) => r.kind), ["self_answer"]);
+
+  const some = setup({ answerQuestionsFirst: true });
+  const left = "历史订单要不要显示？推荐：不显示（理由：没有数据）";
+  assert.equal(runMain(some, { steps: { "design_review-r1": { result: blocked }, "design_revise-r1": { result: { status: "done", business_questions: [left] } } } }).code, 3);
+  assert.equal(state(some).status, "waiting_for_business");
+  assert.equal(state(some).stopKind, "business");
+  assert.match(notifications(some).at(-1)?.text ?? "", /推荐：不显示/);
+  assert.doesNotMatch(notifications(some).at(-1)?.text ?? "", /导出用什么格式/);
 });
 
 test("状态读不到的旧 agent：新建 agent", () => {
@@ -1015,7 +1086,7 @@ test("临时错误自动重试：限流等错误换一个 agent 重试并提示�
   const implementStarts = events(env).filter((e) => e.type === "start" && e.key === "implement");
   assert.equal(implementStarts.length, 3);
   assert.doesNotMatch(implementStarts[0].prompt ?? "", /自动重试/);
-  assert.match(implementStarts[1].prompt ?? "", /自动重试：本步骤上一次因临时错误中断（agent 报告错误：provider error: rate limit exceeded \(429\)）/);
+  assert.match(implementStarts[1].prompt ?? "", /自动重试：本步骤上一次中断了（agent 报告错误：provider error: rate limit exceeded \(429\)）/);
   assert.equal((implementStarts[2].prompt ?? "").match(/自动重试：/g)?.length, 1, "重试说明只保留一条");
   assert.match(ok.out, /遇到临时错误.*0\.01 秒后自动重试（第 1 次，最多 2 次）/);
 
@@ -1386,6 +1457,20 @@ test("自动继续：临时错误中断后预约在对话里自动继续（每�
   const broken = setup({ retry: { attempts: 0, backoffSeconds: [0] } });
   assert.equal(runMain(broken, { steps: { implement: { error: "TypeError: x is undefined" } } }).code, 1);
   assert.ok(!events(broken).some((e) => e.type === "scheduleMessage"));
+
+  // Rate limited and Paseo says the window resets in 3 hours: continue then, not in 30 minutes.
+  const resetsAt = new Date(Date.now() + 3 * 3600_000);
+  const limited = setup({ retry: { attempts: 0, backoffSeconds: [0] } });
+  const withQuota: FakeScenario = {
+    ...flaky,
+    quota: [{ provider: "claude", displayName: "Claude", window: "5 小时", usedPct: 100, resetsAt: resetsAt.toISOString(), tone: "danger" }],
+  };
+  assert.equal(runMain(limited, withQuota).code, 1);
+  const scheduled = events(limited).find((e) => e.type === "scheduleMessage");
+  assert.ok(scheduled?.runAt);
+  assert.equal(new Date(scheduled.runAt).getTime(), resetsAt.getTime() + 5 * 60_000);
+  assert.equal(state(limited).recoveries.at(-1).kind, "quota_wait");
+  assert.equal(state(limited).stopKind, "transient");
 });
 
 test("预约开始：--at 用 Paseo 定时任务预约，到时由对话执行启动命令；可以查看和取消", () => {

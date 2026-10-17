@@ -26,6 +26,12 @@ export interface FakeBehavior {
   neverWritesResult?: boolean;
   /** The first N agents started for this step end with a transient (rate-limit) error. */
   transientErrors?: number;
+  /** The first N agents started for this step end with a (non-transient) error. */
+  errorStarts?: number;
+  /** The first N agents started for this step never write a result file. */
+  noResultStarts?: number;
+  /** The turn takes this many waits to finish (each wait that is not the last times out). */
+  finishAfterWaits?: number;
   /** Result of the Nth agent started for this step key (falls back to `result`). */
   resultsByStart?: Array<Record<string, unknown>>;
   /** Files (relative to the repository) the agent writes in its first turn, like a code change. */
@@ -153,6 +159,9 @@ export const createRuntime: RuntimeFactory = async () => {
       startsByKey.set(key, startNumber);
       const result = behavior.resultsByStart?.[startNumber - 1] ?? behavior.result ?? DEFAULT_RESULTS[stepId];
       const transient = startNumber <= (behavior.transientErrors ?? 0);
+      const errored = startNumber <= (behavior.errorStarts ?? 0);
+      const noResult = startNumber <= (behavior.noResultStarts ?? 0);
+      let waitCount = 0;
       const registry = registryFile();
       if (registry) fs.writeFileSync(registry, JSON.stringify({ ...readRegistry(), [id]: { resultAbs, result } }));
 
@@ -198,7 +207,7 @@ export const createRuntime: RuntimeFactory = async () => {
             fs.writeFileSync(abs, content);
           }
         }
-        if (behavior.neverWritesResult) return;
+        if (behavior.neverWritesResult || noResult) return;
         if (turn === 0 && behavior.skipResultFirst) return;
         if (turn === 0 && behavior.invalidFirst) {
           fs.writeFileSync(resultAbs, '{"verdict": "looks good"}');
@@ -222,6 +231,12 @@ export const createRuntime: RuntimeFactory = async () => {
             return { ...base, status: "timeout" };
           }
           if (behavior.error) return { ...base, status: "error", error: behavior.error };
+          if (errored) return { ...base, status: "error", error: "tool crashed: unexpected end of input" };
+          waitCount += 1;
+          if (behavior.finishAfterWaits && waitCount < behavior.finishAfterWaits) {
+            await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 50)));
+            return { ...base, status: "timeout" };
+          }
           if (transient) return { ...base, status: "error", error: "provider error: rate limit exceeded (429)" };
           if (behavior.permission && turn === 0 && permissionWaits < 2) {
             permissionWaits += 1;

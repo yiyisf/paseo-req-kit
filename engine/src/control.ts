@@ -193,6 +193,7 @@ export async function stopPipeline(input: StopInput): Promise<{ stopped: boolean
   }
   latest.status = "failed";
   latest.stopReason = wasAlive ? "已被手动停止" : "后台进程已意外退出";
+  latest.stopKind = wasAlive ? "stopped" : "process_exit";
   writeState(input.statePath, latest);
 
   // The step agent keeps working unless told otherwise; stop it so it changes nothing more.

@@ -186,8 +186,15 @@ export interface Reply {
   planConfirmText: string;
 }
 
-// A plain yes, nothing after it but punctuation: "是否可以改成…" is not a yes.
-const YES = /^(同意|确认|是|可以|好|没问题|通过|ok|yes|y)\s*[。.!！]?\s*$/i;
+// A plain yes, nothing after it but particles and punctuation: "是否可以改成…" is not a yes.
+// 1.12: the everyday ways of saying it count too ("好的", "没问题", "按你说的来", "👍").
+const YES =
+  /^(同意|确认|确定|认可|是|是的|对|对的|可以|好|好的|行|没问题|没有问题|通过|就这样|按这个来|按你说的(来|做|办)?|按方案(来|做)?|ok|okay|yes|y|lgtm|👍)\s*(的|了|吧|啊|呀|哈)?\s*[。.!！~～]*\s*$/i;
+
+/** Whether a reply is a plain yes. */
+export function isYes(text: string): boolean {
+  return YES.test(text.trim());
+}
 
 export function parseReply(reply: string | null): Reply {
   const out: Reply = { answers: {}, notes: "", confirmed: false, planConfirmed: false, confirmText: "", planConfirmText: "" };

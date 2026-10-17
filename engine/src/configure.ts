@@ -122,6 +122,48 @@ async function chooseRole(
   return profileFor(provider, model, modeId);
 }
 
+/** One agent a role can use: a Paseo profile, or a provider's model in its unattended mode (1.12). */
+export interface AgentChoice {
+  id: string;
+  label: string;
+  provider: string;
+  profile: AgentProfile;
+}
+
+/** Everything the daemon offers that can run unattended; Paseo profiles first. */
+export async function agentChoices(catalog: Catalog): Promise<AgentChoice[]> {
+  const out: AgentChoice[] = [];
+  for (const p of ((await catalog.profiles?.().catch(() => [])) ?? []).filter((x) => x.model)) {
+    out.push({ id: `paseo:${p.name}`, label: `Paseo profile「${p.name}」：${p.provider}/${p.model}`, provider: p.provider ?? "", profile: { paseoProfile: p.name } });
+  }
+  for (const provider of (await catalog.providers()).filter((p) => p.status === "ready")) {
+    const modes = await catalog.modes(provider.id).catch(() => []);
+    const modeId = unattendedMode(provider.id, modes);
+    // A provider whose modes all stop for approval would hold the pipeline: left out.
+    if (modes.length > 0 && !modeId) continue;
+    for (const m of await catalog.models(provider.id).catch(() => [])) {
+      out.push({
+        id: `${provider.id}/${m.id}`,
+        label: `${m.label && m.label !== m.id ? `${m.label}（${provider.id}/${m.id}）` : `${provider.id}/${m.id}`}${modeId ? `，模式 ${modeId}` : ""}`,
+        provider: provider.id,
+        profile: profileFor(provider.id, m.id, modeId),
+      });
+    }
+  }
+  return out;
+}
+
+/** The recommended fallback: another vendor than both roles if there is one, else the reviewer's when it differs from the builder's. */
+export function recommendFallback(choices: AgentChoice[], builderProvider: string, reviewerProvider: string): AgentChoice | null {
+  return (
+    choices.find((c) => c.provider !== builderProvider && c.provider !== reviewerProvider) ??
+    (reviewerProvider !== builderProvider ? (choices.find((c) => c.provider === reviewerProvider) ?? null) : null)
+  );
+}
+
+/** Takes the recommended answer to every question (install, `req configure --auto`). */
+export const recommended: Chooser = async (_question, options) => options[0].value;
+
 export interface WizardResult {
   config: Record<string, unknown>;
   summary: string[];
@@ -133,6 +175,17 @@ export async function runWizard(existing: Record<string, unknown>, catalog: Cata
   const providerOf = (p: AgentProfile) => (p.provider ?? profiles.find((x) => x.name === p.paseoProfile)?.provider ?? "").split("/")[0];
   const builder = await chooseRole("builder", catalog, choose, null, profiles);
   const reviewer = await chooseRole("reviewer", catalog, choose, providerOf(builder), profiles);
+  const choices = await agentChoices(catalog);
+  const suggested = recommendFallback(choices, providerOf(builder), providerOf(reviewer));
+  const others = choices.filter((c) => c.id !== suggested?.id && c.provider !== providerOf(builder)).slice(0, 8);
+  const fallback = await choose<AgentProfile | null>(
+    "备用模型：builder 或 reviewer 一直限流、额度用完或报错时，换它把这一步做完，而不是停下等人。用哪个？",
+    [
+      ...(suggested ? [{ label: `${suggested.label}（推荐：与主模型不同厂商）`, value: suggested.profile as AgentProfile | null }] : []),
+      { label: "不用备用模型", value: null },
+      ...others.map((c) => ({ label: c.label, value: c.profile as AgentProfile | null })),
+    ],
+  );
   const defaultProfile = await choose("没有特别说明时，需求默认走哪个档位？", [
     { label: "标准：完整的方案审核、代码评审和验证（推荐）", value: "standard" },
     { label: "快速：每个环节一轮，适合以小改动为主的项目", value: "quick" },
@@ -141,14 +194,18 @@ export async function runWizard(existing: Record<string, unknown>, catalog: Cata
     { label: "要（推荐）", value: true },
     { label: "不要，只发需要处理的事和最终结果", value: false },
   ]);
-  const config = { ...existing, agents: { builder, reviewer }, defaultProfile, notifyMilestones };
+  const config = { ...existing, agents: { builder, reviewer, ...(fallback ? { fallback } : {}) }, defaultProfile, notifyMilestones };
   const describe = (p: AgentProfile) =>
     p.paseoProfile
       ? `Paseo profile「${p.paseoProfile}」（在 Paseo 中修改这个 profile 即可换模型）`
       : `${p.provider}${p.modeId ? `（模式 ${p.modeId}）` : ""}${p.featureValues ? "，自动接受权限请求" : ""}`;
   return {
     config,
-    summary: [`builder：${describe(builder)}`, `reviewer：${describe(reviewer)}`, `默认档位：${defaultProfile}`, `进展通知：${notifyMilestones ? "开" : "关"}`],
+    summary: [
+      `builder：${describe(builder)}`,
+      `reviewer：${describe(reviewer)}${providerOf(reviewer) === providerOf(builder) ? "（只有一种 agent 可用，评审用同一个；以后登录第二种 agent 再运行 req configure，评审更容易发现问题）" : ""}`,
+      `备用模型：${fallback ? describe(fallback) : "不用"}`,
+      `默认档位：${defaultProfile}`, `进展通知：${notifyMilestones ? "开" : "关"}`],
   };
 }
 
@@ -168,26 +225,35 @@ function terminalChooser(): { choose: Chooser; close: () => void } {
   return { choose, close: () => rl.close() };
 }
 
-async function main(): Promise<number> {
-  const { values } = parseArgs({ args: process.argv.slice(2), options: { config: { type: "string" } } });
-  const configPath = values.config ? path.resolve(values.config) : defaultConfigPath();
-  const existing = fs.existsSync(configPath)
+function readConfigFile(configPath: string): Record<string, unknown> {
+  return fs.existsSync(configPath)
     ? (JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>)
     : (JSON.parse(fs.readFileSync(path.join(KIT_ROOT, "config.example.json"), "utf8")) as Record<string, unknown>);
-  const settings = {
-    daemonUrl: typeof existing.daemonUrl === "string" ? existing.daemonUrl : "ws://127.0.0.1:6767/ws",
-    daemonPasswordEnv: typeof existing.daemonPasswordEnv === "string" ? existing.daemonPasswordEnv : "PASEO_DAEMON_PASSWORD",
+}
+
+function writeConfigFile(configPath: string, config: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  if (fs.existsSync(configPath)) fs.copyFileSync(configPath, `${configPath}.bak-${Date.now()}`);
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+/** The agents the plugin's settings page chose (1.12): checked, then written to the local config. */
+export function applyAgents(existing: Record<string, unknown>, raw: unknown): Record<string, unknown> {
+  const input = (raw ?? {}) as { builder?: unknown; reviewer?: unknown; fallback?: unknown };
+  const isProfile = (p: unknown): p is AgentProfile => {
+    if (!p || typeof p !== "object") return false;
+    const q = p as AgentProfile;
+    return (typeof q.paseoProfile === "string" && q.paseoProfile.trim() !== "") || (typeof q.provider === "string" && /^[^/]+\/.+/.test(q.provider) && !q.provider.includes("CHANGE-ME"));
   };
-  console.log(`配置向导：连接 Paseo daemon ${settings.daemonUrl} ……`);
-  let client;
-  try {
-    client = await connect(settings as never);
-  } catch (error) {
-    console.error(`无法连接 daemon：${(error as Error).message}`);
-    console.error(`请确认 Paseo 正在运行；设置了密码时，确认环境变量 ${settings.daemonPasswordEnv} 已设置。`);
-    return 1;
-  }
-  const catalog: Catalog = {
+  if (!isProfile(input.builder) || !isProfile(input.reviewer)) throw new Error("builder 和 reviewer 都要选一个 agent");
+  if (input.fallback !== null && input.fallback !== undefined && !isProfile(input.fallback)) throw new Error("备用模型的设置不对");
+  const agents: Record<string, AgentProfile> = { builder: input.builder, reviewer: input.reviewer };
+  if (input.fallback) agents.fallback = input.fallback as AgentProfile;
+  return { ...existing, agents };
+}
+
+function daemonCatalog(client: Awaited<ReturnType<typeof connect>>): Catalog {
+  return {
     async providers() {
       const snapshot = await client.providers.waitForReady({ timeoutMs: 60_000 });
       return snapshot.entries.map((e) => ({ id: e.provider, status: e.status }));
@@ -202,26 +268,78 @@ async function main(): Promise<number> {
       return profilesFromDaemonConfig((await client.config.get()).config) ?? [];
     },
   };
-  const terminal = terminalChooser();
-  try {
-    const { config, summary } = await runWizard(existing, catalog, terminal.choose);
-    console.log("\n将写入以下设置：");
-    for (const line of summary) console.log(`  ${line}`);
-    const ok = await terminal.choose("确认写入吗？", [
-      { label: "写入", value: true },
-      { label: "放弃", value: false },
-    ]);
-    if (!ok) {
-      console.log("没有修改配置。");
+}
+
+async function main(): Promise<number> {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: { config: { type: "string" }, auto: { type: "boolean", default: false }, "catalog-json": { type: "boolean", default: false }, set: { type: "string" } },
+  });
+  const configPath = values.config ? path.resolve(values.config) : defaultConfigPath();
+  const existing = readConfigFile(configPath);
+  const json = (data: unknown) => console.log(JSON.stringify(data));
+
+  if (values.set !== undefined) {
+    try {
+      writeConfigFile(configPath, applyAgents(existing, JSON.parse(values.set)));
+      json({ ok: true, message: `已写入 ${configPath}（原文件已备份）。之后开始的需求使用新的设置。` });
+      return 0;
+    } catch (error) {
+      json({ ok: false, message: (error as Error).message });
       return 1;
     }
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    if (fs.existsSync(configPath)) fs.copyFileSync(configPath, `${configPath}.bak-${Date.now()}`);
-    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    console.log(`\n已写入 ${configPath}（原文件已备份）。接下来运行 npm run smoke -- check 确认两个 agent 能正常工作。`);
-    return 0;
+  }
+
+  const settings = {
+    daemonUrl: typeof existing.daemonUrl === "string" ? existing.daemonUrl : "ws://127.0.0.1:6767/ws",
+    daemonPasswordEnv: typeof existing.daemonPasswordEnv === "string" ? existing.daemonPasswordEnv : "PASEO_DAEMON_PASSWORD",
+  };
+  if (!values["catalog-json"]) console.log(`配置向导：连接 Paseo daemon ${settings.daemonUrl} ……`);
+  let client;
+  try {
+    client = await connect(settings as never);
+  } catch (error) {
+    const why = `无法连接 daemon：${(error as Error).message}。请确认 Paseo 正在运行；设置了密码时，确认环境变量 ${settings.daemonPasswordEnv} 已设置。`;
+    if (values["catalog-json"]) json({ ok: false, message: why });
+    else console.error(why);
+    return 1;
+  }
+  const catalog = daemonCatalog(client);
+  try {
+    if (values["catalog-json"]) {
+      const choices = await agentChoices(catalog);
+      const auto = await runWizard({}, catalog, recommended).catch(() => null);
+      json({ ok: true, current: existing.agents ?? null, choices, recommended: auto ? auto.config.agents : null });
+      return 0;
+    }
+    if (values.auto) {
+      const { config, summary } = await runWizard(existing, catalog, recommended);
+      writeConfigFile(configPath, config);
+      console.log("已按推荐自动选好 agent：");
+      for (const line of summary) console.log(`  ${line}`);
+      console.log(`写入 ${configPath}。要换：运行 req configure，或在 Paseo 的 设置 → 插件 → req-kit 中修改。`);
+      return 0;
+    }
+    const terminal = terminalChooser();
+    try {
+      const { config, summary } = await runWizard(existing, catalog, terminal.choose);
+      console.log("\n将写入以下设置：");
+      for (const line of summary) console.log(`  ${line}`);
+      const ok = await terminal.choose("确认写入吗？", [
+        { label: "写入", value: true },
+        { label: "放弃", value: false },
+      ]);
+      if (!ok) {
+        console.log("没有修改配置。");
+        return 1;
+      }
+      writeConfigFile(configPath, config);
+      console.log(`\n已写入 ${configPath}（原文件已备份）。接下来运行 npm run smoke -- check 确认两个 agent 能正常工作。`);
+      return 0;
+    } finally {
+      terminal.close();
+    }
   } finally {
-    terminal.close();
     await client.close().catch(() => undefined);
   }
 }

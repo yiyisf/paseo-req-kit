@@ -169,7 +169,12 @@
 
   if (-not $NoConfigure -and (Test-Path $config) -and (Select-String -Path $config -Pattern "CHANGE-ME" -Quiet)) {
     Step "选择 agent"
-    & node $reqMjs configure
+    # 1.12: the recommended agents without questions; change them later with req configure or in Paseo.
+    & node $reqMjs configure --auto
+    if ($LASTEXITCODE -ne 0) {
+      Warn "没能自动选好 agent，改为逐项选择"
+      & node $reqMjs configure
+    }
     if ($LASTEXITCODE -eq 0) { & node $reqMjs check } else { Warn "配置向导没有完成，之后可以运行 req configure" }
   }
 

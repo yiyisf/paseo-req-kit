@@ -66,7 +66,8 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 | 命令 | 作用 |
 | --- | --- |
 | `req doctor [--no-project]` | 体检：安装、配置、daemon、当前项目 |
-| `req configure` | 配置向导：为 builder 和 reviewer 选择 agent |
+| `req configure` | 配置向导：为 builder、reviewer 和备用模型选择 agent |
+| `req configure --auto` | 不提问，按推荐选好（1.12；安装时自动运行） |
 | `req setup` | 启用 npm 安装的这个版本、安装 skill（安装脚本会自动运行） |
 | `req upgrade [版本] [--beta]` | 升级到最新版本（或指定版本），自动选能支持本机 Paseo 的版本；`--check` 只看有没有新版本 |
 | `req versions` | 已安装的版本和可用的版本 |

@@ -37,7 +37,7 @@ import { describeExternal, type IntegrationEvent, type Runner, syncIntegration }
 import { cardSlug, planAppendix, publishCard, readSource } from "./card.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent, WaitOutcome } from "./runtime.js";
-import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type RunPhases, type StepRecord, writeState } from "./state.js";
+import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type Recovery, type RunPhases, type StepRecord, type StopKind, writeState } from "./state.js";
 import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult, VERIFY_PHASE_STEPS } from "./steps.js";
 
 export interface PipelineContext {
@@ -125,7 +125,38 @@ class StepFailure extends Error {
 }
 
 /** The step gave up on its agent while the agent may still be working (1.11). */
-class AgentLeftRunning extends StepFailure {}
+class AgentLeftRunning extends StepFailure {
+  constructor(
+    stepTitle: string,
+    message: string,
+    readonly timedOut: boolean,
+  ) {
+    super(stepTitle, message);
+  }
+}
+
+/** The agent's turn ended with an error status (1.12). */
+class AgentErrored extends StepFailure {}
+
+/** The agent did not write a valid result file, even after the reminders (1.12). */
+class ResultInvalid extends StepFailure {}
+
+/** Notes something the pipeline handled by itself (state.recoveries, the log). */
+function recover(ctx: PipelineContext, key: string, kind: Recovery["kind"], detail: string): void {
+  ctx.state.recoveries = [...(ctx.state.recoveries ?? []), { at: new Date().toISOString(), key, kind, detail: detail.slice(0, 300) }].slice(-200);
+  save(ctx);
+  ctx.log(`自动处理（${key}）：${detail}`);
+}
+
+/** Why a run stopped, as a code for the usage record (1.12). */
+function failureKind(error: unknown): StopKind {
+  if (error instanceof AgentLeftRunning) return error.timedOut ? "timeout" : "transient";
+  const message = (error as Error).message ?? "";
+  if (error instanceof StepFailure && isTransientError(message)) return "transient";
+  if (error instanceof AgentErrored) return "agent_error";
+  if (error instanceof ResultInvalid) return "invalid_result";
+  return "other";
+}
 
 /**
  * Errors that usually go away by themselves: provider rate limits and overload,
@@ -487,15 +518,31 @@ async function milestone(ctx: PipelineContext, id: string, text: string): Promis
   await notifyExternal(ctx, "milestone", text, { milestone: id });
 }
 
-async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: number): Promise<AgentUsage | null> {
+/** A step's time limit; `extended` once it was given a second period (selfHeal). */
+interface Deadline {
+  at: number;
+  extended: boolean;
+  key: string;
+}
+
+async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: Deadline): Promise<AgentUsage | null> {
   const notifiedPermissions = new Set<string>();
   let consecutiveErrors = 0;
   for (;;) {
-    const remaining = deadline - Date.now();
+    let remaining = deadline.at - Date.now();
+    if (remaining <= 0 && ctx.config.selfHeal && !deadline.extended) {
+      // Usually a big step, not a stuck one: the agent keeps its progress and gets as long again.
+      deadline.extended = true;
+      deadline.at = Date.now() + ctx.config.stepTimeoutMinutes[def.id] * 60_000;
+      remaining = deadline.at - Date.now();
+      recover(ctx, deadline.key, "extend_timeout", `超过 ${ctx.config.stepTimeoutMinutes[def.id]} 分钟仍未完成，agent 还在做，再给它同样长的时间`);
+    }
     if (remaining <= 0) {
+      const total = ctx.config.stepTimeoutMinutes[def.id] * (deadline.extended ? 2 : 1);
       throw new AgentLeftRunning(
         def.title,
-        `超过 ${ctx.config.stepTimeoutMinutes[def.id]} 分钟仍未完成。agent「${agentTitle}」还在运行，没有停止它；继续时会先看它的情况：做完了就用它的结果，还在做就接着等它，不会另起一个 agent 重复做。`,
+        `超过 ${total} 分钟仍未完成。agent「${agentTitle}」还在运行，没有停止它；继续时会先看它的情况：做完了就用它的结果，还在做就接着等它，不会另起一个 agent 重复做。`,
+        true,
       );
     }
     let outcome;
@@ -506,7 +553,7 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
       consecutiveErrors += 1;
       ctx.log(`等待 ${agentTitle} 时出错（第 ${consecutiveErrors} 次）：${(error as Error).message}`);
       if (consecutiveErrors >= 5) {
-        throw new AgentLeftRunning(def.title, `连续 ${consecutiveErrors} 次无法获取 agent 状态：${(error as Error).message}`);
+        throw new AgentLeftRunning(def.title, `连续 ${consecutiveErrors} 次无法获取 agent 状态：${(error as Error).message}`, false);
       }
       await ctx.sleep(Math.min(60_000, 5_000 * consecutiveErrors));
       continue;
@@ -517,7 +564,7 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
       case "timeout":
         continue;
       case "error":
-        throw new StepFailure(def.title, `agent 报告错误：${outcome.error ?? "未知错误"}`);
+        throw new AgentErrored(def.title, `agent 报告错误：${outcome.error ?? "未知错误"}`);
       case "permission": {
         const fresh = outcome.pendingPermissions.filter((p) => !notifiedPermissions.has(p.id));
         if (fresh.length > 0) {
@@ -562,29 +609,61 @@ async function runStep(
   extras: StepExtras = {},
 ): Promise<Record<string, unknown>> {
   const { attempts, backoffSeconds } = ctx.config.retry;
+  const key = extras.key ?? keyFor(stepKey(id, round), extras.target);
+  const fallback = ctx.config.agents.fallback ?? null;
+  let redone = false;
+  let usedFallback = false;
   for (let retry = 0; ; retry += 1) {
     try {
       return await runStepOnce(ctx, id, round, maxRounds, extras);
     } catch (error) {
       const message = (error as Error).message;
-      if (!(error instanceof StepFailure) || !isTransientError(message) || retry >= attempts) {
+      const transient = error instanceof StepFailure && isTransientError(message);
+      const healable = error instanceof AgentErrored || error instanceof ResultInvalid;
+      // 1.12: a step whose agent errored or wrote no valid result is redone once with a new
+      // agent; one that keeps hitting rate limits gets the fallback model, when there is one.
+      if (error instanceof StepFailure && ctx.config.selfHeal && !transient && healable && !redone) {
+        redone = true;
+        const switchModel = fallback !== null && !usedFallback && error instanceof AgentErrored;
+        if (switchModel) usedFallback = true;
+        recover(
+          ctx,
+          key,
+          switchModel ? "fallback" : "redo",
+          `${message.slice(0, 160)}；${switchModel ? "换备用模型" : "新开一个 agent"}重做这一步`,
+        );
+        extras = withRetryNote({ ...extras, ...(switchModel ? { profile: fallback } : {}) }, message);
+        continue;
+      }
+      if (error instanceof StepFailure && transient && retry >= attempts && fallback !== null && !usedFallback && !(error instanceof AgentLeftRunning)) {
+        usedFallback = true;
+        recover(ctx, key, "fallback", `重试 ${retry} 次后仍然${message.slice(0, 120)}；换备用模型继续这一步`);
+        extras = withRetryNote({ ...extras, profile: fallback }, message);
+        continue;
+      }
+      if (!(error instanceof StepFailure) || !transient || retry >= attempts) {
         if (error instanceof StepFailure && retry > 0) {
-          throw new StepFailure(error.stepTitle, `${message}（已自动重试 ${retry} 次）`);
+          throw new (error.constructor as typeof StepFailure)(error.stepTitle, `${message}（已自动重试 ${retry} 次）`);
         }
         throw error;
       }
       const wait = backoffSeconds.at(Math.min(retry, backoffSeconds.length - 1)) ?? 60;
-      ctx.log(`${error.stepTitle} 遇到临时错误：${message}。${wait} 秒后自动重试（第 ${retry + 1} 次，最多 ${attempts} 次）`);
+      recover(ctx, key, "retry", `遇到临时错误：${message.slice(0, 160)}。${wait} 秒后自动重试（第 ${retry + 1} 次，最多 ${attempts} 次）`);
       await ctx.sleep(wait * 1000);
-      extras = {
-        ...extras,
-        contextLines: [
-          ...(extras.contextLines ?? []).filter((l) => !l.startsWith("自动重试：")),
-          `自动重试：本步骤上一次因临时错误中断（${message.slice(0, 200)}）。工作区里可能留有上一次没做完的改动，先用 git status 和 git diff 查看，在此基础上继续，不要重复提交`,
-        ],
-      };
+      extras = withRetryNote(extras, message);
     }
   }
+}
+
+/** Tells the next agent of a step that an earlier one stopped part way. */
+function withRetryNote(extras: StepExtras, message: string): StepExtras {
+  return {
+    ...extras,
+    contextLines: [
+      ...(extras.contextLines ?? []).filter((l) => !l.startsWith("自动重试：")),
+      `自动重试：本步骤上一次中断了（${message.slice(0, 200)}）。工作区里可能留有上一次没做完的改动，先用 git status 和 git diff 查看，在此基础上继续，不要重复提交`,
+    ],
+  };
 }
 
 async function runStepOnce(
@@ -671,7 +750,7 @@ async function runStepOnce(
     ctx.state.history.push(record);
     save(ctx);
 
-    const deadline = Date.now() + ctx.config.stepTimeoutMinutes[id] * 60_000;
+    const deadline: Deadline = { at: Date.now() + ctx.config.stepTimeoutMinutes[id] * 60_000, extended: false, key };
     record.usage = (await waitForTurn(ctx, agent, def, agentTitle, deadline)) ?? record.usage ?? null;
     let validation = readResultFile(resultAbs, def);
     while (!validation.ok && record.followUps < ctx.config.resultFollowUps) {
@@ -683,7 +762,7 @@ async function runStepOnce(
       validation = readResultFile(resultAbs, def);
     }
     if (!validation.ok) {
-      throw new StepFailure(def.title, `提醒 ${record.followUps} 次后仍没有得到有效的结果文件：${validation.error}`);
+      throw new ResultInvalid(def.title, `提醒 ${record.followUps} 次后仍没有得到有效的结果文件：${validation.error}`);
     }
 
     if (extras.gate) {
@@ -761,7 +840,7 @@ async function checkLeftover(
       last.result = validation.value;
       ctx.state.results[key] = validation.value;
       save(ctx);
-      ctx.log(`${key} 上一次的 agent ${last.agentId} 已经做完，沿用它的结果：${JSON.stringify(validation.value)}`);
+      recover(ctx, key, "reuse_result", `上一次的 agent ${last.agentId} 已经做完，沿用它的结果`);
       if (ctx.config.archiveStepAgents) await agent.archive().catch(() => undefined);
       return { done: validation.value };
     }
@@ -769,7 +848,10 @@ async function checkLeftover(
     return {};
   }
   if (status === "timeout" || status === "permission") {
-    if ((last.reattached ?? 0) < 1) return { agent, reattached: (last.reattached ?? 0) + 1 };
+    if ((last.reattached ?? 0) < 1) {
+      recover(ctx, key, "reattach", `上一次的 agent ${last.agentId} 还在做，接着等它，不另起一个`);
+      return { agent, reattached: (last.reattached ?? 0) + 1 };
+    }
     ctx.log(`${key} 上一次的 agent ${last.agentId} 已经等过两轮仍未完成，停止它并新建一个 agent`);
     await ctx.runtime
       .interruptAgent(last.agentId, "这一步已超时，流水线会另起一个 agent 重做。请立即停止当前工作，不要再修改任何文件，也不要写结果文件，直接结束。")
@@ -1023,6 +1105,26 @@ async function scheduleApprovalContinue(ctx: PipelineContext): Promise<string | 
 }
 
 /** A Paseo schedule that has the chat continue the run later; returns the time as text, or null. */
+/** Rate limits and used-up subscriptions, as opposed to network trouble. */
+const QUOTA_ERROR = /rate.?limit|too many requests|\b429\b|quota|usage limit|额度|限流/i;
+
+/**
+ * 1.12: when a step stopped on rate limits and Paseo says when a used-up subscription window
+ * resets, the time to continue (5 minutes after the reset, within 24 hours); null otherwise.
+ */
+async function quotaResetTime(ctx: PipelineContext, reason: string): Promise<Date | null> {
+  if (!QUOTA_ERROR.test(reason)) return null;
+  const profiles = [ctx.config.agents.builder, ctx.config.agents.reviewer, ...(ctx.config.agents.fallback ? [ctx.config.agents.fallback] : [])];
+  const providers = [...new Set(profiles.map((p) => (p.provider ?? "").split("/")[0]).filter(Boolean))];
+  const quotas = await ctx.runtime.providerQuota(providers).catch(() => null);
+  const now = Date.now();
+  const resets = (quotas ?? [])
+    .filter((q) => q.resetsAt && ((q.usedPct !== null && q.usedPct >= 95) || q.tone === "danger"))
+    .map((q) => new Date(q.resetsAt!).getTime())
+    .filter((t) => t > now && t < now + 24 * 3600_000);
+  return resets.length === 0 ? null : new Date(Math.max(...resets) + 5 * 60_000);
+}
+
 async function scheduleAutoResume(ctx: PipelineContext, reason: string): Promise<string | null> {
   const minutes = ctx.config.autoResumeMinutes;
   const origin = ctx.state.originAgentId;
@@ -1032,7 +1134,8 @@ async function scheduleAutoResume(ctx: PipelineContext, reason: string): Promise
     ctx.log(`这次尝试已经自动继续过 ${used} 次，不再预约`);
     return null;
   }
-  const at = new Date(Date.now() + minutes * 60_000);
+  const reset = await quotaResetTime(ctx, reason);
+  const at = reset ?? new Date(Date.now() + minutes * 60_000);
   try {
     const id = await ctx.runtime.scheduleMessage({
       agentId: origin,
@@ -1049,7 +1152,9 @@ async function scheduleAutoResume(ctx: PipelineContext, reason: string): Promise
     ctx.state.schedules = [...(ctx.state.schedules ?? []), { id, kind: "auto-resume", at: at.toISOString() }];
     ctx.state.autoResumes = { attempt: ctx.state.attempt, count: used + 1 };
     save(ctx);
-    ctx.log(`已预约 ${minutes} 分钟后自动继续（Paseo 定时任务 ${id}）`);
+    const when = at.toLocaleString("zh-CN", { hour12: false });
+    if (reset) recover(ctx, "pipeline", "quota_wait", `额度用完，Paseo 显示会恢复；已预约在 ${when} 自动继续（Paseo 定时任务 ${id}）`);
+    else recover(ctx, "pipeline", "auto_resume", `已预约 ${minutes} 分钟后自动继续（Paseo 定时任务 ${id}）`);
     return at.toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   } catch (error) {
     ctx.log(`预约自动继续失败：${(error as Error).message}`);
@@ -1080,7 +1185,7 @@ async function checkQuota(ctx: PipelineContext): Promise<void> {
     [
       "【需求开发流水线通知】这条消息来自后台流水线，不是用户发的。",
       `额度提醒：${items.join("；")}。`,
-      "流水线照常进行；额度用完时会遇到限流，流水线会自动等待重试，重试用完会中断，之后可以继续。如果希望等额度恢复后再开发，请转告用户，用户同意的话可以先暂停。",
+      `流水线照常进行；额度用完时会遇到限流，流水线会先重试${ctx.config.agents.fallback ? "、再换备用模型" : ""}，仍不行就预约在额度恢复后自动继续，不需要人处理。如果希望等额度恢复后再开发，请转告用户，用户同意的话可以先暂停，再预约在恢复时间开始。`,
     ].join("\n"),
   );
 }
@@ -1567,9 +1672,31 @@ async function assessmentPhase(ctx: PipelineContext): Promise<void> {
   for (let r = 1; r <= rounds.designReview; r++) {
     const review = await runReview(ctx, "design_review", r, rounds.designReview);
     if (review.verdict === "approved") break;
-    if (review.verdict === "blocked") throw new BusinessDecisionNeeded(review.questions as string[]);
+    if (review.verdict === "blocked") {
+      await answerFirst(ctx, review, r, rounds.designReview);
+      continue;
+    }
     await runStep(ctx, "design_revise", r, rounds.designReview);
   }
+}
+
+/**
+ * The review says only the requester can decide (1.12): the builder first answers what the
+ * code, the documents and the spec settle, in a revision of the design; what is left goes to
+ * the requester, each with a recommended answer.
+ */
+async function answerFirst(ctx: PipelineContext, review: Record<string, unknown>, round: number, maxRounds: number): Promise<void> {
+  const questions = (review.questions as string[]) ?? [];
+  if (!ctx.config.answerQuestionsFirst) throw new BusinessDecisionNeeded(questions);
+  const revised = await runStep(ctx, "design_revise", round, maxRounds, {
+    contextLines: [`审核结论：需要需求方决定（${questions.length} 个问题，见 design-review.md）。按本步骤说明中"审核要求需求方决定时"一节，先自己找答案`],
+  });
+  const left = Array.isArray(revised.business_questions) ? (revised.business_questions as string[]).map((q) => q.trim()).filter(Boolean) : [];
+  const answered = Math.max(0, questions.length - left.length);
+  if (answered > 0) {
+    recover(ctx, `design_revise-r${round}`, "self_answer", `方案审核提出的 ${questions.length} 个问题中，${answered} 个由 builder 从代码和文档中确定了答案${left.length > 0 ? `，${left.length} 个交给需求方` : "，不用等需求方"}`);
+  }
+  if (left.length > 0) throw new BusinessDecisionNeeded(left);
 }
 
 /** Develop phase: design → design review ⇄ revise → implement → code review ⇄ fix → handoff. Returns the design result. */
@@ -1602,7 +1729,10 @@ async function developPhase(ctx: PipelineContext): Promise<Record<string, unknow
     const review = await runReview(ctx, "design_review", r, rounds.designReview);
     designRounds = r;
     if (review.verdict === "approved") break;
-    if (review.verdict === "blocked") throw new BusinessDecisionNeeded(review.questions as string[]);
+    if (review.verdict === "blocked") {
+      await answerFirst(ctx, review, r, rounds.designReview);
+      continue;
+    }
     // changes_required. The last round's revision goes straight to implementation;
     // the implementer reads both the review and the revision record.
     await runStep(ctx, "design_revise", r, rounds.designReview);
@@ -1876,6 +2006,7 @@ async function flow(ctx: PipelineContext): Promise<Record<string, unknown>> {
 export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome> {
   ctx.state.status = "running";
   ctx.state.stopReason = null;
+  ctx.state.stopKind = null;
   save(ctx);
   await integrate(ctx, phaseOf(ctx) === "verify" ? "verify" : "started");
   try {
@@ -1917,6 +2048,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     if (error instanceof PhaseGate) {
       ctx.state.status = "phase_done";
       ctx.state.stopReason = null;
+      ctx.state.stopKind = "phase_gate";
       save(ctx);
       await stopManagedServices(ctx);
       const verifyAt = await scheduleVerifyStart(ctx);
@@ -1947,6 +2079,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     if (error instanceof ApprovalNeeded) {
       ctx.state.status = "waiting_for_approval";
       ctx.state.stopReason = null;
+      ctx.state.stopKind = "approval";
       save(ctx);
       const autoContinueAt = await scheduleApprovalContinue(ctx);
       const reminderHours = await scheduleReminder(ctx, "approval");
@@ -1974,6 +2107,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     if (error instanceof BusinessDecisionNeeded) {
       const reproduce = error.source === "reproduce";
       ctx.state.status = "waiting_for_business";
+      ctx.state.stopKind = reproduce ? "reproduce" : "business";
       ctx.state.stopReason = `${reproduce ? "没能复现缺陷，需要需求方补充信息" : "方案审核需要需求方决定"}：${error.questions.join("；")}`;
       save(ctx);
       const reminderHours = await scheduleReminder(ctx, error.questions);
@@ -1994,6 +2128,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
     const stepTitle = error instanceof StepFailure ? error.stepTitle : "流水线";
     ctx.state.status = "failed";
     ctx.state.stopReason = `${stepTitle}：${(error as Error).message}`;
+    ctx.state.stopKind = failureKind(error);
     save(ctx);
     const autoResumeAt =
       error instanceof StepFailure && isTransientError((error as Error).message) ? await scheduleAutoResume(ctx, (error as Error).message) : null;

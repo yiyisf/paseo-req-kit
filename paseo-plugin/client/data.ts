@@ -1,7 +1,7 @@
 // Data hooks: every read is an RPC to the daemon side (req api), cached by React Query.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
-import { fileRpc, listRpc, preferences, runRpc, statsRpc, statusRpc, versionRpc, type Action } from "../shared/contracts";
+import { fileRpc, listRpc, modelsRpc, preferences, runRpc, setAgentsRpc, statsRpc, statusRpc, versionRpc, type Action, type AgentProfileData } from "../shared/contracts";
 
 export function usePreferences(): { readOnly: boolean; refreshMs: number } {
   const settings = useSettings(preferences);
@@ -51,5 +51,19 @@ export function useAction() {
   return useMutation({
     mutationFn: (input: { action: Action; repo: string; featureDir: string; verifyEnv?: "local" | "deployed" }) => run(input),
     onSettled: () => queries.invalidateQueries({ queryKey: ["req"] }),
+  });
+}
+
+export function useModels() {
+  const models = useRpc(modelsRpc);
+  return useQuery({ queryKey: ["req", "models"], queryFn: () => models({}), retry: false });
+}
+
+export function useSetAgents() {
+  const set = useRpc(setAgentsRpc);
+  const queries = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { builder: AgentProfileData; reviewer: AgentProfileData; fallback: AgentProfileData | null }) => set(input),
+    onSettled: () => queries.invalidateQueries({ queryKey: ["req", "models"] }),
   });
 }

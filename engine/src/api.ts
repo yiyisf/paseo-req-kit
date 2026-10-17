@@ -10,6 +10,8 @@
 //   req api stats [--since 30d] [--month 2026-10]
 //   req api index [--rebuild <dir>...] [--prune]
 //   req api run <approve|stop|resume|verify> <需求> [--repo <dir>] [其他选项]
+//   req api models                         agents the daemon offers, the current and the recommended ones (1.12)
+//   req api set-agents --json <设置>       writes builder, reviewer and fallback to the local config (1.12)
 //
 // Reading never changes anything. `run` performs the same command as `req <command>` in that
 // directory, so the engine stays the only one that changes a requirement's state.
@@ -313,6 +315,26 @@ export function apiRun(command: string, repoArg: string, feature: string, extra:
   return { command, featureDir: feature, ok: r.status === 0, exitCode: r.status, message: r.error ? r.error.message : output };
 }
 
+/** Runs the configuration program in one of its machine modes and returns its JSON line. */
+function configureJson(args: string[]): Record<string, unknown> {
+  const r = spawnSync(process.execPath, [path.join(KIT_ROOT, "bin", "req.mjs"), "configure", ...args], {
+    encoding: "utf8",
+    timeout: 120_000,
+    windowsHide: true,
+    env: process.env,
+  });
+  const line = (r.stdout ?? "").trim().split("\n").pop() ?? "";
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    parsed = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    parsed = null;
+  }
+  if (!parsed) throw new ApiError("failed", `读取 agent 设置失败：${(r.stderr || r.error?.message || "没有输出").trim().split("\n").slice(-2).join(" ")}`);
+  if (parsed.ok === false) throw new ApiError("failed", String(parsed.message ?? "失败"));
+  return parsed;
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 
@@ -376,8 +398,18 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       const what = need("命令（approve、stop、resume、verify）");
       return apiRun(what, repo, need("需求"), argv.splice(0));
     }
+    case "models": {
+      const { current, choices, recommended } = configureJson(["--catalog-json"]);
+      return { current, choices, recommended };
+    }
+    case "set-agents": {
+      const value = option(argv, "--json");
+      if (!value) throw new ApiError("bad_arguments", "缺少 --json <设置>");
+      const { message } = configureJson(["--set", value]);
+      return { ok: true, message };
+    }
     default:
-      throw new ApiError("bad_arguments", `没有 "${command ?? ""}" 这个 api 命令。可用：version、list、status、file、stats、index、run`);
+      throw new ApiError("bad_arguments", `没有 "${command ?? ""}" 这个 api 命令。可用：version、list、status、file、stats、index、run、models、set-agents`);
   }
 }
 

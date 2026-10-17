@@ -9,6 +9,7 @@
 //   node install.mjs --prune                 list old version directories that can be deleted
 //   node install.mjs --uninstall             remove the skills req-kit installed (keeps ~/.req-kit)
 //   node install.mjs --configure             configuration wizard: pick the agents from what Paseo offers
+//   node install.mjs --configure --auto      the same without questions: the recommended agents (1.12)
 //   node install.mjs --upgrade [version]     download a version (default: the newest) next to this one,
 //                                            install its dependencies and switch to it
 //   node install.mjs --latest                print the newest published version
@@ -47,6 +48,9 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     configure: { type: "boolean", default: false },
+    auto: { type: "boolean", default: false },
+    "catalog-json": { type: "boolean", default: false },
+    set: { type: "string" },
     upgrade: { type: "boolean", default: false },
     latest: { type: "boolean", default: false },
     from: { type: "string" },
@@ -844,7 +848,7 @@ function configureCommand() {
     console.error(`依赖未安装：在 ${KIT_ROOT} 中执行 npm install 后再运行配置向导。`);
     return 1;
   }
-  const result = spawnSync(process.execPath, [tsx, path.join(KIT_ROOT, "engine", "src", "configure.ts"), "--config", CONFIG], {
+  const result = spawnSync(process.execPath, [tsx, path.join(KIT_ROOT, "engine", "src", "configure.ts"), "--config", CONFIG, ...(values.auto ? ["--auto"] : []), ...(values["catalog-json"] ? ["--catalog-json"] : []), ...(values.set !== undefined ? ["--set", values.set] : [])], {
     stdio: "inherit",
     windowsHide: true,
   });

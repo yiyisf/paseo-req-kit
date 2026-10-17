@@ -319,15 +319,19 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$CONFIGURE" = "1" ] && [ -f "$CONFIG" ] && grep -q "CHANGE-ME" "$CONFIG" 2>/dev/null; then
   step "选择 agent"
-  # Piped into sh, stdin is the script: read the answers from the terminal.
-  if [ -r /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
+  # 1.12: no questions: the logged-in agents are picked as recommended; change them later with
+  # req configure or in Paseo (Settings → Plugins → req-kit).
+  if run_req configure --auto; then
+    run_req check || true
+  elif [ -r /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
+    warn "没能自动选好 agent，改为逐项选择"
     if run_req configure </dev/tty; then
       run_req check || true
     else
       warn "配置向导没有完成，之后可以运行 req configure"
     fi
   else
-    warn "没有可交互的终端，跳过配置向导。之后运行：req configure"
+    warn "没能自动选好 agent（Paseo 在运行、至少登录一种 agent 后再试）。之后运行：req configure --auto"
   fi
 fi
 

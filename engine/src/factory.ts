@@ -16,11 +16,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { cardRoutes, findCardEntry, hashText, parseJsonOutput } from "./card.js";
-import { beginFromCard, type CardCmdOptions, cardIntegrations, checkCards } from "./card-cmd.js";
-import { loadConfig } from "./config.js";
+import { beginFromCard, type CardCmdOptions, cardIntegrations, checkCards, withRuntime } from "./card-cmd.js";
+import { resumeCommand, statusCommand } from "./cli-args.js";
+import { loadConfig, type PipelineConfig } from "./config.js";
+import { watchdogPrompt } from "./messages.js";
+import { readIndex } from "./records.js";
 import { type IntegrationConfig, renderArgs, runCommand, type Runner } from "./integrations.js";
 import { defaultConfigPath, ENGINE_DIR, KIT_ROOT, kitHome } from "./locations.js";
-import { isAlive } from "./state.js";
+import { isAlive, readState, statePath } from "./state.js";
 
 const USAGE = `用法：
   req factory once      检查一次：为新卡片开始需求，把需求方的新回复转给需求会话
@@ -49,6 +52,8 @@ export interface PollResult {
   started: string[];
   skipped: string[];
   relayed: string[];
+  /** 1.12: interrupted pipelines whose chat was asked to continue them. */
+  resumed: string[];
   errors: string[];
   notes: string[];
 }
@@ -143,7 +148,7 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
   const env = opts.env ?? process.env;
   const dir = factoryDir(env);
   fs.mkdirSync(dir, { recursive: true });
-  const result: PollResult = { started: [], skipped: [], relayed: [], errors: [], notes: [] };
+  const result: PollResult = { started: [], skipped: [], relayed: [], resumed: [], errors: [], notes: [] };
 
   // One look at a time on this machine.
   const lock = path.join(dir, "poll.lock");
@@ -208,6 +213,12 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
     writeJson(skippedFile, skipped);
 
     try {
+      await nudgeInterrupted(config, env, dir, result);
+    } catch (error) {
+      result.errors.push(`续跑中断的需求：${(error as Error).message}`);
+    }
+
+    try {
       const checked = await checkCards(null, opts, configPath, { skipFinished: true });
       for (const line of checked.lines) {
         if (/：没有新内容$/.test(line)) continue;
@@ -226,11 +237,44 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
   return result;
 }
 
+/**
+ * 1.12: a pipeline on this machine still marked running whose process is gone (the machine
+ * restarted, the process was killed): its chat gets the same message as the watchdog's, so
+ * the chat checks and continues it. Once per process; a chat that cannot be reached is noted.
+ */
+async function nudgeInterrupted(config: PipelineConfig, env: NodeJS.ProcessEnv, dir: string, result: PollResult): Promise<void> {
+  const file = path.join(dir, "nudged.json");
+  const nudged = readJson<Record<string, number>>(file, {});
+  const due: Array<{ key: string; pid: number; origin: string; featureDir: string; repo: string }> = [];
+  for (const entry of readIndex(env)) {
+    if (!entry.present) continue;
+    const state = readState(statePath(entry.repo, entry.featureDir));
+    if (!state || state.status !== "running" || isAlive(state.pid) || !state.originAgentId) continue;
+    if (nudged[entry.key] === state.pid) continue;
+    due.push({ key: entry.key, pid: state.pid, origin: state.originAgentId, featureDir: entry.featureDir, repo: entry.sourceRepo ?? entry.repo });
+  }
+  if (due.length === 0) return;
+  await withRuntime(config, async (runtime) => {
+    for (const d of due) {
+      const commands = { repo: d.repo, featureDir: d.featureDir, configPath: null };
+      try {
+        await runtime.notifyAgent(d.origin, watchdogPrompt({ featureDir: d.featureDir, statusCommand: statusCommand(commands), resumeCommand: resumeCommand(commands) }));
+        nudged[d.key] = d.pid;
+        result.resumed.push(`${path.join(d.repo, d.featureDir)}：后台进程已退出，已请它的对话检查并继续`);
+      } catch (error) {
+        result.errors.push(`${path.join(d.repo, d.featureDir)} 的后台进程已退出，但没能通知它的对话：${(error as Error).message}`);
+      }
+    }
+  });
+  writeJson(file, nudged);
+}
+
 function describe(result: PollResult, now = new Date()): string[] {
   const stamp = now.toLocaleString("zh-CN", { hour12: false });
   const lines: string[] = [];
   for (const s of result.started) lines.push(`[${stamp}] 已开始：${s}`);
   for (const s of result.relayed) lines.push(`[${stamp}] ${s}`);
+  for (const s of result.resumed) lines.push(`[${stamp}] 续跑：${s}`);
   for (const s of result.skipped) lines.push(`[${stamp}] 没能接：${s}`);
   for (const s of result.errors) lines.push(`[${stamp}] 出错：${s}`);
   for (const s of result.notes) lines.push(`[${stamp}] ${s}`);

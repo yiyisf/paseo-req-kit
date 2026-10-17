@@ -151,7 +151,23 @@ export interface PipelineConfig {
   daemonUrl: string;
   /** Name of the environment variable holding the daemon password, if the daemon has one. */
   daemonPasswordEnv: string;
-  agents: Record<"builder" | "reviewer", AgentProfile>;
+  /**
+   * builder and reviewer; `fallback` (1.12, optional) is used when a step's own agent keeps
+   * failing (rate limits or quota after the retries, an agent error): the step is run once
+   * more with it instead of stopping.
+   */
+  agents: Record<"builder" | "reviewer", AgentProfile> & { fallback?: AgentProfile | null };
+  /**
+   * 1.12: handle failures without a person where that is safe: wait once more for a step that
+   * runs over its time, redo a step once after an agent error or an invalid result file.
+   */
+  selfHeal: boolean;
+  /**
+   * 1.12: questions the design review says only the requester can decide go to the builder
+   * first, who answers what the code, the documents and the spec settle; only the real
+   * business choices, each with a recommended answer, reach the requester.
+   */
+  answerQuestionsFirst: boolean;
   /** Profile used when neither --profile nor the spec names one. */
   defaultProfile: ProfileName;
   profiles: Record<ProfileName, ProfileSettings>;
@@ -317,7 +333,9 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   waitingReminderHours: 24,
   autoResumeMinutes: 30,
   autoResumeMax: 2,
-  watchdogMinutes: 0,
+  watchdogMinutes: 60,
+  selfHeal: true,
+  answerQuestionsFirst: true,
   phases: { mode: "continuous", verify: { environment: "local", agents: {}, defects: "fix", serviceStart: null } },
   requirementTypes: ["defect", "refactor", "assessment"],
   checks: [],
@@ -532,6 +550,9 @@ export function resolveRelatedRepo(repo: RelatedRepo, projectDir: string): strin
 
 function validate(config: PipelineConfig): void {
   for (const role of ["builder", "reviewer"] as const) validateProvider(`agents.${role}`, config.agents[role]);
+  if (config.agents.fallback !== undefined && config.agents.fallback !== null) validateProvider("agents.fallback", config.agents.fallback);
+  if (typeof config.selfHeal !== "boolean") throw new ConfigError("selfHeal 必须是 true 或 false");
+  if (typeof config.answerQuestionsFirst !== "boolean") throw new ConfigError("answerQuestionsFirst 必须是 true 或 false");
   if (!PROFILE_NAMES.includes(config.defaultProfile)) {
     throw new ConfigError(`defaultProfile 必须是 ${PROFILE_NAMES.join(" 或 ")}`);
   }

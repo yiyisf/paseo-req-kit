@@ -165,6 +165,10 @@ export interface RunRecord {
     /** The report's verdict when the run completed (completed, completed_with_issues, not_completed). */
     outcome: string | null;
     stopReason: string | null;
+    /** 1.12: why the run stopped for a person, as a code (absent in older records). */
+    stopKind?: string | null;
+    /** 1.12: what the pipeline handled by itself during the run, by kind (absent in older records). */
+    recoveries?: Record<string, number>;
   };
   agents: { builder: string | null; reviewer: string | null };
   steps: StepUsageRecord[];
@@ -241,6 +245,10 @@ export function runRecord(input: {
       status: state.status,
       outcome: state.status === "completed" ? state.outcome : null,
       stopReason: state.stopReason,
+      stopKind: state.status === "completed" || state.status === "running" ? null : (state.stopKind ?? null),
+      recoveries: (state.recoveries ?? [])
+        .filter((r) => new Date(r.at).getTime() >= since)
+        .reduce<Record<string, number>>((m, r) => ({ ...m, [r.kind]: (m[r.kind] ?? 0) + 1 }), {}),
     },
     agents: input.agents,
     steps,

@@ -1,7 +1,7 @@
 // The daemon side: each RPC is one `req api` call. Management actions are refused here too
 // when the plugin is set to read-only, not only hidden in the app.
 import type { RpcInput } from "@getpaseo/plugin";
-import type { fileRpc, KitInfo, Requirement, RequirementDetail, runRpc, statsRpc, StatsSummary, statusRpc } from "../shared/contracts";
+import type { fileRpc, KitInfo, ModelsData, Requirement, RequirementDetail, runRpc, setAgentsRpc, statsRpc, StatsSummary, statusRpc } from "../shared/contracts";
 import { coalesce, type ReqRunner } from "./req";
 
 export interface Handlers {
@@ -11,6 +11,8 @@ export interface Handlers {
   file(input: RpcInput<typeof fileRpc>): Promise<{ file: string; size: number; truncated: boolean; content: string }>;
   stats(input: RpcInput<typeof statsRpc>): Promise<StatsSummary>;
   run(input: RpcInput<typeof runRpc>): Promise<{ ok: boolean; message: string }>;
+  models(): Promise<ModelsData>;
+  setAgents(input: RpcInput<typeof setAgentsRpc>): Promise<{ ok: boolean; message: string }>;
 }
 
 export function createHandlers(input: { req: ReqRunner; kitHome: () => string; readOnly: () => Promise<boolean> }): Handlers {
@@ -40,6 +42,17 @@ export function createHandlers(input: { req: ReqRunner; kitHome: () => string; r
       const extra = action === "verify" && verifyEnv ? ["--verify-env", verifyEnv] : [];
       const result = (await req(["run", action, featureDir, "--repo", repo, ...extra], { timeoutMs: 200_000 })) as { ok: boolean; message: string };
       return { ok: result.ok, message: result.message };
+    },
+    async models() {
+      return (await req(["models"], { timeoutMs: 120_000 })) as ModelsData;
+    },
+    async setAgents(agents) {
+      if (await input.readOnly()) return { ok: false, message: "插件设置为只读：不能在这里修改。可以关闭只读，或在终端运行 req configure。" };
+      try {
+        return (await req(["set-agents", "--json", JSON.stringify(agents)])) as { ok: boolean; message: string };
+      } catch (error) {
+        return { ok: false, message: (error as Error).message };
+      }
     },
   };
 }

@@ -89,7 +89,9 @@
   "waitingReminderHours": 24,
   "autoResumeMinutes": 30,
   "autoResumeMax": 2,
-  "watchdogMinutes": 0,
+  "watchdogMinutes": 60,
+  "selfHeal": true,
+  "answerQuestionsFirst": true,
   "phases": {
     "mode": "continuous",
     "verify": {

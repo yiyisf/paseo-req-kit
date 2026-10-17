@@ -26,6 +26,7 @@ interface HandlersModule {
   createHandlers(input: { req: Runner; kitHome: () => string; readOnly: () => Promise<boolean> }): {
     list(): Promise<unknown[]>;
     run(input: { action: string; repo: string; featureDir: string; verifyEnv?: string }): Promise<{ ok: boolean; message: string }>;
+    setAgents(input: { builder: object; reviewer: object; fallback: object | null }): Promise<{ ok: boolean; message: string }>;
   };
 }
 interface PluginCli {
@@ -93,6 +94,14 @@ test("插件后台：只读时拒绝管理操作；操作转成 req api run；�
   readOnly = false;
   assert.deepEqual(await handlers.run({ action: "verify", repo: "/repo", featureDir: "docs/features/a", verifyEnv: "deployed" }), { ok: true, message: "已在后台启动" });
   assert.deepEqual(calls.at(-1), ["run", "verify", "docs/features/a", "--repo", "/repo", "--verify-env", "deployed"]);
+
+  // 1.12: the model settings page writes through req api set-agents; read-only refuses it too.
+  const agents = { builder: { provider: "claude/x" }, reviewer: { provider: "codex/y" }, fallback: null };
+  readOnly = true;
+  assert.equal((await handlers.setAgents(agents)).ok, false);
+  readOnly = false;
+  await handlers.setAgents(agents);
+  assert.deepEqual(calls.at(-1), ["set-agents", "--json", JSON.stringify(agents)]);
 
   await Promise.all([handlers.list(), handlers.list(), handlers.list()]);
   assert.equal(calls.filter((c) => c[0] === "list").length, 1);

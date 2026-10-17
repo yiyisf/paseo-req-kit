@@ -40,6 +40,9 @@
 | `stepTimeoutMinutes.<步骤>` | 20–240 分钟 | 每个步骤的总时限 |
 | `resultFollowUps` | 2 | 结果文件缺失或不合格时提醒补写的次数 |
 | `retry` | 2 次，等 60/300 秒 | 临时错误（限流、网络）后自动重做这一步 |
+| `selfHeal` | `true` | 1.12：超时时 agent 还在做就再等一轮；agent 报错、结果文件无效时新开 agent 重做一次 |
+| `answerQuestionsFirst` | `true` | 1.12：方案审核要需求方决定的问题，先由 builder 从代码和文档中自答 |
+| `agents.fallback` | 无 | 1.12：备用模型，报错重做、限流重试用完时换它做这一步 |
 
 ## 质量与范围
 
@@ -75,7 +78,7 @@
 | `notifiers` | `[]` | 外部通知模块（企业 IM 等），见 [外部通知事件](/reference/contracts/notifier-event) |
 | `waitingReminderHours` | 24 | 等待需求方回答、或研发完成待测试超过这么久，提醒一次；0 关闭 |
 | `autoResumeMinutes` / `autoResumeMax` | 30 / 2 | 临时错误中断后自动继续的等待时间和次数；0 关闭 |
-| `watchdogMinutes` | 0 | 运行期间定时检查，进程意外退出时自动继续；0 关闭 |
+| `watchdogMinutes` | 60 | 运行期间定时检查，进程意外退出时自动继续；0 关闭（1.12 起默认 60） |
 | `maxConcurrentPipelines` | 0 | 本机同时运行的流水线上限，满了排队；0 不限 |
 | `queuePollSeconds` | 60 | 排队时检查空位的间隔 |
 

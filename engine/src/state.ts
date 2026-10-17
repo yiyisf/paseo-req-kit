@@ -27,6 +27,32 @@ export interface RunPhases {
   defects: DefectHandling;
 }
 
+/**
+ * Why a run stopped for a person (1.12). Necessary decisions: approval (the plan), business
+ * (a question only the requester can answer), reproduce (a defect that could not be reproduced),
+ * phase_gate (development done, waiting for testing). The rest are interruptions.
+ */
+export type StopKind =
+  | "approval"
+  | "business"
+  | "reproduce"
+  | "phase_gate"
+  | "timeout"
+  | "agent_error"
+  | "invalid_result"
+  | "transient"
+  | "stopped"
+  | "process_exit"
+  | "other";
+
+/** Something the pipeline handled by itself (1.12). */
+export interface Recovery {
+  at: string;
+  key: string;
+  kind: "retry" | "reattach" | "reuse_result" | "extend_timeout" | "redo" | "fallback" | "auto_resume" | "quota_wait" | "self_answer";
+  detail: string;
+}
+
 export interface StepRecord {
   key: string;
   stepId: StepId;
@@ -69,6 +95,10 @@ export interface PipelineState {
   results: Record<string, Record<string, unknown>>;
   history: StepRecord[];
   stopReason: string | null;
+  /** 1.12: why the run stopped for a person, as a code (contracts/usage-record.md); null while running or done. */
+  stopKind?: StopKind | null;
+  /** 1.12: what the pipeline handled by itself instead of stopping (retries, waiting longer, a fallback model…). */
+  recoveries?: Recovery[];
   outcome: string | null;
   /** "quick" or "standard"; decides loop rounds and optional steps. */
   profile: ProfileName;

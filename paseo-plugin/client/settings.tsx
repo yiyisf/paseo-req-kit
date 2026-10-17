@@ -1,10 +1,11 @@
-// Settings → Plugins → req-kit: what the plugin found, read-only mode, refresh interval.
+// Settings → Plugins → req-kit: what the plugin found, the models (1.12), read-only mode, refresh interval.
 import { type PluginSurfaceProps, type SettingsState, useSettings } from "@getpaseo/plugin/client";
 import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Text } from "react-native";
 import { preferences } from "../shared/contracts";
 import { useKitInfo } from "./data";
+import { ModelSettings } from "./models";
 
 type Ready = Extract<SettingsState<typeof preferences.schema>, { status: "ready" }>;
 
@@ -51,6 +52,7 @@ function Controls({ settings, theme }: { settings: Ready; theme: PluginSurfacePr
           />
         </SettingsCard>
       </SettingsSection>
+      <ModelSettings theme={theme} readOnly={settings.values.readOnly} />
       <SettingsSection title="显示与操作">
         <SettingsCard>
           <SettingsSwitch

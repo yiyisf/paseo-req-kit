@@ -56,6 +56,7 @@ Paseo 插件（在 Paseo 中查看和管理需求）：
 本机维护：
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
   req configure                配置向导：选择 builder 和 reviewer 用的 agent
+  req configure --auto         不提问，按推荐选好 builder、reviewer 和备用模型
   req upgrade [版本] [--beta]  升级到最新版本（或指定版本），自动选能支持本机 Paseo 的版本；
                                req upgrade --check 只看有没有新版本
   req versions                 已安装的版本和 npm 上的版本

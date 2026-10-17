@@ -132,7 +132,10 @@ export const STEPS: Record<StepId, StepDef> = {
     title: "方案修订",
     role: "builder",
     promptFile: "04b-design-revise.md",
-    result: { required: done.required, optional: { slices: { kind: "string[]" }, files: { kind: "string[]" }, ui_change: { kind: "boolean" } } },
+    result: {
+      required: done.required,
+      optional: { slices: { kind: "string[]" }, files: { kind: "string[]" }, ui_change: { kind: "boolean" }, business_questions: { kind: "string[]" } },
+    },
   },
   implement: {
     id: "implement",

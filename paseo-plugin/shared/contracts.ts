@@ -152,6 +152,43 @@ export const runRpc = defineRpc({
   output: z.object({ ok: z.boolean(), message: z.string() }),
 });
 
+/** Agent settings, as req-kit writes them (1.12). */
+export interface AgentProfileData {
+  provider?: string;
+  paseoProfile?: string;
+  modeId?: string;
+  [key: string]: unknown;
+}
+
+export interface AgentChoiceData {
+  id: string;
+  label: string;
+  provider: string;
+  profile: AgentProfileData;
+}
+
+export interface ModelsData {
+  current: { builder?: AgentProfileData; reviewer?: AgentProfileData; fallback?: AgentProfileData | null } | null;
+  choices: AgentChoiceData[];
+  recommended: { builder?: AgentProfileData; reviewer?: AgentProfileData; fallback?: AgentProfileData | null } | null;
+}
+
+/** What Paseo offers for builder, reviewer and the fallback model, and what is set now. */
+export const modelsRpc = defineRpc({
+  name: "req.models",
+  input: z.object({}),
+  output: z.custom<ModelsData>(),
+});
+
+const profile = z.record(z.string(), z.unknown());
+
+/** Writes the agents to this machine's req-kit config (refused when the plugin is read-only). */
+export const setAgentsRpc = defineRpc({
+  name: "req.setAgents",
+  input: z.object({ builder: profile, reviewer: profile, fallback: profile.nullable() }),
+  output: z.object({ ok: z.boolean(), message: z.string() }),
+});
+
 export const preferences = defineSettings({
   id: "preferences",
   scope: "host",

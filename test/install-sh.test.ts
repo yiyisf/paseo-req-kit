@@ -53,7 +53,7 @@ function installedVersion(home: string): string {
   return JSON.parse(fs.readFileSync(path.join(home, ".req-kit", "active.json"), "utf8")).version;
 }
 
-test("一键安装：从 npm 安装、req setup 启用、装好 skill；没有终端时跳过配置向导并提示", () => {
+test("一键安装：从 npm 安装、req setup 启用、装好 skill；没有 Paseo 时自动选模型失败并提示", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const prefix = path.join(home, "npm-global");
   fs.mkdirSync(prefix);
@@ -64,7 +64,7 @@ test("一键安装：从 npm 安装、req setup 启用、装好 skill；没有�
   assert.ok(fs.existsSync(path.join(prefix, "lib", "node_modules", "paseo-req-kit", "bin", "req.mjs")));
   assert.equal(installedVersion(home), VERSION);
   assert.ok(fs.existsSync(path.join(home, ".claude", "skills", "req", "SKILL.md")) || fs.existsSync(path.join(home, ".agents", "skills", "req", "SKILL.md")));
-  assert.match(r.stdout, /没有可交互的终端，跳过配置向导/);
+  assert.match(r.stdout, /没能自动选好 agent（Paseo 在运行、至少登录一种 agent 后再试）。之后运行：req configure --auto/);
   assert.match(r.stdout, /req 命令还不在 PATH 中[\s\S]*npm-global\/bin/);
   assert.match(r.stdout, /下一步/);
 

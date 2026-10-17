@@ -28,6 +28,8 @@
 | `req api stats [--since 30d] [--month 2026-10]` | `req stats --json` 的内容，见 [使用记录](usage-record.md) |
 | `req api index [--rebuild <目录>…] [--prune]` | 不带选项：索引的全部条目；`--rebuild`：`{ scanned, registered, pruned, total }` |
 | `req api run <approve\|stop\|resume\|verify\|sync> <需求> [--repo <目录>] [选项]` | `{ command, featureDir, ok, exitCode, message }`。在 `--repo`（默认当前目录）中执行与 `req <命令> <需求>` 完全相同的操作；`ok` 为 false 时退出码为 1 |
+| `req api models` | 1.12 起。`{ current, choices, recommended }`：本机配置中现在的 `agents`；daemon 上能无人值守运行的选择（`{ id, label, provider, profile }`，Paseo profile 在前）；按推荐的 `agents`。连不上 daemon 时报错 |
+| `req api set-agents --json <设置>` | 1.12 起。`{ ok, message }`。`<设置>` 是 `{ builder, reviewer, fallback }`（`fallback` 可以为 null），检查后写入本机配置的 `agents`，原文件备份 |
 
 `<需求>` 的写法与 `req status` 相同：功能目录、目录名或名称中能唯一确定的一部分。需求在为它新建的工作区中开发时，`--repo` 写对话所在的目录或那个工作区都可以。
 

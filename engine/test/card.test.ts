@@ -77,6 +77,9 @@ test("卡片描述：两个区块的拆分与组合，回复区保留需求方�
   assert.equal(parseReply("- 确认：修改：再加一个字段").confirmed, false);
   assert.equal(parseReply("确认:OK").confirmed, true);
   assert.equal(parseReply("- 确认：是否可以改成按周导出").confirmed, false);
+  // 1.12: everyday ways of saying yes.
+  for (const yes of ["好的", "没问题！", "按你说的来", "可以的", "OK~", "👍", "就这样吧"]) assert.equal(parseReply(`- 确认：${yes}`).confirmed, true, yes);
+  for (const no of ["好的，但是导出要按周", "不行", "可以改成按周吗"]) assert.equal(parseReply(`- 确认：${no}`).confirmed, false, no);
   // Template lines do not count as a reply.
   assert.equal(replyKey(parseReply("- Q1：\n- 确认：")), replyKey(parseReply("- Q1：\n- Q2：\n- 确认：")));
 
@@ -154,7 +157,8 @@ test("req start --from：读卡片、建功能目录和需求会话；publish �
   assert.match(description, /- Q1：纯文本\n- Q2：\n- Q3：\n- 确认：\n$/);
   assert.match(description, /\*\*进度\*\*：已根据回复更新/);
 
-  answer("- 确认：", "- 确认：同意");
+  // 1.12: a bare "好的" under the reply heading, not on the 确认 line, still confirms.
+  answer("- 确认：\n", "- 确认：\n好的\n");
   assert.match(req("check", CARD).stdout, /确认了需求说明/);
   assert.ok(JSON.parse(fs.readFileSync(path.join(feature, "source.json"), "utf8")).confirmedAt);
 

@@ -272,6 +272,7 @@ async function main(): Promise<number> {
     log(`收到 ${signal}，流水线停止`);
     state.status = "failed";
     state.stopReason = `流水线进程被 ${signal} 终止`;
+    state.stopKind = "stopped";
     state.queuedSince = null;
     writeState(stateFile, state);
     recordRun();

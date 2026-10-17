@@ -135,6 +135,8 @@ function run(over: {
   type?: string | null;
   builder?: string;
   gateFailed?: number;
+  stopKind?: string | null;
+  recoveries?: Record<string, number>;
 }): RunRecord {
   return {
     schema: 1,
@@ -142,7 +144,7 @@ function run(over: {
     machine: over.machine ?? "pc-1",
     kitVersion: "1.9.0",
     requirement: { key: over.key, project: over.project ?? "shop", name: `2026-${over.key}`, title: `需求 ${over.key}`, type: over.type ?? null, profile: "standard" },
-    run: { startedAt: over.start, endedAt: over.end, attempt: 1, phase: "develop", phaseMode: "continuous", status: over.status, outcome: over.outcome ?? null, stopReason: null },
+    run: { startedAt: over.start, endedAt: over.end, attempt: 1, phase: "develop", phaseMode: "continuous", status: over.status, outcome: over.outcome ?? null, stopReason: null, ...(over.stopKind !== undefined ? { stopKind: over.stopKind } : {}), ...(over.recoveries ? { recoveries: over.recoveries } : {}) },
     agents: { builder: over.builder ?? "claude/opus", reviewer: "codex/gpt" },
     steps: (over.steps ?? []).map((s, i) => ({
       key: `${s.stepId}${s.round ? `-r${s.round}` : ""}`,
@@ -232,6 +234,32 @@ test("使用统计：交付周期、返工、等待确认、各步骤用时；�
   // The same run exported twice (merged files) counts once.
   assert.equal(summarizeRuns([...runs, ...runs], parsePeriod({ month: "2026-10" })).requirements.find((q) => q.key === "a")!.runs, 2);
   assert.match(describeStats(summarizeRuns([], parsePeriod({ since: "7d" }))), /没有流水线运行记录/);
+});
+
+test("使用统计（1.12）：停下等人的原因、无人工到提测的比例、自动处理的比例；旧记录按状态推断", () => {
+  const runs = [
+    // a: approval only, then done — unattended.
+    run({ key: "a", start: "2026-10-01T01:00:00Z", end: "2026-10-01T02:00:00Z", status: "waiting_for_approval", stopKind: "approval" }),
+    run({ key: "a", start: "2026-10-01T03:00:00Z", end: "2026-10-01T04:00:00Z", status: "phase_done", stopKind: "phase_gate", recoveries: { retry: 2, extend_timeout: 1 } }),
+    // b: a timeout on the way — not unattended.
+    run({ key: "b", start: "2026-10-02T01:00:00Z", end: "2026-10-02T02:00:00Z", status: "failed", stopKind: "timeout" }),
+    run({ key: "b", start: "2026-10-02T03:00:00Z", end: "2026-10-02T04:00:00Z", status: "completed", outcome: "completed", stopKind: null }),
+    // c: an older record without stopKind.
+    run({ key: "c", start: "2026-10-03T01:00:00Z", end: "2026-10-03T02:00:00Z", status: "waiting_for_business" }),
+  ];
+  const s = summarizeRuns(runs, parsePeriod({ month: "2026-10" }));
+  assert.deepEqual(
+    s.stops.map((x) => [x.kind, x.runs, x.necessary]),
+    [["approval", 1, true], ["business", 1, false], ["phase_gate", 1, true], ["timeout", 1, false]],
+  );
+  assert.equal(s.automation.unattendedShare, 0.5);
+  assert.deepEqual(s.automation.recovered, { retry: 2, extend_timeout: 1 });
+  assert.equal(s.automation.interrupted, 1);
+  assert.equal(s.automation.autoRecoveryShare, 0.75);
+  const text = describeStats(s);
+  assert.match(text, /## 人工介入/);
+  assert.match(text, /除了确认方案外没有停下等人的：50%/);
+  assert.match(text, /\| 步骤超时 \| 1 \| 否 \|/);
 });
 
 test("req stats：导出本机记录，合并多台机器的导出生成汇报文件", () => {

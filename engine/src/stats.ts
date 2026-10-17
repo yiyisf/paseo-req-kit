@@ -109,6 +109,35 @@ function waitKind(status: string): WaitKind {
   return "other";
 }
 
+/** Why runs stopped for a person (1.12, state.stopKind). */
+export const STOP_LABELS: Record<string, string> = {
+  approval: "确认方案",
+  phase_gate: "研发完成，等待测试",
+  business: "方案审核的问题等需求方决定",
+  reproduce: "缺陷复现不了，等需求方补充",
+  timeout: "步骤超时",
+  agent_error: "agent 报错",
+  invalid_result: "结果文件无效",
+  transient: "限流、网络等临时错误（自动重试用完）",
+  stopped: "被手动停止",
+  process_exit: "后台进程意外退出",
+  other: "其他中断",
+};
+
+/** Stops that are the decisions people are meant to make; the rest are what 1.12 works to remove. */
+export const NECESSARY_STOPS = ["approval", "phase_gate"];
+
+/** The stop code of a run; older records (before 1.12) are inferred from the status. */
+export function stopKindOf(r: RunRecord): string | null {
+  if (r.run.stopKind !== undefined) return r.run.stopKind;
+  if (r.run.status === "waiting_for_approval") return "approval";
+  if (r.run.status === "waiting_for_business") return "business";
+  if (r.run.status === "phase_done") return "phase_gate";
+  if (r.run.status === "failed") return /手动停止|被 SIG/.test(r.run.stopReason ?? "") ? "stopped" : "other";
+  if (r.run.status === "running") return "process_exit";
+  return null;
+}
+
 /** Records of the same run seen twice (merged exports) count once. */
 export function dedupe(runs: RunRecord[]): RunRecord[] {
   const seen = new Map<string, RunRecord>();
@@ -208,6 +237,19 @@ export interface StatsSummary {
   waits: Array<{ kind: WaitKind; label: string; requirements: number; averageMinutes: number }>;
   usage: { agentMinutes: number; inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
   byBuilder: Array<{ builder: string; requirements: number; averageReviewRounds: number | null; averageCostUsd: number | null }>;
+  /** 1.12: why the period's runs stopped for a person, most frequent first. */
+  stops: Array<{ kind: string; label: string; necessary: boolean; runs: number }>;
+  /** 1.12: how much went without a person. */
+  automation: {
+    /** Of the requirements that reached testing (or completion) in the period, the share with no stop other than the necessary ones. */
+    unattendedShare: number | null;
+    /** Problems the pipeline handled by itself in the period's runs, by kind. */
+    recovered: Record<string, number>;
+    /** Runs that ended in an interruption (not a necessary decision). */
+    interrupted: number;
+    /** recovered / (recovered + interrupted). */
+    autoRecoveryShare: number | null;
+  };
   /** Requirements that started from cards, by who asked for them (1.10); empty when there are none. */
   byRequester: Array<{ requester: string; requirements: number; completed: number; medianCycleHours: number | null }>;
   requirements: RequirementStats[];
@@ -257,6 +299,24 @@ export function summarizeRuns(all: RunRecord[], period: Period): StatsSummary {
   const requesters = new Map<string, RequirementStats[]>();
   for (const q of active) if (q.card) requesters.set(q.requester ?? "（未记录）", [...(requesters.get(q.requester ?? "（未记录）") ?? []), q]);
 
+  const stopCounts = count(periodRuns.flatMap((r) => (stopKindOf(r) ? [stopKindOf(r)!] : [])));
+  const recovered: Record<string, number> = {};
+  for (const r of periodRuns) for (const [k, v] of Object.entries(r.run.recoveries ?? {})) recovered[k] = (recovered[k] ?? 0) + v;
+  const recoveredTotal = Object.values(recovered).reduce((a, b) => a + b, 0);
+  const interrupted = periodRuns.filter((r) => {
+    const k = stopKindOf(r);
+    return k !== null && !NECESSARY_STOPS.includes(k) && k !== "business" && k !== "reproduce";
+  }).length;
+  const reachedTesting = active.filter((q) => q.status === "completed" || q.status === "phase_done");
+  const unattended = reachedTesting.filter((q) =>
+    runs
+      .filter((r) => r.requirement.key === q.key && r.requirement.project === q.project)
+      .every((r) => {
+        const k = stopKindOf(r);
+        return k === null || NECESSARY_STOPS.includes(k);
+      }),
+  );
+
   return {
     schema: 1,
     period: { from: period.from?.toISOString() ?? null, to: period.to?.toISOString() ?? null, label: period.label },
@@ -287,6 +347,15 @@ export function summarizeRuns(all: RunRecord[], period: Period): StatsSummary {
       averageReviewRounds: avg(qs.map((q) => q.reviewRounds)),
       averageCostUsd: avg(qs.flatMap((q) => (q.costUsd === null ? [] : [q.costUsd]))),
     })),
+    stops: Object.entries(stopCounts)
+      .map(([kind, n]) => ({ kind, label: STOP_LABELS[kind] ?? kind, necessary: NECESSARY_STOPS.includes(kind), runs: n }))
+      .sort((a, b) => b.runs - a.runs || a.kind.localeCompare(b.kind)),
+    automation: {
+      unattendedShare: reachedTesting.length === 0 ? null : Math.round((unattended.length / reachedTesting.length) * 100) / 100,
+      recovered,
+      interrupted,
+      autoRecoveryShare: recoveredTotal + interrupted === 0 ? null : Math.round((recoveredTotal / (recoveredTotal + interrupted)) * 100) / 100,
+    },
     byRequester: [...requesters.entries()]
       .map(([requester, qs]) => {
         const finished = qs.filter((q) => done.includes(q));
@@ -349,6 +418,27 @@ export function describeStats(s: StatsSummary): string {
     `- 需要缺陷修复的需求占比：${s.rework.withDefectRounds === null ? "无数据" : `${Math.round(s.rework.withDefectRounds * 100)}%`}`,
     `- 质量门：运行 ${s.rework.gateRuns} 次，其中发现新失败 ${s.rework.gateFailed} 次`,
   );
+  const RECOVERY_LABELS: Record<string, string> = {
+    retry: "临时错误重试",
+    reattach: "接着等还在做的 agent",
+    reuse_result: "沿用旧 agent 的结果",
+    extend_timeout: "超时后多等一轮",
+    redo: "新开 agent 重做",
+    fallback: "换备用模型",
+    auto_resume: "自动继续",
+    quota_wait: "等额度恢复后继续",
+  };
+  lines.push(
+    "",
+    "## 人工介入",
+    "",
+    `- 到达提测（或完成）的需求中，除了确认方案外没有停下等人的：${s.automation.unattendedShare === null ? "无数据" : `${Math.round(s.automation.unattendedShare * 100)}%`}`,
+    `- 自动处理的问题 ${Object.values(s.automation.recovered).reduce((a, b) => a + b, 0)} 次（${list(s.automation.recovered, RECOVERY_LABELS)}），中断等人 ${s.automation.interrupted} 次${s.automation.autoRecoveryShare === null ? "" : `，自动处理的比例 ${Math.round(s.automation.autoRecoveryShare * 100)}%`}`,
+  );
+  if (s.stops.length > 0) {
+    lines.push("", "| 停下等人的原因 | 次数 | 必要的决定 |", "| --- | --- | --- |");
+    for (const st of s.stops) lines.push(`| ${st.label} | ${st.runs} | ${st.necessary ? "是" : "否"} |`);
+  }
   if (s.waits.length > 0) {
     lines.push("", "## 等待", "", "| 等待 | 需求数 | 平均 |", "| --- | --- | --- |");
     for (const w of s.waits) lines.push(`| ${w.label} | ${w.requirements} | ${hours(w.averageMinutes)} |`);

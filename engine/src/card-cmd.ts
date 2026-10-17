@@ -21,6 +21,7 @@ import {
   hashText,
   listCardEntries,
   locateCardRequirement,
+  isYes,
   parseReply,
   planAppendix,
   publishCard,
@@ -95,7 +96,7 @@ function today(now = new Date()): string {
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
 }
 
-async function withRuntime<T>(config: PipelineConfig, use: (runtime: AgentRuntime, config: PipelineConfig) => Promise<T>): Promise<T> {
+export async function withRuntime<T>(config: PipelineConfig, use: (runtime: AgentRuntime, config: PipelineConfig) => Promise<T>): Promise<T> {
   const runtime = await (await loadRuntimeFactory())({ config, log: () => undefined });
   try {
     const resolved = usesPaseoProfiles(config) ? resolveConfigProfiles(config, await runtime.listPaseoProfiles()) : config;
@@ -316,6 +317,12 @@ export async function checkOne(target: Located, opts: CardCmdOptions, notify: (a
   const key = replyKey(reply);
   let confirmed = false;
   let planConfirmed = false;
+  // 1.12: a bare "好的" written anywhere in the reply section answers what is being waited for.
+  if (!reply.confirmText && !reply.planConfirmText && reply.notes && isYes(reply.notes) && Object.keys(reply.answers).length === 0) {
+    const state = fs.existsSync(statePath(target.repo, target.entry.featureDir)) ? readState(statePath(target.repo, target.entry.featureDir)) : null;
+    if (state?.status === "waiting_for_approval") reply.planConfirmed = true;
+    else if (!source.confirmedAt) reply.confirmed = true;
+  }
   if (parts.reply !== null && source.replyHash !== null && key !== source.replyHash) {
     const answered = Object.keys(reply.answers);
     if (answered.length) changes.push(`需求方回答了 ${answered.join("、")}`);

@@ -93,6 +93,7 @@ export function usesPaseoProfiles(config: PipelineConfig): boolean {
   return [
     config.agents.builder,
     config.agents.reviewer,
+    ...(config.agents.fallback ? [config.agents.fallback] : []),
     ...config.reviewPanel.members,
     ...config.designProposals.members,
     ...Object.values(config.phases.verify.agents),
@@ -108,6 +109,7 @@ export function resolveConfigProfiles(config: PipelineConfig, available: PaseoPr
     agents: {
       builder: resolveAgentProfile("agents.builder", config.agents.builder, available),
       reviewer: resolveAgentProfile("agents.reviewer", config.agents.reviewer, available),
+      ...(config.agents.fallback ? { fallback: resolveAgentProfile("agents.fallback", config.agents.fallback, available) } : {}),
     },
     reviewPanel: {
       ...config.reviewPanel,

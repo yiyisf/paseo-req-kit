@@ -16,8 +16,10 @@
 | `pid` | number | 流水线进程 |
 | `startedAt` / `updatedAt` | ISO 时间 | |
 | `results` | object | 已完成步骤的结果，键为步骤键（如 `code_review-r2`） |
-| `history` | array | 每次步骤执行的记录：agent、起止时间、结果、错误；`usage`（可选，1.3.0 起）为 agent 报告的用量：`inputTokens`、`cachedInputTokens`、`outputTokens`、`totalCostUsd`，agent 没有报告时为 null 或缺少 |
+| `history` | array | 每次步骤执行的记录：agent、起止时间、结果、错误；`usage`（可选，1.3.0 起）为 agent 报告的用量：`inputTokens`、`cachedInputTokens`、`outputTokens`、`totalCostUsd`，agent 没有报告时为 null 或缺少；`leftRunning`（可选，1.11 起）为 true 表示失败时 agent 可能还在运行，下一次运行这一步时先看它；`reattached`（可选，1.11 起）为接着等上一次 agent 的次数 |
 | `stopReason` / `outcome` | string \| null | 停止原因；最终结论 |
+| `stopKind` | string \| null | 可选，1.12 起。停下等人的原因代码：必要的决定 `approval`（确认方案）、`phase_gate`（研发完成，等待测试）、`business`（需求方决定）、`reproduce`（缺陷复现不了）；中断 `timeout`、`agent_error`、`invalid_result`、`transient`、`stopped`、`process_exit`、`other`。运行中或完成时为 null |
+| `recoveries` | array | 可选，1.12 起。流水线自己处理掉的问题（最多保留 200 条）：`at`、`key`（步骤键）、`kind`（`retry` 重试 / `reattach` 接着等上一次的 agent / `reuse_result` 沿用上一次 agent 的结果 / `extend_timeout` 超时后多等一轮 / `redo` 新开 agent 重做 / `fallback` 换备用模型 / `auto_resume` 预约自动继续 / `quota_wait` 预约在额度恢复后继续 / `self_answer` 方案审核的问题由 builder 自答）、`detail` |
 | `profile` | `quick` \| `standard` | 档位 |
 | `branch` | string \| null | 工作分支，启动时确定 |
 | `milestones` | string[] | 已发送的进展通知，续跑时不重复发送 |
