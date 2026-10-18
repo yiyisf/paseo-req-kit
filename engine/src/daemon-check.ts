@@ -9,7 +9,8 @@ export async function connect(config: PipelineConfig) {
   const { createPaseoClient } = await import("@getpaseo/client");
   const password = process.env[config.daemonPasswordEnv];
   const client = createPaseoClient({ url: config.daemonUrl, ...(password ? { password } : {}) });
-  await client.connect();
+  const { connectWithin } = await import("./paseo-runtime.js");
+  await connectWithin(client, 30_000, config.daemonUrl);
   return client;
 }
 

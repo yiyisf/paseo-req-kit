@@ -125,3 +125,14 @@ test("OpenCode：modeId 为 build，并通过 featureValues 开启自动批准",
   });
 });
 
+
+test("连接 Paseo（1.12.1）：连不上时到时放弃并关闭客户端，不留下后台重连的连接", async () => {
+  const { connectWithin } = await import("../src/paseo-runtime.js");
+  let closed = 0;
+  const never = { connect: () => new Promise(() => undefined), close: async () => void (closed += 1) };
+  await assert.rejects(connectWithin(never, 30, "ws://127.0.0.1:6767/ws"), /秒内没有连上 Paseo（ws:\/\/127\.0\.0\.1:6767\/ws）/);
+  assert.equal(closed, 1);
+  const ok = { connect: async () => undefined, close: async () => void (closed += 1) };
+  await connectWithin(ok, 30, "x");
+  assert.equal(closed, 1, "连上时不关闭");
+});

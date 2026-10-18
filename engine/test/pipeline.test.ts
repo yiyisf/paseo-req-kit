@@ -488,6 +488,37 @@ test("方案审核要需求方决定时：builder 先自答，只把剩下的业
   assert.match(relayed?.text ?? "", /来自 req-kit 插件[\s\S]*<plugin-reply>\n历史订单不显示\n<\/plugin-reply>/);
 });
 
+test("1.12.1：需求改了以后，上一次尝试留下的 agent 不接手、不沿用，先停掉再新建", () => {
+  const { env, oldId } = timedOutImplement();
+  fs.appendFileSync(path.join(env.repo, FEATURE, "spec.md"), "\n- **AC-1.9** 新增：验证码 5 分钟过期。\n");
+  const resumed = runMain(env, { leftovers: { [oldId]: "idle" } }, ["--resume"]);
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.deepEqual(events(env).filter((e) => e.type === "interrupt").map((e) => e.agentId), [oldId]);
+  assert.equal(implementStarts(env), 2, "按新需求新开一个 agent");
+  assert.ok(!(state(env).recoveries ?? []).some((r: { kind: string }) => r.kind === "reuse_result"), "旧结果没有被沿用");
+});
+
+test("1.12.1：超时多等一轮只有一次，接着等旧 agent 时不再延长", () => {
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "config.example.json"), "utf8"));
+  const env = setup({ selfHeal: true, stepTimeoutMinutes: { ...base.stepTimeoutMinutes, implement: 0.003 } });
+  assert.equal(runMain(env, { steps: { implement: { hang: true } } }).code, 1);
+  const oldId = events(env).find((e) => e.type === "start" && e.key === "implement")?.agentId ?? "";
+  assert.equal(runMain(env, { leftovers: { [oldId]: "hang" } }, ["--resume"]).code, 1);
+  const kinds = state(env).recoveries.map((r: { kind: string }) => r.kind);
+  assert.deepEqual(kinds.filter((k: string) => k === "extend_timeout"), ["extend_timeout"]);
+  assert.ok(kinds.includes("reattach"));
+});
+
+test("1.12.1：最后一轮方案审核的问题由 builder 自答后，再审一轮", () => {
+  const blocked = { verdict: "blocked", questions: ["导出用什么格式？"] };
+  const env = setup({ answerQuestionsFirst: true });
+  const run = runMain(env, { steps: { "design_review-r1": { result: blocked }, "design_revise-r1": { result: { status: "done", business_questions: [] } } } }, ["--profile", "quick"]);
+  assert.equal(run.code, 0, run.out);
+  const keys = starts(env);
+  assert.ok(keys.includes("design_review-r2"), keys.join(","));
+  assert.ok(keys.indexOf("design_review-r2") < keys.indexOf("implement"), "复核在写代码之前");
+});
+
 test("状态读不到的旧 agent：新建 agent", () => {
   const { env } = timedOutImplement();
   const resumed = runMain(env, {}, ["--resume"]);

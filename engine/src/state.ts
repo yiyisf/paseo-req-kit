@@ -76,6 +76,8 @@ export interface StepRecord {
   leftRunning?: boolean;
   /** 1.11: how many times a later run went on waiting for this record's agent instead of starting a new one. */
   reattached?: number;
+  /** 1.12.1: the step's time limit was already given its one extra period (selfHeal); a later run waiting for the same agent gets none. */
+  extendedTimeout?: boolean;
 }
 
 export interface PipelineState {
@@ -297,11 +299,28 @@ export function readState(
   return state as unknown as PipelineState;
 }
 
+/**
+ * 1.12.1: replaces `file` with `tmp`. On Windows a virus scanner or the search indexer may hold
+ * the file for a moment (EPERM / EBUSY / EACCES): try again a few times before giving up.
+ */
+export function replaceFile(tmp: string, file: string, retryDelaysMs: readonly number[] = [20, 50, 100, 200, 400]): void {
+  for (let i = 0; ; i++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (i >= retryDelaysMs.length || !["EPERM", "EBUSY", "EACCES"].includes(code ?? "")) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, retryDelaysMs.at(i));
+    }
+  }
+}
+
 export function writeState(file: string, state: PipelineState): void {
   state.updatedAt = new Date().toISOString();
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-  fs.renameSync(tmp, file);
+  replaceFile(tmp, file);
   // The machine's index of requirements (1.9): written once, and again only if it moved.
   registerRequirement(state);
 }

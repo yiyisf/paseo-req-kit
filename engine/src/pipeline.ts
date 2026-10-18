@@ -578,6 +578,8 @@ interface Deadline {
   at: number;
   extended: boolean;
   key: string;
+  /** The step's record, so a later run waiting for the same agent knows the extra period was used. */
+  record?: StepRecord;
 }
 
 async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: Deadline): Promise<AgentUsage | null> {
@@ -588,6 +590,7 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
     if (remaining <= 0 && ctx.config.selfHeal && !deadline.extended) {
       // Usually a big step, not a stuck one: the agent keeps its progress and gets as long again.
       deadline.extended = true;
+      if (deadline.record) deadline.record.extendedTimeout = true;
       deadline.at = Date.now() + ctx.config.stepTimeoutMinutes[def.id] * 60_000;
       remaining = deadline.at - Date.now();
       recover(ctx, deadline.key, "extend_timeout", `超过 ${ctx.config.stepTimeoutMinutes[def.id]} 分钟仍未完成，agent 还在做，再给它同样长的时间`);
@@ -805,7 +808,8 @@ async function runStepOnce(
     ctx.state.history.push(record);
     save(ctx);
 
-    const deadline: Deadline = { at: Date.now() + ctx.config.stepTimeoutMinutes[id] * 60_000, extended: false, key };
+    const deadline: Deadline = { at: Date.now() + ctx.config.stepTimeoutMinutes[id] * 60_000, extended: leftover.extended ?? false, key, record };
+    if (deadline.extended) record.extendedTimeout = true;
     record.usage = (await waitForTurn(ctx, agent, def, agentTitle, deadline)) ?? record.usage ?? null;
     let validation = readResultFile(resultAbs, def);
     while (!validation.ok && record.followUps < ctx.config.resultFollowUps) {
@@ -867,11 +871,14 @@ async function checkLeftover(
   key: string,
   def: StepDef,
   resultAbs: string,
-): Promise<{ done?: Record<string, unknown>; agent?: StepAgent; reattached?: number }> {
+): Promise<{ done?: Record<string, unknown>; agent?: StepAgent; reattached?: number; extended?: boolean }> {
   const last = [...ctx.state.history].reverse().find((h) => h.key === key);
   if (!last?.agentId || last.outcome === "completed") return {};
   if (last.outcome !== "running" && !last.leftRunning) return {};
   last.leftRunning = false;
+  // 1.12.1: an agent left by an earlier attempt worked on an earlier version of the requirement:
+  // never wait for it or take its result; stop it so it does not touch the files any more.
+  const sameAttempt = last.attempt === ctx.state.attempt;
   if (last.outcome === "running") {
     last.outcome = "failed";
     last.endedAt = new Date().toISOString();
@@ -879,6 +886,11 @@ async function checkLeftover(
   }
   save(ctx);
   const agent = ctx.runtime.attachAgent(last.agentId);
+  if (!sameAttempt) {
+    ctx.log(`${key} 有第 ${last.attempt} 次尝试留下的 agent ${last.agentId}，它按旧的需求在做：停止它，新建一个 agent`);
+    await stopLeftover(ctx, agent, last.agentId, "需求已经变了，流水线会按新的需求另起一个 agent 重做这一步。");
+    return {};
+  }
   let status: WaitOutcome["status"] | "unreachable";
   try {
     status = (await agent.wait(Math.min(5_000, ctx.config.waitChunkSeconds * 1000))).status;
@@ -905,17 +917,21 @@ async function checkLeftover(
   if (status === "timeout" || status === "permission") {
     if ((last.reattached ?? 0) < 1) {
       recover(ctx, key, "reattach", `上一次的 agent ${last.agentId} 还在做，接着等它，不另起一个`);
-      return { agent, reattached: (last.reattached ?? 0) + 1 };
+      return { agent, reattached: (last.reattached ?? 0) + 1, extended: last.extendedTimeout ?? false };
     }
     ctx.log(`${key} 上一次的 agent ${last.agentId} 已经等过两轮仍未完成，停止它并新建一个 agent`);
-    await ctx.runtime
-      .interruptAgent(last.agentId, "这一步已超时，流水线会另起一个 agent 重做。请立即停止当前工作，不要再修改任何文件，也不要写结果文件，直接结束。")
-      .catch((error: Error) => ctx.log(`无法停止 agent ${last.agentId}：${error.message}`));
-    // Give it a moment to wind down before the new agent touches the same files.
-    await agent.wait(Math.min(60_000, ctx.config.waitChunkSeconds * 1000 * 2)).catch(() => undefined);
+    await stopLeftover(ctx, agent, last.agentId, "这一步已超时，流水线会另起一个 agent 重做。");
     return {};
   }
   return {};
+}
+
+/** Tells an earlier agent of a step to stop, and gives it a moment before a new one touches the same files. */
+async function stopLeftover(ctx: PipelineContext, agent: StepAgent, agentId: string, why: string): Promise<void> {
+  await ctx.runtime
+    .interruptAgent(agentId, `${why}请立即停止当前工作，不要再修改任何文件，也不要写结果文件，直接结束。`)
+    .catch((error: Error) => ctx.log(`无法停止 agent ${agentId}：${error.message}`));
+  await agent.wait(Math.min(60_000, ctx.config.waitChunkSeconds * 1000 * 2)).catch(() => undefined);
 }
 
 /** phases.verify.agents applies to the verify-phase steps. */
@@ -1752,6 +1768,15 @@ async function answerFirst(ctx: PipelineContext, review: Record<string, unknown>
     recover(ctx, `design_revise-r${round}`, "self_answer", `方案审核提出的 ${questions.length} 个问题中，${answered} 个由 builder 从代码和文档中确定了答案${left.length > 0 ? `，${left.length} 个交给需求方` : "，不用等需求方"}`);
   }
   if (left.length > 0) throw new BusinessDecisionNeeded(left);
+  // 1.12.1: answers the builder settled itself are checked by the reviewer before any code is
+  // written. On the last round there is no next review, so one more is added — once.
+  if (answered > 0 && round >= maxRounds) {
+    const extra = round + 1;
+    ctx.log(`方案审核的问题由 builder 自答后，加一轮方案审核（第 ${extra} 轮）复核这些答案`);
+    const again = await runReview(ctx, "design_review", extra, extra);
+    if (again.verdict === "blocked") throw new BusinessDecisionNeeded((again.questions as string[]) ?? []);
+    if (again.verdict !== "approved") await runStep(ctx, "design_revise", extra, extra);
+  }
 }
 
 /** Develop phase: design → design review ⇄ revise → implement → code review ⇄ fix → handoff. Returns the design result. */

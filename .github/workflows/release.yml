@@ -3,8 +3,9 @@
 #
 # Tags come from either side:
 # - pushed by a person (git push origin 1.8.0), or
-# - made here: when main gets a package.json whose version has no tag yet, the "tag" job
-#   tags that commit and the release follows in the same run. (A tag pushed with the
+# - made here: when main gets a package.json whose version has no tag yet, that commit is
+#   tagged in the same run — only after its tests pass (1.12.1: a failed run leaves no tag,
+#   so the same version can be released once the fix is in). (A tag pushed with the
 #   workflow's own token starts no other workflow, so both happen in this one file, which
 #   is also the file npm trusted publishing is set up for.)
 #
@@ -34,11 +35,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Which tag to release; on a push to main, tags package.json's version when it is new.
+  # Which version to release; on a push to main, package.json's version when it has no tag yet.
   tag:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.decide.outputs.tag }}
+      create: ${{ steps.decide.outputs.create }}
     steps:
       - uses: actions/checkout@v4
       - id: decide
@@ -55,12 +57,9 @@ jobs:
               echo "::notice::$VERSION is already tagged; nothing to release."
               echo "tag=" >> "$GITHUB_OUTPUT"
             else
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git tag -a "$VERSION" -m "req-kit $VERSION"
-              git push origin "refs/tags/$VERSION"
-              echo "::notice::Tagged $GITHUB_SHA as $VERSION."
+              # Tagged by the release job once the tests pass.
               echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "create=true" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -74,7 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ needs.tag.outputs.tag }}
+          # A new version is tested at the pushed commit and tagged only after that.
+          ref: ${{ needs.tag.outputs.create == 'true' && github.sha || format('refs/tags/{0}', needs.tag.outputs.tag) }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -89,6 +89,14 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run eval:self-check
+      - name: Tag the tested commit
+        if: ${{ needs.tag.outputs.create == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "req-kit $TAG"
+          git push origin "refs/tags/$TAG"
+          echo "::notice::Tagged $GITHUB_SHA as $TAG."
       # Trusted publishing (OIDC) needs the package to exist on npm. For the very first
       # publish, add an NPM_TOKEN secret (or publish the Release .tgz by hand once).
       # A version already on npm (a re-run) is skipped, so the Release can still be made.

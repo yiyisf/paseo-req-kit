@@ -56,3 +56,29 @@ test("状态文件：比当前版本新（回滚之后）时拒绝，并说明�
     return true;
   });
 });
+
+test("替换状态文件（1.12.1）：Windows 上文件被短暂占用时重试，别的错误照常抛出", async () => {
+  const { replaceFile } = await import("../src/state.js");
+  const fsMod = fs;
+  const osMod = os;
+  const pathMod = path;
+  const dir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), "req-replace-"));
+  const file = pathMod.join(dir, "state.json");
+  const tmp = `${file}.tmp`;
+  fsMod.writeFileSync(tmp, "new");
+  const original = fsMod.renameSync;
+  let calls = 0;
+  (fsMod as { renameSync: typeof fsMod.renameSync }).renameSync = ((a: string, b: string) => {
+    calls += 1;
+    if (calls < 3) throw Object.assign(new Error("locked"), { code: "EPERM" });
+    return original(a, b);
+  }) as typeof fsMod.renameSync;
+  try {
+    replaceFile(tmp, file, [1, 1, 1]);
+  } finally {
+    (fsMod as { renameSync: typeof fsMod.renameSync }).renameSync = original;
+  }
+  assert.equal(calls, 3);
+  assert.equal(fsMod.readFileSync(file, "utf8"), "new");
+  assert.throws(() => replaceFile(pathMod.join(dir, "missing.tmp"), file, [1]), /ENOENT/);
+});

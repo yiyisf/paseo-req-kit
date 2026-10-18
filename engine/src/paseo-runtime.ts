@@ -387,9 +387,34 @@ export const createRuntime: RuntimeFactory = async ({ config, log }) => {
     ...(password ? { password } : {}),
     reconnect: { enabled: true },
   });
-  await client.connect();
+  await connectWithin(client, CONNECT_TIMEOUT_MS, config.daemonUrl);
   return createRuntimeWithClient(client, config, log, () => connectScripts(config));
 };
+
+/** How long to wait for the daemon before giving up (1.12.1). */
+const CONNECT_TIMEOUT_MS = 30_000;
+
+/**
+ * Connects, or gives up after `ms` and closes the client: with reconnect on, connect() can wait
+ * for a daemon that is not running for ever, and a client left behind keeps retrying in the
+ * background (a long-running process such as req factory would collect them).
+ */
+export async function connectWithin(client: { connect(): Promise<unknown>; close(): Promise<unknown> }, ms: number, url: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      client.connect(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${ms / 1000} 秒内没有连上 Paseo（${url}）。确认 Paseo 正在运行`)), ms);
+      }),
+    ]);
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Workspace scripts through the internal DaemonClient that @getpaseo/client 0.11 exports. */
 async function connectScripts(config: PipelineConfig): Promise<WorkspaceScripts | null> {
@@ -406,7 +431,7 @@ async function connectScripts(config: PipelineConfig): Promise<WorkspaceScripts 
     reconnect: { enabled: true },
   });
   if (typeof daemon.listWorkspaceScripts !== "function") return null;
-  await daemon.connect();
+  await connectWithin(daemon as unknown as { connect(): Promise<unknown>; close(): Promise<unknown> }, CONNECT_TIMEOUT_MS, config.daemonUrl);
   const check = (payload: { error: string | null }) => {
     if (payload.error) throw new Error(payload.error);
   };
