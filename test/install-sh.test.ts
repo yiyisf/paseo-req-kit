@@ -215,3 +215,110 @@ test("一键安装：已有 Paseo 时不重装；版本不匹配时提醒；daem
     daemon.kill();
   }
 });
+
+// ---------------------------------------------------------------------------
+// npx -y [--registry=…] paseo-req-kit@latest install (1.13): bin/bootstrap.mjs
+
+/** Runs the installer the way npx does: fake npm exec, with npx's npm_config_* settings. */
+function runNpx(home: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+  const full: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    REQ_KIT_NPM: path.join(ROOT, "test", "fake-npm.mjs"),
+    FAKE_NPM_LOG: path.join(home, "npm.log"),
+    FAKE_NPM_ENV_LOG: path.join(home, "npm-env.log"),
+    FAKE_NPM_CONFIG: path.join(home, "npmrc.json"),
+    ...env,
+  };
+  delete full.REQ_KIT_HOME;
+  delete full.REQ_KIT_VERSIONS_DIR;
+  delete full.PASEO_AGENT_CWD;
+  return spawnSync(process.execPath, [path.join(ROOT, "test", "fake-npm.mjs"), "exec", "--yes", `--package=paseo-req-kit@${VERSION}`, "--", "paseo-req-kit", "install", "--skip-paseo", ...args], {
+    encoding: "utf8",
+    env: full,
+    cwd: home,
+    input: "",
+  });
+}
+
+function registriesUsed(home: string): [string, string | null][] {
+  return fs.readFileSync(path.join(home, "npm-env.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+}
+
+test("npx 安装：npx --registry 的镜像用于全部 npm 调用并保存为本机的 npm 源；再次运行不重复保存", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-npx-home-"));
+  const prefix = path.join(home, "npm-global");
+  fs.mkdirSync(prefix);
+  const mirror = "https://npm.example.internal/";
+  const base = { FAKE_NPM_REGISTRY: registry({ latest: VERSION }), FAKE_NPM_PREFIX: prefix, npm_config_registry: mirror };
+  const r = runNpx(home, base);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /已把本机的 npm 源设为 https:\/\/npm\.example\.internal\/（原来是 https:\/\/registry\.npmjs\.org\/）/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, "npmrc.json"), "utf8")).registry, mirror);
+  // Every npm call after that step (view, prefix, install -g, …) went to the mirror; the check of
+  // the saved value did not see npx's setting.
+  const calls = registriesUsed(home);
+  const getIndex = calls.findIndex(([c]) => c === "config");
+  assert.equal(calls[getIndex][1], null);
+  const installs = calls.filter(([c]) => c === "install" || c === "view");
+  assert.ok(installs.length >= 2 && installs.every(([, reg]) => reg === mirror), JSON.stringify(calls));
+  assert.ok(npmCalls(home).some((c) => c[0] === "install" && c.includes("-g") && c.at(-1) === `paseo-req-kit@${VERSION}`));
+  assert.equal(installedVersion(home), VERSION);
+  assert.doesNotMatch(r.stdout, /公司内网请改用镜像/);
+  // npx's own folder has a req too: not the one to report.
+  assert.match(r.stdout, /req 命令还不在 PATH 中[\s\S]*npm-global\/bin/);
+  assert.match(r.stdout, /文档：运行 req docs 在本机打开/);
+
+  const again = runNpx(home, base);
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /npm 源：https:\/\/npm\.example\.internal\//);
+  assert.doesNotMatch(again.stdout, /已把本机的 npm 源设为/);
+});
+
+test("npx 安装：--registry 加 --no-save-registry 只用这一次；镜像上没有这个版本时说明可能还没同步", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-npx-home-"));
+  const prefix = path.join(home, "npm-global");
+  fs.mkdirSync(prefix);
+  const reg = { FAKE_NPM_REGISTRY: registry({ latest: VERSION }), FAKE_NPM_PREFIX: prefix };
+  const r = runNpx(home, reg, "--registry", "https://npm.example.internal", "--no-save-registry");
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /这次安装使用 https:\/\/npm\.example\.internal（没有保存/);
+  assert.ok(!fs.existsSync(path.join(home, "npmrc.json")));
+
+  const bad = runNpx(home, reg, "--registry", "npm.example.internal");
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /--registry 要写完整的地址/);
+  const unknown = runNpx(home, reg, "--frm");
+  assert.match(unknown.stderr, /不认识的选项：--frm/);
+  const help = runNpx(home, reg, "--help");
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /--registry <地址>/);
+
+  // The mirror has another version only (it has not caught up yet).
+  const lagging = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-registry-"));
+  fs.mkdirSync(path.join(lagging, "0.0.1"));
+  fs.writeFileSync(path.join(lagging, "0.0.1", "package.json"), "{}");
+  fs.writeFileSync(path.join(lagging, "dist-tags.json"), JSON.stringify({ latest: "0.0.1" }));
+  const viaSh = run(home, { FAKE_NPM_REGISTRY: lagging, FAKE_NPM_PREFIX: prefix, REQ_KIT_RELEASES_JSON: "/nonexistent" }, "--version", VERSION, "--registry", "https://npm.example.internal/");
+  assert.equal(viaSh.status, 1);
+  assert.match(viaSh.stderr, /npm 源 https:\/\/npm\.example\.internal\/ 上没有找到 paseo-req-kit@.*镜像可能还没有同步/);
+});
+
+test("npx 安装：PATH 中找命令时跳过 npx 临时目录里的副本；npm 源地址比较不计结尾斜杠", async () => {
+  const { which, sameRegistry } = await import("../bin/bootstrap.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-which-"));
+  const npx = path.join(dir, "_npx", "abc", "node_modules", ".bin");
+  const kit = path.join(dir, "_npx", "abc", "node_modules", "paseo-req-kit");
+  const real = path.join(dir, "global", "bin");
+  for (const d of [npx, path.join(kit, "bin"), real]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(kit, "bin", "req.mjs"), "", { mode: 0o755 });
+  fs.symlinkSync(path.join(kit, "bin", "req.mjs"), path.join(npx, "req"));
+  fs.writeFileSync(path.join(real, "req"), "", { mode: 0o755 });
+  const env = { PATH: [npx, real].join(path.delimiter) };
+  assert.equal(which("req", env), path.join(npx, "req"));
+  assert.equal(which("req", env, kit), path.join(real, "req"));
+  assert.equal(which("nothing-here", env), null);
+  assert.ok(sameRegistry("https://npm.example.internal", "https://NPM.example.internal/"));
+  assert.ok(!sameRegistry("https://a.example/", "https://b.example/"));
+});

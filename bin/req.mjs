@@ -55,6 +55,10 @@ Paseo 插件（在 Paseo 中查看和管理需求）：
   req plugin remove            从 Paseo 移除插件
 
 本机维护：
+  req install [--registry <npm 源>]
+                               安装或升级（检查环境、Paseo、启用、配置 agent、插件），同 npx -y paseo-req-kit@latest install
+  req docs [--port <端口>] [--no-open]
+                               在本机打开这个版本的文档站点（不需要外网）
   req doctor [--no-project]    体检：安装、配置、daemon、当前项目
   req configure                配置向导：选择 builder 和 reviewer 用的 agent
   req configure --auto         不提问，按推荐选好 builder、reviewer 和备用模型
@@ -68,7 +72,7 @@ Paseo 插件（在 Paseo 中查看和管理需求）：
   req version                  显示版本和安装位置
 
 <需求> 可以写功能目录（docs/features/20261012-sms-login）、目录名，或名称中能唯一确定的一部分（sms-login）。
-在对话中的用法见 /req；完整说明见 ${path.join(kitRoot, "docs", "guide")}。`;
+在对话中的用法见 /req；完整说明：req docs（或 ${path.join(kitRoot, "docs", "guide")}）。`;
 
 function readJson(file) {
   try {
@@ -106,6 +110,10 @@ function feature(rest, required) {
 const [command = "help", ...rest] = process.argv.slice(2);
 const installer = path.join(kitRoot, "install.mjs");
 const MANAGED = { setup: ["--setup"], upgrade: ["--upgrade"], use: ["--use"], versions: ["--versions"] };
+
+// The one-step install (1.13), e.g. `npx -y paseo-req-kit@latest install`: runs from whatever
+// copy npx fetched, before anything else.
+if (command === "install") process.exit(node([path.join(kitRoot, "bin", "bootstrap.mjs"), ...rest]));
 
 // Installed with `npm i -g`: this copy manages the versions under ~/tools/req-kit/versions
 // and hands every other command to the version in use.
@@ -206,6 +214,9 @@ switch (command) {
     break;
   case "integration":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), ...rest]) : 1;
+    break;
+  case "docs":
+    code = node([path.join(kitRoot, "bin", "req-docs.mjs"), ...rest]);
     break;
   case "plugin":
     code = node([path.join(kitRoot, "bin", "req-plugin.mjs"), ...rest]);

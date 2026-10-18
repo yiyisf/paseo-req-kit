@@ -33,3 +33,4 @@ req-kit 自身的设计决定。修改其中任何一条，请新增一条 ADR �
 - [0029 从卡片开始的需求：需求会话代替人，卡片描述代替对话](0029-requirements-from-cards.md)
 - [0030 接单器：共享机器上定时接卡片、转达回复](0030-card-intake-process.md)
 - [0031 少等人：每种中断都有自动的下一步](0031-fewer-interventions.md)
+- [0032 安装、升级和文档只依赖 npm 源](0032-npm-only-install.md)

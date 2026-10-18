@@ -65,6 +65,8 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 
 | 命令 | 作用 |
 | --- | --- |
+| `req install [--registry <地址>]` | 安装或升级（与 `npx -y paseo-req-kit@latest install` 相同），见下面的"安装脚本" |
+| `req docs [--port <端口>] [--no-open]` | 在本机打开这个版本的文档站点（不需要外网） |
 | `req doctor [--no-project]` | 体检：安装、配置、daemon、当前项目 |
 | `req configure` | 配置向导：为 builder、reviewer 和备用模型选择 agent |
 | `req configure --auto` | 不提问，按推荐选好（1.12；安装时自动运行） |
@@ -101,7 +103,10 @@ Pi 中写作 `/skill:req`。同一个对话里，之后的"做到哪了""先停�
 
 | 系统 | 命令 |
 | --- | --- |
+| 任何系统（1.13 起） | `npx -y paseo-req-kit@latest install`；公司内网：`npx -y --registry=<镜像地址> paseo-req-kit@latest install` |
 | macOS、Linux、Git Bash、WSL | `curl -fsSL https://paseo-req-kit.vercel.app/install.sh \| sh` |
 | Windows PowerShell | `irm https://paseo-req-kit.vercel.app/install.ps1 \| iex` |
 
-`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）、`--with-plugin`（直接安装 Paseo 插件）、`--no-plugin`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.9.1"`、`$ReqKitFrom = "release"`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`、`$ReqKitPlugin = "yes"`（或 `"no"`）。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。
+`req install`（即 `npx … install`）的选项：`--registry <地址>`（使用并保存这个 npm 源）、`--no-save-registry`、`--no-configure`、`--skip-paseo`、`--with-plugin`、`--no-plugin`；版本写在包名后（`paseo-req-kit@beta`、`paseo-req-kit@1.13.0`）。
+
+`install.sh` 的选项写在 `sh -s --` 之后：`--beta`、`--version <版本>`、`--from npm|release`、`--registry <地址>`、`--no-save-registry`、`--no-configure`、`--skip-paseo`（不检查、不安装 Paseo）、`--with-plugin`（直接安装 Paseo 插件）、`--no-plugin`。`install.ps1` 的选项用变量：`$ReqKitBeta = $true`、`$ReqKitVersion = "1.9.1"`、`$ReqKitFrom = "release"`、`$ReqKitRegistry = "<地址>"`、`$ReqKitNoSaveRegistry = $true`、`$ReqKitNoConfigure = $true`、`$ReqKitSkipPaseo = $true`、`$ReqKitPlugin = "yes"`（或 `"no"`）。没有 Paseo 时脚本会安装 Paseo 命令行、开启它的网页界面并启动 daemon。

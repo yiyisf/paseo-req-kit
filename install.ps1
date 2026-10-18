@@ -11,10 +11,14 @@
 #   $ReqKitSkipPaseo = $true    # do not check, install or start Paseo
 #   $ReqKitPlugin = "yes"       # yes: install the req-kit plugin for Paseo without asking; no: do not offer it
 #
-# Same steps as install.sh: check Node.js 22+, npm install -g paseo-req-kit (from npm or the
-# GitHub Release .tgz); make sure Paseo is there (install the Paseo CLI in the range req-kit
-# supports when there is neither a paseo command nor a running daemon, turn on its web UI,
-# start the daemon); req setup, req configure. Running it again upgrades in place.
+#   $ReqKitRegistry = "https://npm.example.internal/"   # npm registry (e.g. a company mirror), saved for this machine
+#   $ReqKitNoSaveRegistry = $true                         # use $ReqKitRegistry for this install only
+#
+# Like install.sh it only checks Node.js and npm, picks the version (npm, or the GitHub Release
+# .tgz) and runs that version's own installer: the same as
+#   npx -y paseo-req-kit@latest install
+# which is all a company network with only an npm mirror needs:
+#   npx -y --registry=https://npm.example.internal/ paseo-req-kit@latest install
 
 & {
   # Not "Stop": in Windows PowerShell 5.1 a native command writing to stderr would then abort.
@@ -28,9 +32,10 @@
   $NoConfigure = [bool](Get-Variable -Name ReqKitNoConfigure -ValueOnly -ErrorAction SilentlyContinue)
   $SkipPaseo = [bool](Get-Variable -Name ReqKitSkipPaseo -ValueOnly -ErrorAction SilentlyContinue)
   $PluginStep = [string](Get-Variable -Name ReqKitPlugin -ValueOnly -ErrorAction SilentlyContinue)
+  $Registry = [string](Get-Variable -Name ReqKitRegistry -ValueOnly -ErrorAction SilentlyContinue)
+  $NoSaveRegistry = [bool](Get-Variable -Name ReqKitNoSaveRegistry -ValueOnly -ErrorAction SilentlyContinue)
   if (-not $PluginStep) { $PluginStep = "ask" }
-  $paseo = $null
-  if (-not $From) { $From = "auto" }
+    if (-not $From) { $From = "auto" }
   $Version = $Version.TrimStart("v")
 
   function Step($text) { Write-Host ""; Write-Host "==> $text" -ForegroundColor White }
@@ -52,6 +57,8 @@
   Ok "npm $(& $npm --version)"
   if (Get-Command git -ErrorAction SilentlyContinue) { Ok "$(git --version)" } else { Warn "没有找到 git：流水线需要在 git 仓库中工作，请稍后安装（https://git-scm.com）" }
 
+  if ($Registry) { $env:npm_config_registry = $Registry; Ok "npm 源：$Registry" }
+
   Step "确定要安装的版本"
   $source = $null
   if ($From -ne "release") {
@@ -72,6 +79,9 @@
       }
       $source = "$Pkg@$found"
       Ok "npm 上的 $source"
+    } elseif ($Registry -and $From -eq "auto") {
+      # A company mirror usually means GitHub is out of reach: say so instead of trying it.
+      Die "npm 源 $Registry 上没有找到 $Pkg@$spec。镜像可能还没有同步，稍后再试"
     } elseif ($From -eq "npm") {
       Die "npm 上没有找到 $Pkg@$spec。可以去掉 `$ReqKitFrom，改用 GitHub Release 的安装包"
     } else {
@@ -93,116 +103,16 @@
     Ok "GitHub Release 中的 $($pick.tag_name)"
   }
 
-  Step "安装 $Pkg"
-  & $npm install -g $source
-  if ($LASTEXITCODE -ne 0) { Die "npm 安装失败（见上面的输出）" }
-  $root = (& $npm root -g).Trim()
-  $reqMjs = Join-Path $root "$Pkg\bin\req.mjs"
-  if (-not (Test-Path $reqMjs)) { Die "安装后没有找到 $reqMjs" }
-  Ok "已安装到 $(Join-Path $root $Pkg)"
-  $binDir = Split-Path $root -Parent
-
-  $daemonUrl = if ($env:REQ_KIT_PASEO_URL) { $env:REQ_KIT_PASEO_URL } else { "http://127.0.0.1:6767" }
-  if (-not $SkipPaseo) {
-    Step "检查 Paseo"
-    # Any HTTP answer (even 401 with a password set) means a daemon is listening.
-    $probe = 'fetch(process.argv[1] + "/api/status", { signal: AbortSignal.timeout(3000) }).then((r) => r.json().catch(() => ({}))).then((j) => console.log("up " + (j.version || "")), () => console.log("down"))'
-    function DaemonState { (& node -e $probe $daemonUrl 2>$null | Select-Object -Last 1) }
-    $range = (& node -p "require(process.argv[1]).reqKit.paseo" (Join-Path $root "$Pkg\package.json")).Trim()
-    $minor = if ($range -match '(\d+\.\d+)') { $Matches[1] } else { "" }
-    $paseo = Get-Command paseo.cmd -ErrorAction SilentlyContinue
-    if (-not $paseo) { $paseo = Get-Command paseo -ErrorAction SilentlyContinue }
-    $paseo = if ($paseo) { $paseo.Source } else { $null }
-    $state = DaemonState
-
-    if (-not $paseo -and $state -like "up*") {
-      # The desktop app runs its own daemon and does not put the paseo command on PATH.
-      Ok "Paseo daemon 已在运行（$($state.Substring(2).Trim())），没有 paseo 命令（通常是桌面版 Paseo 管理的 daemon）"
-      Warn "需要网页界面时，在桌面版的设置中开启，或安装 Paseo 命令行后运行 paseo daemon config set features.webUi.enabled true"
-    } else {
-      if (-not $paseo) {
-        Write-Host "  没有找到 Paseo，安装 Paseo $minor 系列的最新版（@getpaseo/cli@~$minor.0，这个版本的 req-kit 支持 $range）"
-        & $npm install -g "@getpaseo/cli@~$minor.0"
-        if ($LASTEXITCODE -ne 0) { Die "Paseo 安装失败（见上面的输出）。也可以按 https://paseo.sh 的说明自己安装后重新运行" }
-        $paseo = Join-Path $binDir "paseo.cmd"
-        if (-not (Test-Path $paseo)) { $c = Get-Command paseo.cmd -ErrorAction SilentlyContinue; if ($c) { $paseo = $c.Source } }
-        Ok "已安装 Paseo"
-      }
-      $v = (& $paseo --version 2>$null | Select-Object -First 1)
-      if ($v -match '(\d+\.\d+\.\d+)') {
-        $v = $Matches[1]
-        if ($v.StartsWith("$minor.")) { Ok "Paseo $v" } else { Warn "Paseo 是 $v，这个版本的 req-kit 支持 $range。请换成匹配的 Paseo，或用 req upgrade 选择支持它的 req-kit" }
-      }
-      $changed = $false
-      if ((& $paseo daemon config get features.webUi.enabled 2>$null) -match '"value":\s*true') { Ok "Paseo 网页界面已开启" }
-      else {
-        & $paseo daemon config set features.webUi.enabled true *> $null
-        if ($LASTEXITCODE -eq 0) { Ok "已开启 Paseo 自带的网页界面（features.webUi.enabled）"; $changed = $true }
-        else { Warn "没能开启 Paseo 的网页界面，之后可以运行：paseo daemon config set features.webUi.enabled true" }
-      }
-      if ((DaemonState) -like "up*") {
-        if ($changed) { Warn "Paseo daemon 正在运行，网页界面要在重启后生效：paseo daemon restart（会中断正在运行的 agent，方便时再重启）" }
-        else { Ok "Paseo daemon 正在运行" }
-      } else {
-        & $paseo daemon start *> $null
-        if ($LASTEXITCODE -eq 0) {
-          # Wait for it to answer: the wizard below asks the daemon for the agents.
-          for ($i = 0; $i -lt 15 -and (DaemonState) -notlike "up*"; $i++) { Start-Sleep -Seconds 1 }
-          Ok "已启动 Paseo daemon"
-        } else { Warn "没能启动 Paseo daemon，请运行 paseo daemon start 查看原因" }
-      }
-      Write-Host "  Paseo 网页界面：$daemonUrl/"
-    }
-
-    $agents = @("claude", "codex", "opencode", "pi", "copilot") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue }
-    if ($agents) { Ok "agent 命令行：$($agents -join ' ')" }
-    else { Warn "没有找到任何 agent 命令行（Claude Code、Codex、OpenCode、Pi、Copilot）。Paseo 要用它们干活：至少装一个并登录，再运行 req configure" }
-  }
-
-  Step "启用这个版本，安装 /req 等 skill"
-  $config = Join-Path $(if ($env:REQ_KIT_HOME) { $env:REQ_KIT_HOME } else { Join-Path $HOME ".req-kit" }) "config.json"
-  & node $reqMjs setup
-  if ($LASTEXITCODE -ne 0) {
-    # On a new machine setup ends with "fill in the agents", which the wizard below does.
-    if (-not ((Test-Path $config) -and (Select-String -Path $config -Pattern "CHANGE-ME" -Quiet))) { Die "req setup 没有完成（见上面的输出）。修复后可以重新运行" }
-  }
-
-  if (-not $NoConfigure -and (Test-Path $config) -and (Select-String -Path $config -Pattern "CHANGE-ME" -Quiet)) {
-    Step "选择 agent"
-    # 1.12: the recommended agents without questions; change them later with req configure or in Paseo.
-    & node $reqMjs configure --auto
-    if ($LASTEXITCODE -ne 0) {
-      Warn "没能自动选好 agent，改为逐项选择"
-      & node $reqMjs configure
-    }
-    if ($LASTEXITCODE -eq 0) { & node $reqMjs check } else { Warn "配置向导没有完成，之后可以运行 req configure" }
-  }
-
-  # The req-kit plugin for Paseo. Already installed: req setup above refreshed it.
-  $kitHomeDir = if ($env:REQ_KIT_HOME) { $env:REQ_KIT_HOME } else { Join-Path $HOME ".req-kit" }
-  if ($PluginStep -ne "no" -and -not (Test-Path (Join-Path $kitHomeDir "paseo-plugin\paseo-plugin.json")) -and ($paseo -or $PluginStep -eq "yes")) {
-    Step "Paseo 插件"
-    Write-Host "  req-kit 插件在 Paseo（网页端、桌面版、手机）中显示需求总览、进度和文档，并可以确认方案、停止、继续。"
-    if ($paseo) { $env:REQ_KIT_PASEO_BIN = $paseo }
-    if ($PluginStep -eq "yes") { & node $reqMjs plugin install --yes }
-    else {
-      $answer = Read-Host "  安装 req-kit 插件？[Y/n]"
-      if ($answer -match '^(n|no)$') { Write-Host "  跳过。之后可以运行 req plugin install" } else { & node $reqMjs plugin install }
-    }
-    if ($LASTEXITCODE -ne 0) { Warn "插件没有装好（见上面的输出），之后可以运行 req plugin install" }
-    Remove-Item Env:REQ_KIT_PASEO_BIN -ErrorAction SilentlyContinue
-  }
-
-  Step "完成"
-  $onPath = ($env:Path -split ";") | Where-Object { $_.TrimEnd("\") -ieq $binDir.TrimEnd("\") }
-  if ($onPath) { Ok "req 命令可用（在 PowerShell 中受执行策略限制时，输入 req.cmd）" }
-  else { Warn "req 命令还不在 PATH 中：把 $binDir 加入用户的 Path 环境变量，然后重新打开终端" }
-  & node $reqMjs version
-
-  Write-Host ""
-  Write-Host "下一步："
-  Write-Host "  1. 运行 req doctor（PowerShell 中受限时用 req.cmd doctor）检查 Paseo daemon 和 agent 是否就绪；在浏览器打开 $daemonUrl/ 就是 Paseo 的网页界面"
-  Write-Host "  2. 在项目的 Paseo 对话中运行 /req-setup 接入项目（每个项目一次）"
-  Write-Host "  3. 在 Paseo 对话中输入 /req 和一句话需求"
-  Write-Host "文档：https://paseo-req-kit.vercel.app/"
+  # The rest (install, Paseo, setup, agents, plugin) is the chosen version's own installer
+  # (bin/bootstrap.mjs, 1.13), the same as npx -y paseo-req-kit@latest install.
+  $pass = @("--spec", $source)
+  if ($Registry) { $pass += @("--registry", $Registry) }
+  if ($NoSaveRegistry) { $pass += "--no-save-registry" }
+  if ($NoConfigure) { $pass += "--no-configure" }
+  if ($SkipPaseo) { $pass += "--skip-paseo" }
+  if ($PluginStep -eq "yes") { $pass += "--with-plugin" } elseif ($PluginStep -eq "no") { $pass += "--no-plugin" }
+  # Splatted, so that PowerShell passes "--" on to npm instead of treating it as its own.
+  $execArgs = @("exec", "--yes", "--package=$source", "--", "paseo-req-kit", "install") + $pass
+  & $npm @execArgs
+  if ($LASTEXITCODE -ne 0) { throw "req-kit 安装没有完成" }
 }

@@ -75,6 +75,7 @@ jobs:
         with:
           # A new version is tested at the pushed commit and tagged only after that.
           ref: ${{ needs.tag.outputs.create == 'true' && github.sha || format('refs/tags/{0}', needs.tag.outputs.tag) }}
+          fetch-depth: 0   # the docs' "last updated" times come from git history
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -89,6 +90,18 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run eval:self-check
+      # 1.13: the docs site goes into the package, so `req docs` works without the internet
+      # (e.g. inside a company network that only has an npm mirror).
+      - name: Build the docs into the package
+        run: |
+          cd site
+          npm install --no-audit --no-fund
+          BASE_URL=/ npm run build
+          cd ..
+          rm -rf site-dist
+          cp -R site/.vitepress/dist site-dist
+          test -f site-dist/index.html
+          du -sh site-dist
       - name: Tag the tested commit
         if: ${{ needs.tag.outputs.create == 'true' }}
         run: |

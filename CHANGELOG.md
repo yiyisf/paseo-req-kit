@@ -2,6 +2,22 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.13.0-beta.1
+
+公司内网只有 npm 镜像、打不开 GitHub 和文档站点时，也能一条命令装好、升级和看文档。见 [ADR 0032](docs/adr/0032-npm-only-install.md)。
+
+### 使用者会看到的变化
+
+- **npx 一条命令安装**：`npx -y paseo-req-kit@latest install`，任何系统都可以，只需要 Node.js 22+ 和能访问的 npm 源。做的事和以前的一键安装完全一样：检查环境、安装、检查和安装 Paseo、启用、自动选好 agent、询问是否装插件。已安装时也可以运行 `req install`。
+- **公司内网**：`npx -y --registry=<镜像地址> paseo-req-kit@latest install`。镜像地址会保存为本机的 npm 源（屏幕上写出原来的值），以后 `req upgrade` 和安装 Paseo 命令行也走镜像；只想用一次加 `--no-save-registry`。镜像还没同步这个版本时直接说明，不再去访问 GitHub。
+- **`req docs`**：在本机打开和所装版本一致的文档站点，不需要外网（发布时构建进 npm 包）。
+- **安装脚本**：`install.sh` / `install.ps1` 用法不变，新增 `--registry` / `$ReqKitRegistry` 和 `--no-save-registry` / `$ReqKitNoSaveRegistry`。文档站点首页增加 npx 的写法；站点放在别的地址（例如内网）时，首页的安装命令自动换成那个地址。
+
+### 升级须知
+
+- 安装脚本现在只负责选版本，其余步骤由所选版本自带的 `req install` 完成，所以新脚本只能安装 1.13 及以后的版本。要装更早的版本：`npm i -g paseo-req-kit@<版本> && req setup`。
+- npm 包增加了 `site-dist/`（构建好的文档站点，约几 MB）和命令 `paseo-req-kit`（与 `req` 相同）。
+
 ## 1.12.1
 
 修正 1.12.0 审查中发现的问题，不改变用法。

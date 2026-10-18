@@ -56,7 +56,12 @@ AI  ▸ 结论：已完成，可以验收。6 条验收标准全部通过……�
 
 ## 快速开始
 
-在要运行 Paseo 的机器上（需要 Node.js 22+；还没有 Paseo 也可以，脚本会装好）：
+在要运行 Paseo 的机器上（需要 Node.js 22+；还没有 Paseo 也可以，会一起装好）：
+
+```bash
+# 任何系统；公司内网只有 npm 镜像时加 --registry=<镜像地址>（npx -y --registry=… paseo-req-kit@latest install）
+npx -y paseo-req-kit@latest install
+```
 
 ```bash
 # macOS、Linux、Windows 的 Git Bash 或 WSL
@@ -68,7 +73,7 @@ curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 irm https://paseo-req-kit.vercel.app/install.ps1 | iex
 ```
 
-安装脚本会检查环境、安装 `paseo-req-kit`；没有 Paseo 时安装 Paseo 命令行，开启它自带的网页界面（`http://localhost:6767/`）并启动 daemon；为 Claude Code / Codex / OpenCode / Pi 安装 `/req` 等 skill，并引导你为 builder 和 reviewer 选择 agent。再次运行即升级。然后：
+安装脚本会检查环境、安装 `paseo-req-kit`；没有 Paseo 时安装 Paseo 命令行，开启它自带的网页界面（`http://localhost:6767/`）并启动 daemon；为 Claude Code / Codex / OpenCode / Pi 安装 `/req` 等 skill，并引导你为 builder 和 reviewer 选择 agent。再次运行即升级；`req docs` 在本机打开文档。然后：
 
 1. `req doctor` —— 检查 daemon、agent 模式和额度；
 2. 在项目的 Paseo 对话中运行 `/req-setup` —— 接入项目（每个项目一次）；
@@ -115,7 +120,7 @@ Paseo 对话（/req）                              流水线引擎（后台进�
 | `skills/` | 安装到各 agent 的 skill：入口（`/req`、`/req-setup`、`/req-doctor`、`/req-retro`）、方法（访谈、需求说明、验收标准、结果说明）、原则 |
 | `engine/` | 流水线引擎：`src/` 程序、`prompts/` 步骤提示词、`test/` 场景测试（模拟 Paseo 运行时） |
 | `bin/` | `req`、`start-pipeline`、`req-doctor` 命令 |
-| `install.mjs`、`install.sh`、`install.ps1` | 安装、升级、回滚、卸载；一键安装脚本 |
+| `install.mjs`、`bin/bootstrap.mjs`、`install.sh`、`install.ps1` | 安装、升级、回滚、卸载；一键安装（`req install`）和安装脚本 |
 | `contracts/` | spec、状态文件、结果文件、通知事件等的格式约定 |
 | `docs/` | 使用指南与设计决定（ADR） |
 | `evals/` | 端到端评估：样例仓库、隐藏验收测试、对话剧本 |

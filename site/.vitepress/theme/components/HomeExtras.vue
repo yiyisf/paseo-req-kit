@@ -1,22 +1,36 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { withBase } from "vitepress";
 
-const installs = [
+// The scripts are served by whichever site this is (the public one, or a copy inside a company
+// network), so the commands use its own address once the page is open.
+const SITE = "https://paseo-req-kit.vercel.app";
+const installs = ref([
+  {
+    id: "npx",
+    label: "任何系统（npx）",
+    command: "npx -y paseo-req-kit@latest install",
+    note: "只需要 Node.js 22+。公司内网只有 npm 镜像时：npx -y --registry=<镜像地址> paseo-req-kit@latest install（会保存为本机的 npm 源）。beta 版把 latest 换成 beta。",
+  },
   {
     id: "unix",
     label: "macOS / Linux",
-    command: "curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh",
+    command: `curl -fsSL ${SITE}/install.sh | sh`,
     note: "也适用于 Windows 的 Git Bash、WSL。加 -s -- --beta 安装 beta 版。",
   },
   {
     id: "windows",
     label: "Windows PowerShell",
-    command: "irm https://paseo-req-kit.vercel.app/install.ps1 | iex",
+    command: `irm ${SITE}/install.ps1 | iex`,
     note: "不受脚本执行策略限制。",
   },
-];
-const active = ref(installs[0].id);
+]);
+onMounted(() => {
+  const here = `${window.location.origin}${withBase("/").replace(/\/$/, "")}`;
+  if (here === SITE || !/^https?:/.test(here)) return;
+  installs.value = installs.value.map((i) => ({ ...i, command: i.command.replace(SITE, here) }));
+});
+const active = ref(installs.value[0].id);
 const copied = ref(false);
 function copy(text: string) {
   navigator.clipboard?.writeText(text).then(() => {

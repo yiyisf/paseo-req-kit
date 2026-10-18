@@ -6,3 +6,5 @@ node_modules/
 # 评估结果（需要留档的基线请手工复制到 evals/baselines/）
 evals/results/
 .vercel
+# 发布时构建、随 npm 包发布的文档站点（req docs）
+site-dist/

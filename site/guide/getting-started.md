@@ -6,6 +6,14 @@
 
 ::: code-group
 
+```sh [任何系统（npx）]
+npx -y paseo-req-kit@latest install
+```
+
+```sh [公司内网（npm 镜像）]
+npx -y --registry=https://npm.example.internal/ paseo-req-kit@latest install
+```
+
 ```sh [macOS / Linux]
 curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 ```
@@ -20,18 +28,23 @@ curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh
 
 :::
 
-安装脚本会依次：
+几种写法做的事情完全一样（1.13 起，安装脚本只是先选好版本，再运行这个版本自带的 `install`）。只要能访问 npm 源就能装：公司内网只有 npm 镜像、打不开 GitHub 和这个站点时，用 `--registry` 写上镜像地址，它会保存为本机的 npm 源，以后 `req upgrade` 也从镜像取。
 
-1. 检查 Node.js 22+、npm 和 git；
+安装会依次：
+
+1. 检查 Node.js 22+、npm 和 git；确定 npm 源；
 2. 安装 `paseo-req-kit`（npm 上有就从 npm 安装，否则用 GitHub Release 的安装包；npm 全局目录不可写时装到 `~/.req-kit/npm`，不需要 sudo）；
 3. 检查 Paseo：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行（`@getpaseo/cli`），开启它自带的网页界面并启动 daemon；已有 Paseo 时核对版本、开启网页界面（不会自动重启正在运行的 daemon）。之后浏览器打开 `http://localhost:6767/` 就是 Paseo；
 4. 运行 `req setup`：把这个版本装到 `~/tools/req-kit/versions/<版本>`，并为 Claude Code、Codex 等安装 `/req` 等 skill；
 5. 安装脚本会自动选好"实现"（builder）、"评审"（reviewer）和备用模型用的 agent（1.12 起；也可以运行 `req configure` 逐项选择，或在 Paseo 插件设置的"模型"页修改）——两个不同厂商的模型评审效果更好；
 6. 最后询问是否安装 req-kit 的 Paseo 插件：在 Paseo 的界面里看需求总览、进度和文档，并确认方案、停止、继续（会先征得同意再打开 Paseo 的插件总开关）。
 
-再次运行同一条命令即升级。常用选项：
+再次运行同一条命令即升级。装好后运行 `req docs` 可以在本机打开这份文档（和装的版本一致，不需要外网）。常用选项：
 
 ```sh
+npx -y paseo-req-kit@beta install                                                   # beta 版
+npx -y paseo-req-kit@1.13.0 install                                                 # 指定版本（1.13 起）
+npx -y paseo-req-kit@latest install --skip-paseo                                    # 不检查、不安装 Paseo
 curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --beta             # 包括 beta 版
 curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --version 1.9.1
 curl -fsSL https://paseo-req-kit.vercel.app/install.sh | sh -s -- --skip-paseo       # 不检查、不安装 Paseo
