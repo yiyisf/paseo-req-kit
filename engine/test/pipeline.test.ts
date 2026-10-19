@@ -549,7 +549,7 @@ test("通知发送失败（对话已归档）不影响流水线完成", () => {
 
 test("启动前检查：spec 未确认、目录越界、同一仓库已有流水线时拒绝启动", () => {
   const unconfirmed = setup({}, "草稿");
-  const launch = spawnSync(LAUNCHER, ["--repo", unconfirmed.repo, "--feature", FEATURE, "--config", unconfirmed.configPath], {
+  const launch = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", unconfirmed.repo, "--feature", FEATURE, "--config", unconfirmed.configPath], {
     encoding: "utf8",
   });
   assert.equal(launch.status, 2);
@@ -557,7 +557,7 @@ test("启动前检查：spec 未确认、目录越界、同一仓库已有流水
   assert.ok(!fs.existsSync(path.join(unconfirmed.repo, FEATURE, ".pipeline", "state.json")));
 
   const env = setup();
-  const outside = spawnSync(LAUNCHER, ["--repo", env.repo, "--feature", "../elsewhere", "--config", env.configPath], {
+  const outside = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", "../elsewhere", "--config", env.configPath], {
     encoding: "utf8",
   });
   assert.equal(outside.status, 2);
@@ -565,7 +565,7 @@ test("启动前检查：spec 未确认、目录越界、同一仓库已有流水
 
   fs.writeFileSync(lockPath(env.repo), JSON.stringify({ pid: process.pid, featureDir: "docs/features/other", startedAt: "2026-10-12T00:00:00Z" }));
   try {
-    const locked = spawnSync(LAUNCHER, ["--repo", env.repo, "--feature", FEATURE, "--config", env.configPath], {
+    const locked = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath], {
       encoding: "utf8",
     });
     assert.equal(locked.status, 2);
@@ -575,7 +575,7 @@ test("启动前检查：spec 未确认、目录越界、同一仓库已有流水
   }
 
   const badConfig = setup({ agents: { builder: { provider: "claude" }, reviewer: { provider: "codex/x" } } });
-  const cfg = spawnSync(LAUNCHER, ["--repo", badConfig.repo, "--feature", FEATURE, "--config", badConfig.configPath], {
+  const cfg = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", badConfig.repo, "--feature", FEATURE, "--config", badConfig.configPath], {
     encoding: "utf8",
   });
   assert.equal(cfg.status, 2);
@@ -654,7 +654,7 @@ test("启动器：立即返回，流水线在独立会话中继续运行到结�
 
 test("发起对话不在仓库目录：启动器直接拒绝，不留下运行记录", () => {
   const env = setup();
-  const result = spawnSync(LAUNCHER, ["--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN], {
+  const result = spawnSync(process.execPath, [NODE_LAUNCHER, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN], {
     encoding: "utf8",
     env: { ...fakeEnv(env, {}), PASEO_AGENT_ID: ORIGIN, PASEO_AGENT_CWD: os.tmpdir() },
   });

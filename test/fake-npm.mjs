@@ -5,6 +5,7 @@
 // into <prefix>/node_modules/<name> and links this repository's dependencies next to it.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -40,7 +41,7 @@ if (command === "config" && args[1] === "get") {
   const sep = args.indexOf("--");
   const spec = args.slice(1, sep).find((a) => a.startsWith("--package="))?.slice("--package=".length);
   const [binName, ...rest] = args.slice(sep + 1);
-  const tmp = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "fake-npx-"));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fake-npx-"));
   const env = { ...process.env, npm_config_yes: "true", npm_config_package: spec, npm_command: "exec" };
   const install = spawnSync(process.execPath, [import.meta.filename, "install", "--prefix", tmp, spec], { stdio: "inherit", env });
   if (install.status !== 0) process.exit(install.status ?? 1);

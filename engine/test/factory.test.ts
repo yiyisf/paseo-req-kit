@@ -68,8 +68,10 @@ test("接单器：只接登记空间中标题带 [AI] 的新卡片，按子系�
 
     const first = await pollOnce(configPath, { env });
     assert.deepEqual(first.started.map((s) => s.split("「")[0]), ["ALM:CM#1", "ALM:CM#4"]);
-    assert.match(first.started[0], new RegExp(`→ ${backend.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/docs/features/\\d{8}-cm-1$`));
-    assert.match(first.started[1], /→ .*billing\/docs\/features\/\d{8}-cm-4$/);
+    // Paths are shown the way the system writes them; compare with "/".
+    const slash = (t: string) => t.replace(/\\/g, "/");
+    assert.match(slash(first.started[0]), new RegExp(`→ ${slash(backend).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/docs/features/\\d{8}-cm-1$`));
+    assert.match(slash(first.started[1]), /→ .*billing\/docs\/features\/\d{8}-cm-4$/);
     assert.deepEqual(first.skipped.map((s) => s.split("「")[0]), ["ALM:CM#3"]);
     assert.match(first.skipped[0], /子系统「CSP-OTHER」没有对应的仓库/);
     assert.match(first.notes.join("\n"), /这次已开始 2 个需求/);

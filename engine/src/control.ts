@@ -5,7 +5,7 @@ import { describeActivity } from "./activity.js";
 import { describeExternal } from "./integrations.js";
 import { PHASE_MODE_LABELS, PROFILE_LABELS, type PipelineConfig, REQUIREMENT_TYPE_LABELS } from "./config.js";
 import type { AgentRuntime, RuntimeFactory } from "./runtime.js";
-import { isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
+import { currentLockHolder, isAlive, type PipelineState, readState, type StepRecord, writeState } from "./state.js";
 import { stepTitle } from "./playbooks.js";
 import { describeTotals, totals } from "./usage.js";
 
@@ -195,6 +195,13 @@ export async function stopPipeline(input: StopInput): Promise<{ stopped: boolean
   latest.stopReason = wasAlive ? "已被手动停止" : "后台进程已意外退出";
   latest.stopKind = wasAlive ? "stopped" : "process_exit";
   writeState(input.statePath, latest);
+  // On Windows a stopped process gets no chance to remove the repository lock itself; this
+  // removes a lock whose holder is gone (anywhere, harmless when it was already removed).
+  try {
+    currentLockHolder(latest.repo);
+  } catch {
+    // The next start checks the lock the same way.
+  }
 
   // The step agent keeps working unless told otherwise; stop it so it changes nothing more.
   if (interrupted.some((r) => r.agentId)) {
