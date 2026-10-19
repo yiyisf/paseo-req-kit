@@ -20,7 +20,18 @@ jobs:
         with:
           node-version: 22
       - run: npm ci || npm install
-      - run: npm test
+      - name: Tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+      # Failed tests as annotations: readable from the run page (and the API) without the full log.
+      - name: Failed tests
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^not ok" test.log | sed 's/^/::error title=Linux::/' || true
+          grep -E -A12 "^not ok" test.log | grep -E "error:|expected|actual" | head -40 | sed 's/^/::error title=Linux detail::/' || true
       - run: npm run typecheck
       - run: npm run eval:self-check
       - name: Package contents
@@ -69,6 +80,7 @@ jobs:
         shell: bash
         run: |
           grep -E "^not ok" test.log | sed 's/^/::warning title=Windows::/' || echo "所有测试都通过了"
+          grep -E -A12 "^not ok" test.log | grep -E "error:|expected|actual|ENOENT|spawn" | head -60 | sed 's/^/::warning title=Windows detail::/' || true
       - name: Commands start on Windows
         if: always()
         shell: pwsh
