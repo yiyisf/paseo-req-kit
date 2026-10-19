@@ -259,7 +259,7 @@ test("需要业务决定：暂停并把问题发回对话；更新 spec 后用 -
   const note = notifications(env)[0].text ?? "";
   assert.match(note, /需要用户决定的问题/);
   assert.match(note, /历史订单也要显示新的配送状态吗/);
-  assert.match(note, /node .*start-pipeline\.mjs --repo .* --feature docs\/features\/20261012-sms-login --config .* --resume/);
+  assert.match(note, /node .*start-pipeline\.mjs"? --repo .* --feature "?docs[\\/]features[\\/]20261012-sms-login"? --config .* --resume/);
   assert.doesNotMatch(note, /--origin-agent/, "继续命令由对话执行时会自动识别对话，不应写死对话 ID");
   assert.ok(!fs.existsSync(lockPath(env.repo)));
 
@@ -1570,6 +1570,9 @@ test("并发上限：本机运行的流水线已满时排队，通知对话；�
     fs.rmSync(busy);
     assert.ok(await waitForEvent(env, (e) => e.type === "notify" && /排队结束/.test(e.text ?? "")));
     assert.equal(await waitForStatus(env, ["completed"]), "completed");
+    // The slot goes a moment after the state says "completed"; wait for it before stopping the
+    // process (on Windows kill() ends it at once, before it could tidy up).
+    for (let i = 0; i < 100 && fs.readdirSync(slots).length > 0; i++) await new Promise((r) => setTimeout(r, 100));
   } finally {
     child.kill();
   }

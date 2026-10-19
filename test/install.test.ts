@@ -85,7 +85,7 @@ test("同名但不是 req-kit 装的 skill：默认不覆盖，--force 才覆盖
   fs.mkdirSync(mine, { recursive: true });
   fs.writeFileSync(path.join(mine, "SKILL.md"), "my own skill");
   const refused = run(ROOT, home);
-  assert.match(refused.out, /\.claude\/skills\/req 已存在且不是 req-kit 安装的，未覆盖/);
+  assert.match(refused.out, /\.claude[\\/]skills[\\/]req 已存在且不是 req-kit 安装的，未覆盖/);
   assert.equal(fs.readFileSync(path.join(mine, "SKILL.md"), "utf8"), "my own skill");
   run(ROOT, home, "--force");
   assert.match(fs.readFileSync(path.join(mine, "SKILL.md"), "utf8"), /name: req/);

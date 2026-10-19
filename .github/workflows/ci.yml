@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           # One annotation with the details first (GitHub shows at most 10 per step), then one per test.
-          details=$(grep -E -A14 "^not ok" test.log | grep -E "^not ok|error:|expected|actual|Error|ENOENT|EFTYPE|spawn|timed out" | head -120 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          details=$(grep -E -A16 "^not ok" test.log | grep -vE "^\s+(at |---|\.\.\.|duration_ms|type:|location:|failureType:|stack:|code:|operator:)|^--$" | head -160 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=Linux details::$details"
           grep -E "^not ok" test.log | head -9 | sed 's/^/::error title=Linux::/' || true
       - run: npm run typecheck
@@ -82,7 +82,7 @@ jobs:
         shell: bash
         run: |
           if ! grep -qE "^not ok" test.log; then echo "所有测试都通过了"; exit 0; fi
-          details=$(grep -E -A14 "^not ok" test.log | grep -E "^not ok|error:|expected|actual|Error|ENOENT|EFTYPE|spawn|timed out" | head -120 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          details=$(grep -E -A16 "^not ok" test.log | grep -vE "^\s+(at |---|\.\.\.|duration_ms|type:|location:|failureType:|stack:|code:|operator:)|^--$" | head -160 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::warning title=Windows details::$details"
           grep -E "^not ok" test.log | head -9 | sed 's/^/::warning title=Windows::/' || true
       - name: Commands start on Windows

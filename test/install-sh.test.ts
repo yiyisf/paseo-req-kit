@@ -270,8 +270,8 @@ test("npx 安装：npx --registry 的镜像用于全部 npm 调用并保存为�
   assert.ok(npmCalls(home).some((c) => c[0] === "install" && c.includes("-g") && c.at(-1) === `paseo-req-kit@${VERSION}`));
   assert.equal(installedVersion(home), VERSION);
   assert.doesNotMatch(r.stdout, /公司内网请改用镜像/);
-  // npx's own folder has a req too: not the one to report.
-  assert.match(r.stdout, /req 命令还不在 PATH 中[\s\S]*npm-global\/bin/);
+  // npx's own folder has a req too: not the one to report. (Windows puts commands in the prefix itself.)
+  assert.match(r.stdout, process.platform === "win32" ? /req 命令还不在 PATH 中。把 .*npm-global 加到用户环境变量 Path 中/ : /req 命令还不在 PATH 中[\s\S]*npm-global\/bin/);
   assert.match(r.stdout, /文档：运行 req docs 在本机打开/);
 
   const again = runNpx(home, base);
