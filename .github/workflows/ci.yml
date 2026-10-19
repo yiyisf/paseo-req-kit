@@ -30,8 +30,10 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E "^not ok" test.log | sed 's/^/::error title=Linux::/' || true
-          grep -E -A12 "^not ok" test.log | grep -E "error:|expected|actual" | head -40 | sed 's/^/::error title=Linux detail::/' || true
+          # One annotation with the details first (GitHub shows at most 10 per step), then one per test.
+          details=$(grep -E -A14 "^not ok" test.log | grep -E "^not ok|error:|expected|actual|Error|ENOENT|EFTYPE|spawn|timed out" | head -120 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Linux details::$details"
+          grep -E "^not ok" test.log | head -9 | sed 's/^/::error title=Linux::/' || true
       - run: npm run typecheck
       - run: npm run eval:self-check
       - name: Package contents
@@ -79,8 +81,10 @@ jobs:
         if: always()
         shell: bash
         run: |
-          grep -E "^not ok" test.log | sed 's/^/::warning title=Windows::/' || echo "所有测试都通过了"
-          grep -E -A12 "^not ok" test.log | grep -E "error:|expected|actual|ENOENT|spawn" | head -60 | sed 's/^/::warning title=Windows detail::/' || true
+          if ! grep -qE "^not ok" test.log; then echo "所有测试都通过了"; exit 0; fi
+          details=$(grep -E -A14 "^not ok" test.log | grep -E "^not ok|error:|expected|actual|Error|ENOENT|EFTYPE|spawn|timed out" | head -120 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::warning title=Windows details::$details"
+          grep -E "^not ok" test.log | head -9 | sed 's/^/::warning title=Windows::/' || true
       - name: Commands start on Windows
         if: always()
         shell: pwsh

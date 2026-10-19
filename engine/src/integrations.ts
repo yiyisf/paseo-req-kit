@@ -176,8 +176,11 @@ export function validateIntegrations(value: unknown): string | null {
  * only cmd.exe can run, and cmd.exe would mangle arguments such as a Markdown body; the shim
  * names the script it runs, so run that with node instead.
  */
-export function resolveCommand(command: string, env: NodeJS.ProcessEnv = process.env): { file: string; prefix: string[] } {
-  if (process.platform !== "win32" || /[\\/]/.test(command) && !/\.cmd$/i.test(command)) return { file: command, prefix: [] };
+export function resolveCommand(command: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): { file: string; prefix: string[] } {
+  // 1.13: a JavaScript file is run with Node.js. Windows ignores the "#!/usr/bin/env node" line,
+  // so starting it directly fails there; elsewhere this needs no execute permission either.
+  if (/\.(m|c)?js$/i.test(command)) return { file: process.execPath, prefix: [command] };
+  if (platform !== "win32" || /[\\/]/.test(command) && !/\.cmd$/i.test(command)) return { file: command, prefix: [] };
   const dirs = (env.PATH ?? env.Path ?? "").split(path.delimiter).filter(Boolean);
   const candidates = /\.(cmd|exe|bat)$/i.test(command) ? [command] : [`${command}.exe`, `${command}.cmd`];
   for (const dir of [...(/[\\/]/.test(command) ? [""] : dirs)]) {

@@ -10,7 +10,8 @@ import { cardFieldsText, type IntegrationConfig, renderArgs, type Runner, status
 import type { PipelineState } from "../src/state.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
-const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+// tsx's own entry, run with this Node.js: node_modules/.bin/tsx is a shell script that Windows cannot start.
+const TSX_CLI = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const FEATURE = "docs/features/20261015-sms-login";
 
 /** A stand-in for an ALM command line tool: logs its arguments, prints a card id when creating. */
@@ -215,7 +216,7 @@ test("流水线：开始时建卡、改为开发中，完成时改为已完成�
   const alm = fakeAlm(dir);
   const p = project(dir, [integration(alm)]);
   const env = { ...process.env, REQ_KIT_HOME: dir, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: p.scenario, FAKE_EVENTS: `${p.scenario}.events` };
-  const r = spawnSync(TSX, [path.join(ROOT, "engine", "src", "main.ts"), "--repo", p.repo, "--feature", FEATURE, "--config", p.configPath], { env, encoding: "utf8", timeout: 60_000 });
+  const r = spawnSync(process.execPath, [TSX_CLI, path.join(ROOT, "engine", "src", "main.ts"), "--repo", p.repo, "--feature", FEATURE, "--config", p.configPath], { env, encoding: "utf8", timeout: 60_000 });
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
   const calls = almCalls(dir);
   assert.deepEqual(calls.at(0)?.slice(0, 4), ["alm-card", "create", "--title", "短信登录（卡片）"]);
@@ -236,7 +237,7 @@ test("流水线：开始时建卡、改为开发中，完成时改为已完成�
   fs.writeFileSync(path.join(dir2, "alm-down"), "");
   const p2 = project(dir2, [integration(alm2)]);
   const env2 = { ...env, REQ_KIT_HOME: dir2, FAKE_SCENARIO: p2.scenario, FAKE_EVENTS: `${p2.scenario}.events` };
-  const r2 = spawnSync(TSX, [path.join(ROOT, "engine", "src", "main.ts"), "--repo", p2.repo, "--feature", FEATURE, "--config", p2.configPath], { env: env2, encoding: "utf8", timeout: 60_000 });
+  const r2 = spawnSync(process.execPath, [TSX_CLI, path.join(ROOT, "engine", "src", "main.ts"), "--repo", p2.repo, "--feature", FEATURE, "--config", p2.configPath], { env: env2, encoding: "utf8", timeout: 60_000 });
   assert.equal(r2.status, 0, `${r2.stdout}${r2.stderr}`);
   const state2 = JSON.parse(fs.readFileSync(path.join(p2.repo, FEATURE, ".pipeline", "state.json"), "utf8"));
   assert.equal(state2.status, "completed");

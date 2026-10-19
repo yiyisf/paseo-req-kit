@@ -8,7 +8,8 @@ import type { FakeScenario } from "./fake-runtime.js";
 import { isAlive, lockPath } from "../src/state.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
-const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+// tsx's own entry, run with this Node.js: node_modules/.bin/tsx is a shell script that Windows cannot start.
+const TSX_CLI = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const MAIN = path.join(ROOT, "engine", "src", "main.ts");
 const LAUNCHER = path.join(ROOT, "bin", "start-pipeline");
 const NODE_LAUNCHER = path.join(ROOT, "bin", "start-pipeline.mjs");
@@ -77,7 +78,8 @@ function fakeEnv(env: Env, scenario: FakeScenario): NodeJS.ProcessEnv {
 function runMain(env: Env, scenario: FakeScenario, extra: string[] = [], origin: string | null = ORIGIN) {
   const args = [MAIN, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, ...extra];
   if (origin) args.push("--origin-agent", origin);
-  const result = spawnSync(TSX, args, { env: fakeEnv(env, scenario), encoding: "utf8", timeout: 60_000 });
+  // Windows CI starts Node and compiles the engine noticeably slower, the first run most of all.
+  const result = spawnSync(process.execPath, [TSX_CLI, ...args], { env: fakeEnv(env, scenario), encoding: "utf8", timeout: process.platform === "win32" ? 180_000 : 60_000 });
   return { code: result.status, out: `${result.stdout}${result.stderr}` };
 }
 
@@ -607,7 +609,7 @@ function ancestorsOf(pid: number): number[] {
   return chain;
 }
 
-test("启动器：立即返回，流水线在独立会话中继续运行到结束", async () => {
+test("启动器：立即返回，流水线在独立会话中继续运行到结束", { skip: process.platform === "win32" ? "用 bash 和 Linux 的进程会话检查" : false }, async () => {
   // Slow the run down so it is still going when the launching shell exits.
   const env = setup({ permissionPollSeconds: 1.5 });
   fs.writeFileSync(env.scenarioPath, JSON.stringify({ steps: { implement: { permission: true } } }));
@@ -1555,7 +1557,7 @@ test("并发上限：本机运行的流水线已满时排队，通知对话；�
   fs.mkdirSync(slots, { recursive: true });
   const busy = path.join(slots, "slot-0.json");
   fs.writeFileSync(busy, JSON.stringify({ pid: process.pid, repo: "/other", featureDir: "docs/features/other", since: new Date().toISOString() }));
-  const child = spawn(TSX, [MAIN, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN], {
+  const child = spawn(process.execPath, [TSX_CLI, MAIN, "--repo", env.repo, "--feature", FEATURE, "--config", env.configPath, "--origin-agent", ORIGIN], {
     env: fakeEnv(env, {}),
     stdio: "ignore",
   });

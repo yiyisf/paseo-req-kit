@@ -9,6 +9,8 @@ import { test } from "node:test";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const VERSION: string = PKG.version;
+/** install.sh and the fake paseo command are sh scripts; on Windows people use install.ps1 / npx. */
+const SH_ONLY = process.platform === "win32" ? "需要 sh（Windows 上用 install.ps1 或 npx）" : false;
 
 /** A fake registry holding this package as VERSION, with the given dist-tags. */
 function registry(tags: Record<string, string>): string {
@@ -53,7 +55,7 @@ function installedVersion(home: string): string {
   return JSON.parse(fs.readFileSync(path.join(home, ".req-kit", "active.json"), "utf8")).version;
 }
 
-test("一键安装：从 npm 安装、req setup 启用、装好 skill；没有 Paseo 时自动选模型失败并提示", () => {
+test("一键安装：从 npm 安装、req setup 启用、装好 skill；没有 Paseo 时自动选模型失败并提示", { skip: SH_ONLY }, () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const prefix = path.join(home, "npm-global");
   fs.mkdirSync(prefix);
@@ -73,7 +75,7 @@ test("一键安装：从 npm 安装、req setup 启用、装好 skill；没有 P
   assert.equal(again.status, 0, again.stdout + again.stderr);
 });
 
-test("一键安装：npm 上没有时改用 GitHub Release 的安装包；只有 beta 时说明", () => {
+test("一键安装：npm 上没有时改用 GitHub Release 的安装包；只有 beta 时说明", { skip: SH_ONLY }, () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const prefix = path.join(home, "npm-global");
   fs.mkdirSync(prefix);
@@ -104,7 +106,7 @@ test("一键安装：npm 上没有时改用 GitHub Release 的安装包；只有
   assert.match(npmOnly.stderr, /npm 上没有找到/);
 });
 
-test("一键安装：--beta 时 beta 标签落后于正式版（1.8.0-beta.3 < 1.8.0），装正式版", () => {
+test("一键安装：--beta 时 beta 标签落后于正式版（1.8.0-beta.3 < 1.8.0），装正式版", { skip: SH_ONLY }, () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const prefix = path.join(home, "npm-global");
   fs.mkdirSync(prefix);
@@ -113,7 +115,7 @@ test("一键安装：--beta 时 beta 标签落后于正式版（1.8.0-beta.3 < 1
   assert.ok(npmCalls(home).some((c) => c[0] === "install" && c.at(-1) === `paseo-req-kit@${VERSION}`));
 });
 
-test("一键安装：npm 的全局目录不可用时装到 ~/.req-kit/npm；选项写错时给出说明", () => {
+test("一键安装：npm 的全局目录不可用时装到 ~/.req-kit/npm；选项写错时给出说明", { skip: SH_ONLY }, () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const r = run(home, { FAKE_NPM_REGISTRY: registry({ latest: VERSION }), FAKE_NPM_PREFIX: "" });
   assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -146,7 +148,7 @@ function paseoEnv(home: string, extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-test("一键安装：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行，开启网页界面并启动 daemon", () => {
+test("一键安装：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行，开启网页界面并启动 daemon", { skip: SH_ONLY }, () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const prefix = path.join(home, "npm-global");
   fs.mkdirSync(prefix);
@@ -168,7 +170,7 @@ test("一键安装：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行
   assert.equal(installedVersion(home), VERSION);
 });
 
-test("一键安装：已有 Paseo 时不重装；版本不匹配时提醒；daemon 在运行时只提示重启，不自动重启", async () => {
+test("一键安装：已有 Paseo 时不重装；版本不匹配时提醒；daemon 在运行时只提示重启，不自动重启", { skip: SH_ONLY }, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
   const prefix = path.join(home, "npm-global");
   fs.mkdirSync(prefix);
@@ -302,12 +304,14 @@ test("npx 安装：--registry 加 --no-save-registry 只用这一次；镜像上
   fs.mkdirSync(path.join(lagging, "0.0.1"));
   fs.writeFileSync(path.join(lagging, "0.0.1", "package.json"), "{}");
   fs.writeFileSync(path.join(lagging, "dist-tags.json"), JSON.stringify({ latest: "0.0.1" }));
+if (!SH_ONLY) {
   const viaSh = run(home, { FAKE_NPM_REGISTRY: lagging, FAKE_NPM_PREFIX: prefix, REQ_KIT_RELEASES_JSON: "/nonexistent" }, "--version", VERSION, "--registry", "https://npm.example.internal/");
   assert.equal(viaSh.status, 1);
   assert.match(viaSh.stderr, /npm 源 https:\/\/npm\.example\.internal\/ 上没有找到 paseo-req-kit@.*镜像可能还没有同步/);
+}
 });
 
-test("npx 安装：PATH 中找命令时跳过 npx 临时目录里的副本；npm 源地址比较不计结尾斜杠", async () => {
+test("npx 安装：PATH 中找命令时跳过 npx 临时目录里的副本；npm 源地址比较不计结尾斜杠", { skip: SH_ONLY }, async () => {
   const { which, sameRegistry } = await import("../bin/bootstrap.mjs");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-which-"));
   const npx = path.join(dir, "_npx", "abc", "node_modules", ".bin");
@@ -325,7 +329,7 @@ test("npx 安装：PATH 中找命令时跳过 npx 临时目录里的副本；npm
   assert.ok(!sameRegistry("https://a.example/", "https://b.example/"));
 });
 
-test("npx 安装：paseo daemon start 失败时写出它的错误和日志位置，安装继续", async () => {
+test("npx 安装：paseo daemon start 失败时写出它的错误和日志位置，安装继续", { skip: SH_ONLY }, async () => {
   const { startProblem } = await import("../bin/bootstrap.mjs");
   assert.equal(
     startProblem({ status: 1, stdout: "", stderr: "Error: Daemon failed to start (exit 1). Logs: /h/.paseo/daemon.log\nlisten EADDRINUSE 127.0.0.1:6767\nat x" }),

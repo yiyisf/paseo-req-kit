@@ -131,7 +131,7 @@ function reqPlugin(home: string, env: NodeJS.ProcessEnv, ...args: string[]) {
   });
 }
 
-test("req plugin：经同意才打开 Paseo 的插件总开关；安装、再次运行即更新、启用新版本时跟着更新、移除", async () => {
+test("req plugin：经同意才打开 Paseo 的插件总开关；安装、再次运行即更新、启用新版本时跟着更新、移除", { skip: process.platform === "win32" ? "用 sh 写的假 paseo 命令" : false }, async () => {
   const home = kitHomeWith(ROOT);
   const bin = path.join(home, "paseo");
   fs.writeFileSync(bin, `#!/bin/sh\nexec node "${path.join(ROOT, "test", "fake-paseo.mjs")}" "$@"\n`, { mode: 0o755 });

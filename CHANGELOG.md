@@ -2,6 +2,16 @@
 
 每个版本分为"使用者会看到的变化"和"升级须知"。升级步骤见 [docs/guide/安装与升级.md](docs/guide/安装与升级.md)。
 
+## 1.13.0-beta.5
+
+### 使用者会看到的变化
+
+- **Windows：配置成 `.js` / `.mjs` 脚本的外部命令能运行了**：对接外部系统（`integrations`）、合并请求（`push.mergeRequest`）等配置的命令是一个 JavaScript 文件时，以前在 Windows 上启动不了（Windows 不认文件开头的 `#!/usr/bin/env node`），现在用 Node.js 运行它，其他系统也不再需要给脚本加执行权限。
+
+### 维护
+
+- 测试改为可以在 Windows 上运行（用 Node.js 直接启动 tsx；只能在 sh 下运行的几项在 Windows 上跳过），CI 的 Windows 任务把失败的测试和报错写在运行结果页上。
+
 ## 1.13.0-beta.4
 
 ### 使用者会看到的变化

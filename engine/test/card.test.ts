@@ -22,7 +22,8 @@ import type { PipelineState } from "../src/state.js";
 import type { SourceFile } from "../src/card.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
-const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+// tsx's own entry, run with this Node.js: node_modules/.bin/tsx is a shell script that Windows cannot start.
+const TSX_CLI = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const FAKE_ALM = path.join(ROOT, "engine", "test", "fake-alm-cards.mjs");
 const CARD = "CMASTER-BUSINESS#9902";
 
@@ -100,7 +101,7 @@ test("req start --from：读卡片、建功能目录和需求会话；publish �
   fs.writeFileSync(configPath, JSON.stringify({ ...base, agents: { builder: { provider: "claude/m" }, reviewer: { provider: "codex/m" } }, integrations: [almConfig()] }));
   const events = path.join(dir, "events.jsonl");
   const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_EVENTS: events };
-  const req = (...args: string[]) => spawnSync(TSX, [path.join(ROOT, "engine", "src", "card-cmd.ts"), ...args, "--config", configPath], { cwd: repo, env, encoding: "utf8", timeout: 60_000 });
+  const req = (...args: string[]) => spawnSync(process.execPath, [TSX_CLI, path.join(ROOT, "engine", "src", "card-cmd.ts"), ...args, "--config", configPath], { cwd: repo, env, encoding: "utf8", timeout: 60_000 });
   const log = () => (fs.existsSync(events) ? fs.readFileSync(events, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
 
   const started = req("start", "--from", `alm:${CARD}`);
@@ -248,7 +249,7 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
   const scenario = path.join(dir, "scenario.json");
   fs.writeFileSync(scenario, "{}");
   const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com", REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: `${scenario}.events`, FAKE_GLAB_LOG: glabLog };
-  const r = spawnSync(TSX, [path.join(ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--config", configPath], { env, encoding: "utf8", timeout: 60_000 });
+  const r = spawnSync(process.execPath, [TSX_CLI, path.join(ROOT, "engine", "src", "main.ts"), "--repo", repo, "--feature", featureDir, "--config", configPath], { env, encoding: "utf8", timeout: 60_000 });
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
   const calls = fs.readFileSync(`${cards}.log`, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
   assert.ok(!calls.some((c) => c[1] === "create"), "不另建卡片");
@@ -331,7 +332,7 @@ test("req start --from：建需求会话失败（Paseo 没在运行）后再运�
   fs.writeFileSync(configPath, JSON.stringify({ ...base, agents: { builder: { provider: "claude/m" }, reviewer: { provider: "codex/m" } }, integrations: [almConfig()] }));
   const scenario = path.join(dir, "scenario.json");
   const env = { ...process.env, REQ_KIT_HOME: path.join(dir, "home"), FAKE_ALM_CARDS: cards, REQ_PIPELINE_FAKE_RUNTIME: path.join(ROOT, "engine", "test", "fake-runtime.ts"), FAKE_SCENARIO: scenario, FAKE_EVENTS: path.join(dir, "events.jsonl") };
-  const start = () => spawnSync(TSX, [path.join(ROOT, "engine", "src", "card-cmd.ts"), "start", "--from", CARD, "--config", configPath], { cwd: repo, env, encoding: "utf8", timeout: 60_000 });
+  const start = () => spawnSync(process.execPath, [TSX_CLI, path.join(ROOT, "engine", "src", "card-cmd.ts"), "start", "--from", CARD, "--config", configPath], { cwd: repo, env, encoding: "utf8", timeout: 60_000 });
 
   fs.writeFileSync(scenario, JSON.stringify({ sessionFails: true }));
   const failed = start();

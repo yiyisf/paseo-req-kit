@@ -10,7 +10,8 @@ import { readIndex, readRuns, requirementKey, type RunRecord, runsFile } from ".
 import { describeStats, parsePeriod, statsCsv, statsMain, summarizeRuns } from "../src/stats.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
-const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+// tsx's own entry, run with this Node.js: node_modules/.bin/tsx is a shell script that Windows cannot start.
+const TSX_CLI = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const MAIN = path.join(ROOT, "engine", "src", "main.ts");
 const FAKE = path.join(ROOT, "engine", "test", "fake-runtime.ts");
 const FEATURE = "docs/features/20261012-sms-login";
@@ -49,7 +50,7 @@ function project(): { repo: string; configPath: string; scenarioPath: string } {
 }
 
 function runMain(p: ReturnType<typeof project>, env: NodeJS.ProcessEnv = {}) {
-  const r = spawnSync(TSX, [MAIN, "--repo", p.repo, "--feature", FEATURE, "--config", p.configPath, "--origin-agent", "chat-1"], {
+  const r = spawnSync(process.execPath, [TSX_CLI, MAIN, "--repo", p.repo, "--feature", FEATURE, "--config", p.configPath, "--origin-agent", "chat-1"], {
     env: { ...process.env, REQ_PIPELINE_FAKE_RUNTIME: FAKE, FAKE_SCENARIO: p.scenarioPath, FAKE_EVENTS: `${p.scenarioPath}.events`, ...env },
     encoding: "utf8",
     timeout: 60_000,
