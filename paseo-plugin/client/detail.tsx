@@ -9,7 +9,7 @@ import type { Action, RequirementDetail, Step } from "../shared/contracts";
 import { useAction, useDocument, usePreferences, useRequirement, useRequirements } from "./data";
 import { ACTION_TEXT, actionsFor, ago, ATTENTION_LABELS, facts, FILE_LABELS, minutes, tokens } from "./format";
 import { Markdown, tsvToMarkdown } from "./markdown";
-import { ReviewLink } from "./review-link";
+import { ReviewButton } from "./review";
 import { Badge, Button, Chip, Status, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
@@ -185,15 +185,14 @@ export function RequirementView({
         {d.attention === "business" ? <Text style={s.muted}>需求方的决定请在发起需求的对话中回答，回答后再继续。</Text> : null}
       </View>
 
-      {actions.length > 0 ? (
+      {actions.length > 0 || d.hasPrototype ? (
         <View style={s.row}>
+          {d.hasPrototype ? <ReviewButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} waiting={d.attention === "approval"} /> : null}
           {actions.map((a) => (
-            <Button key={a} theme={theme} primary={a !== "stop"} label={ACTION_TEXT[a].label} onPress={() => setAction(a)} />
+            <Button key={a} theme={theme} primary={a !== "stop" && !(a === "approve" && d.hasPrototype)} label={ACTION_TEXT[a].label} onPress={() => setAction(a)} />
           ))}
         </View>
       ) : null}
-
-      {d.hasPrototype ? <ReviewLink theme={theme} compact={layout.compact} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} waiting={d.attention === "approval"} /> : null}
 
       {d.files.length > 0 ? (
         <View style={{ gap: 6 }}>

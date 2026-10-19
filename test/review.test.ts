@@ -130,6 +130,8 @@ test("原型审查：没有令牌打不开；原型里的脚本不能运行；�
     const page = await fetch(`${base}/r/full-token/f/${f.key}/`);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /原型审查/);
+    // Paseo's web UI on this machine may embed the page.
+    assert.match(page.headers.get("content-security-policy") ?? "", /frame-ancestors 'self' http:\/\/127\.0\.0\.1:\* http:\/\/localhost:\*/);
 
     const info = await (await fetch(`${base}/r/full-token/f/${f.key}/api/info`)).json();
     assert.equal(info.title, "订单列表增加状态筛选");

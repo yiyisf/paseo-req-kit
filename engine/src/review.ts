@@ -237,11 +237,22 @@ function inside(base: string, rel: string): string | null {
   return target === base || target.startsWith(base + path.sep) ? target : null;
 }
 
+// The page may be shown inside Paseo (the req-kit plugin embeds it): Paseo's web UI on this
+// machine, or, with REQ_KIT_REVIEW_HOST set for other computers, any page that has the token.
+function appCsp(): string {
+  const host = process.env.REQ_KIT_REVIEW_HOST?.trim();
+  const local = !host || host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const custom = process.env.REQ_KIT_REVIEW_FRAME_ANCESTORS?.trim();
+  // 'self' always: the page shows the prototype in a frame of its own.
+  const ancestors = custom ? (custom.includes("'self'") || custom === "*" ? custom : `'self' ${custom}`) : local ? "'self' http://127.0.0.1:* http://localhost:* http://[::1]:*" : "*";
+  return `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors ${ancestors}`;
+}
+const APP_CSP = appCsp();
 // Prototypes are written by an agent (from text the requester or a card supplied) and are served
 // next to the page's own API, so nothing in them may run: the page reads them from outside.
-const PROTOTYPE_CSP =
-  "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self' data:; script-src 'none'; form-action 'none'; frame-ancestors 'self'";
-const APP_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'";
+// frame-ancestors is checked against every page above, so the prototype allows the same ones as
+// the review page (Paseo around it).
+const PROTOTYPE_CSP = `default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self' data:; script-src 'none'; form-action 'none'; ${APP_CSP.slice(APP_CSP.indexOf("frame-ancestors"))}`;
 
 function send(res: http.ServerResponse, status: number, body: string | Buffer, type = "text/plain; charset=utf-8", csp = APP_CSP) {
   res.writeHead(status, {

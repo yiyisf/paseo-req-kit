@@ -8,7 +8,7 @@ import { Text, View } from "react-native";
 import type { Attention, Requirement } from "../shared/contracts";
 import { useAction, usePreferences } from "./data";
 import { facts } from "./format";
-import { ReviewLink } from "./review-link";
+import { ReviewButton } from "./review";
 import { Badge, Button, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
@@ -99,7 +99,7 @@ function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layo
         </View>
       ) : (
         <>
-          {item.attention === "approval" && item.hasPrototype ? <ReviewLink theme={theme} compact={layout.compact} repo={repo} featureDir={item.featureDir} waiting /> : null}
+          {item.attention === "approval" && item.hasPrototype ? <Text style={s.text}>这个方案有界面原型：在原型上点选要改的地方，比写文字说得清楚。</Text> : null}
           {writing && w?.canReply ? (
             <View style={{ gap: 8 }}>
               <TextInput
@@ -126,7 +126,8 @@ function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layo
           <View style={s.row}>
             {item.attention === "approval" ? (
               <>
-                <Button theme={theme} primary label={run.isPending ? "正在执行…" : "确认方案"} disabled={run.isPending} onPress={() => void act("approve")} />
+                {item.hasPrototype ? <ReviewButton theme={theme} repo={repo} featureDir={item.featureDir} title={item.title} waiting /> : null}
+                <Button theme={theme} primary={!item.hasPrototype} label={run.isPending ? "正在执行…" : "确认方案"} disabled={run.isPending} onPress={() => void act("approve")} />
                 {w?.canReply ? (
                   writing ? (
                     <Button theme={theme} label="发送修改意见" disabled={run.isPending || !text.trim()} onPress={() => void act("reply")} />

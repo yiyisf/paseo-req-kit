@@ -2,7 +2,9 @@ import type { PluginClientContext, PluginScreenProps } from "@getpaseo/plugin/cl
 import { ConfigScreen } from "./client/config";
 import { RequirementScreen } from "./client/detail";
 import { contributeLive } from "./client/live";
+import { setScreenOpener } from "./client/nav";
 import { OverviewScreen } from "./client/overview";
+import { ReviewScreen } from "./client/review";
 import { WorkspacePanel } from "./client/panel";
 import { SettingsScreen } from "./client/settings";
 import { RequirementsItem } from "./client/sidebar";
@@ -10,11 +12,13 @@ import { StatsScreen } from "./client/stats";
 
 export default function contribute(client: PluginClientContext) {
   const openScreen = (input: { screenId: string; params?: Record<string, string> }) => client.openScreen(input);
+  setScreenOpener(openScreen);
   const Overview = (props: PluginScreenProps) => <OverviewScreen {...props} openScreen={openScreen} />;
 
   client.addScreen({ id: "overview", title: "需求", Component: Overview });
   client.addScreen({ id: "requirement", title: (params) => params.title || params.name || "需求", Component: RequirementScreen });
   client.addScreen({ id: "stats", title: "需求统计", Component: StatsScreen });
+  client.addScreen({ id: "review", title: (params) => `审查原型：${params.title || params.featureDir?.split("/").pop() || ""}`, Component: ReviewScreen });
   client.addScreen({ id: "config", title: "req-kit 配置", Component: ConfigScreen });
   client.addSidebarHeaderItem({ id: "requirements", title: "需求（req-kit）", Component: RequirementsItem });
   client.addWorkspacePanel({
