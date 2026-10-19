@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
-import { check, compareLabels, issueText, pageScript, reportText } from "../engine/src/ui-check.ts";
+import { check, compareLabels, issueText, pageScript, reportText } from "../engine/src/ui-check.js";
 
 test("界面检查：问题写成人看得懂的话；和原型对文字时忽略空白和冒号", () => {
   const target = { kind: "按钮", text: "导出全部订单", selector: "button", box: { x: 0, y: 0, w: 60, h: 20 } };

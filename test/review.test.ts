@@ -6,9 +6,9 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { registerRequirement, requirementKey } from "../engine/src/records.ts";
-import { type ReviewComment, composeFeedback, createReviewServer, dirHash, prototypeFiles, snapshotVersion, specCriteria } from "../engine/src/review.ts";
-import { writeState } from "../engine/src/state.ts";
+import { registerRequirement, requirementKey } from "../engine/src/records.js";
+import { type ReviewComment, composeFeedback, createReviewServer, dirHash, prototypeFiles, snapshotVersion, specCriteria } from "../engine/src/review.js";
+import { writeState } from "../engine/src/state.js";
 
 const PROTOTYPE = `<!doctype html><html><head><meta charset="utf-8"><title>订单列表</title>
 <style>body{font-family:sans-serif;margin:0;padding:24px} .btn{background:#1677ff;color:#fff;padding:6px 12px;border:0}</style></head>
