@@ -170,6 +170,45 @@ export function isTransientError(message: string): boolean {
   return TRANSIENT_ERROR.test(message);
 }
 
+/** 1.13: the requirement used its token budget (config budget); stops before the next step. */
+class BudgetReached extends Error {
+  constructor(
+    public readonly used: number,
+    public readonly allowance: number,
+  ) {
+    super(`token 用量 ${tokenText(used)} 已到预算 ${tokenText(allowance)}`);
+    this.name = "BudgetReached";
+  }
+}
+
+function tokenText(n: number): string {
+  return n >= 10_000 ? `${Math.round(n / 1000) / 10} 万` : String(n);
+}
+
+/** Tokens (input + output) of every step of the requirement so far, all attempts. */
+export function tokensUsed(state: Pick<PipelineState, "history">): number {
+  return state.history.reduce((sum, h) => sum + (h.usage?.inputTokens ?? 0) + (h.usage?.outputTokens ?? 0), 0);
+}
+
+/**
+ * Before a new step agent starts: warns once per budget level at warnPercent, and stops at the
+ * allowance (the step that crossed it is finished, the next one waits for a person).
+ */
+async function checkBudget(ctx: PipelineContext, stepTitle: string): Promise<void> {
+  const limit = ctx.config.budget.tokens;
+  if (limit === null) return;
+  const budget = (ctx.state.budget ??= { allowance: limit, warnedAt: null });
+  const used = tokensUsed(ctx.state);
+  if (used >= budget.allowance) throw new BudgetReached(used, budget.allowance);
+  if (used >= (budget.allowance * ctx.config.budget.warnPercent) / 100 && budget.warnedAt !== budget.allowance) {
+    budget.warnedAt = budget.allowance;
+    save(ctx);
+    const text = `【需求开发流水线通知】${shownFeatureDir(ctx)} 已用 ${tokenText(used)} tokens，到了预算 ${tokenText(budget.allowance)} 的 ${Math.round((used / budget.allowance) * 100)}%。流水线继续（下一步：${stepTitle}）；用完预算时会做完当前步骤后停下等你决定。这条消息只是告知，不需要处理。`;
+    await notifyOrigin(ctx, text);
+    await notifyExternal(ctx, "milestone", `需求 ${featureName(ctx.featureDir)} 的 token 用量已到预算的 ${ctx.config.budget.warnPercent}%`, { used, budget: budget.allowance });
+  }
+}
+
 class BusinessDecisionNeeded extends Error {
   constructor(
     public readonly questions: string[],
@@ -616,6 +655,12 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
       await ctx.sleep(Math.min(60_000, 5_000 * consecutiveErrors));
       continue;
     }
+    // 1.13: whether the step waits for a permission, for the plugin's "等你处理".
+    const waitingNow = outcome.status === "permission";
+    if (!waitingNow && ctx.state.waitingPermission) {
+      ctx.state.waitingPermission = null;
+      save(ctx);
+    }
     switch (outcome.status) {
       case "idle":
         return outcome.usage ?? null;
@@ -624,6 +669,12 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
       case "error":
         throw new AgentErrored(def.title, `agent 报告错误：${outcome.error ?? "未知错误"}`);
       case "permission": {
+        const requests = outcome.pendingPermissions.map((p) => p.title);
+        const w = ctx.state.waitingPermission;
+        if (!w || w.agentId !== agent.id || w.requests.join("\n") !== requests.join("\n")) {
+          ctx.state.waitingPermission = { agentId: agent.id, stepTitle: def.title, requests, since: w?.agentId === agent.id ? w.since : new Date().toISOString() };
+          save(ctx);
+        }
         const fresh = outcome.pendingPermissions.filter((p) => !notifiedPermissions.has(p.id));
         if (fresh.length > 0) {
           for (const p of fresh) notifiedPermissions.add(p.id);
@@ -768,6 +819,7 @@ async function runStepOnce(
   const agentTitle =
     `[${featureName(ctx.featureDir)}] ` +
     (extras.title ?? `${def.number}-${def.title}${round !== null && round > 1 ? ` 第${round}轮` : ""}${target ? `（${target.name}）` : ""}`);
+  if (!leftover.agent) await checkBudget(ctx, def.title);
   const record: StepRecord = {
     key,
     stepId: id,
@@ -788,6 +840,8 @@ async function runStepOnce(
   }
   ctx.log(leftover.agent ? `继续等待 ${key}（${def.title}）上一次的 agent ${leftover.agent.id}` : `开始 ${key}（${def.title}）`);
 
+  const stepProfile = extras.profile ?? phaseAgent(ctx, id) ?? ctx.config.agents[def.role];
+  if (!leftover.agent) record.agent = agentName(stepProfile);
   try {
     const agent = leftover.agent ?? await ctx.runtime.startAgent({
       role: def.role,
@@ -801,7 +855,7 @@ async function runStepOnce(
       },
       parentAgentId: ctx.config.attachToOriginChat ? ctx.state.originAgentId : null,
       // Always passed: the run's config has Paseo profile names resolved; the runtime's may not.
-      profile: extras.profile ?? phaseAgent(ctx, id) ?? ctx.config.agents[def.role],
+      profile: stepProfile,
       workspaceId: target ? target.workspaceId : (ctx.state.worktree?.workspaceId ?? null),
     });
     record.agentId = agent.id;
@@ -959,6 +1013,12 @@ function mergeExtras(
 ): { contextLines: string[]; sections: string[] } | null {
   if (!a && !b) return null;
   return { contextLines: [...(a?.contextLines ?? []), ...(b?.contextLines ?? [])], sections: [...(a?.sections ?? []), ...(b?.sections ?? [])] };
+}
+
+/** How a step's agent is named in records and statistics (1.13). */
+export function agentName(profile: AgentProfile | null | undefined): string | undefined {
+  if (!profile) return undefined;
+  return profile.paseoProfile?.trim() || profile.provider?.trim() || undefined;
 }
 
 /** Steps that check the result the way a user would. */
@@ -2214,6 +2274,34 @@ export async function runPipeline(ctx: PipelineContext): Promise<PipelineOutcome
         resumeCommand: ctx.resumeCommand,
       });
       return "waiting_for_business";
+    }
+    if (error instanceof BudgetReached) {
+      // Continuing (req resume, or "继续开发") gives one more budget.
+      const limit = ctx.config.budget.tokens ?? error.allowance;
+      ctx.state.status = "failed";
+      ctx.state.stopKind = "budget";
+      ctx.state.stopReason = `${error.message}，已停下等你决定是否继续`;
+      ctx.state.budget = { allowance: error.allowance + limit, warnedAt: ctx.state.budget?.warnedAt ?? null };
+      save(ctx);
+      await notifyOrigin(
+        ctx,
+        [
+          "【需求开发流水线通知 · 用完 token 预算】",
+          "",
+          `功能目录：${shownFeatureDir(ctx)}`,
+          `情况：这个需求已用 ${tokenText(error.used)} tokens，到了预算 ${tokenText(error.allowance)}。已完成的步骤都保留，流水线停在下一步开始之前。`,
+          "",
+          "请这样处理：把用量告诉用户（可以运行查看进度的命令看各步骤），问是否继续。",
+          `- 继续：执行下面的命令，会再给一份预算（到 ${tokenText(error.allowance + limit)} 时再停）：\n\n${ctx.resumeCommand}`,
+          "- 不继续：不用执行任何命令；需要时可以缩小需求范围再继续。",
+        ].join("\n"),
+      );
+      await integrate(ctx, "failed");
+      await notifyExternal(ctx, "failed", `需求 ${featureName(ctx.featureDir)} 用完了 token 预算（${tokenText(error.used)}），已暂停等需求方决定`, {
+        reason: error.message,
+        resumeCommand: ctx.resumeCommand,
+      });
+      return "failed";
     }
     const stepTitle = error instanceof StepFailure ? error.stepTitle : "流水线";
     ctx.state.status = "failed";

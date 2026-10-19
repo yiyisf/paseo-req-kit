@@ -355,6 +355,8 @@ test("等待权限批准：同一个请求只通知一次，批准后继续", ()
   assert.match(notes[0].text ?? "", /运行 npm install/);
   assert.match(notes[0].text ?? "", /\[20261012-sms-login\] 5-代码实现/);
   assert.match(notes[1].text ?? "", /流水线已经结束/);
+  // 1.13: recorded while it waited (for the plugin's inbox), cleared once it went on.
+  assert.equal(state(env).waitingPermission, null);
 });
 
 test("步骤超时：判定失败并说明 agent 可能仍在运行", () => {
@@ -1582,6 +1584,26 @@ test("定时检查（可选）：开启后运行期间预约对话定时检查�
   assert.deepEqual(state(env).schedules, []);
 });
 
+test("定时检查（1.13）：req-kit 插件最近检查过时，不再预约对话的定时检查（插件会直接继续）", () => {
+  const file = path.join(KIT_HOME, "watchdog.json");
+  const before = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  fs.mkdirSync(KIT_HOME, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), by: "plugin", handled: {} }));
+  try {
+    const env = setup({ watchdogMinutes: 30 });
+    assert.equal(runMain(env, {}).code, 0);
+    assert.ok(!events(env).some((e) => e.type === "scheduleMessage"));
+    // An old heartbeat (the plugin stopped): the chat checks again.
+    fs.writeFileSync(file, JSON.stringify({ at: new Date(Date.now() - 3600_000).toISOString(), by: "plugin" }));
+    const old = setup({ watchdogMinutes: 30 });
+    assert.equal(runMain(old, {}).code, 0);
+    assert.ok(events(old).some((e) => e.type === "scheduleMessage"));
+  } finally {
+    if (before === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, before);
+  }
+});
+
 test("prompts.local：同名文件替换随工具发布的提示词", () => {
   const env = setup();
   const local = path.join(KIT_HOME, "prompts.local");
@@ -2397,4 +2419,34 @@ test("联合需求：一个仓库的步骤失败时等另一个仓库做完再�
   const again = starts(env, from);
   assert.equal(again[0], `implement@${slug}`);
   assert.ok(!again.includes("implement"));
+});
+
+test("token 预算（1.13）：到提醒比例时告知一次，用完时做完当前步骤就停下；继续时再给一份预算；记录每步用的模型", () => {
+  // Every fake step reports 12,000 + 800 tokens.
+  const env = setup({ budget: { tokens: 30_000, warnPercent: 80 } });
+  const first = runMain(env, {});
+  assert.notEqual(first.code, 0, first.out);
+  const s = state(env);
+  assert.equal(s.status, "failed");
+  assert.equal(s.stopKind, "budget");
+  assert.match(s.stopReason, /token 用量 3\.8 万 已到预算 3 万/);
+  assert.deepEqual(s.budget, { allowance: 60_000, warnedAt: 30_000 });
+  assert.equal(s.history.length, 3);
+  assert.ok(s.history.every((h: { agent?: string }) => typeof h.agent === "string" && h.agent.length > 0), JSON.stringify(s.history.map((h: { agent?: string }) => h.agent)));
+  const notes = events(env).filter((e) => e.type === "notify").map((e) => e.text ?? "");
+  assert.equal(notes.filter((t) => /到了预算 3 万 的 85%/.test(t)).length, 1);
+  assert.ok(notes.some((t) => /用完 token 预算[\s\S]*到 6 万 时再停/.test(t)));
+
+  // Continuing: one more budget, so the run goes on and stops again at 60,000.
+  const again = runMain(env, {}, ["--resume"]);
+  assert.notEqual(again.code, 0, again.out);
+  const s2 = state(env);
+  assert.equal(s2.stopKind, "budget");
+  assert.equal(s2.history.length, 5);
+  assert.equal(s2.budget.allowance, 90_000);
+
+  // No budget: nothing changes.
+  const none = setup();
+  assert.equal(runMain(none, {}).code, 0);
+  assert.equal(state(none).budget, undefined);
 });

@@ -4,6 +4,7 @@ import type { Attention, Requirement } from "../shared/contracts";
 export const ATTENTION_LABELS: Record<Exclude<Attention, null>, string> = {
   approval: "等待确认方案",
   business: "等待需求方决定",
+  permission: "等待批准权限",
   interrupted: "已中断，可以继续",
   not_completed: "结束但未完成",
 };

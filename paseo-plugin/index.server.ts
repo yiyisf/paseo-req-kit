@@ -39,7 +39,23 @@ export default function contribute(server: PluginServerContext) {
   server.handle(configRpc, (input) => handlers.config(input));
   server.handle(setAgentsRpc, (input) => handlers.setAgents(input));
   server.handle(reviewUrlRpc, (input) => handlers.reviewUrl(input));
+  // 1.13: every few minutes, continue this machine's pipelines whose background process died
+  // (req api watchdog). Deterministic, no model involved; while it runs, pipelines do not ask
+  // their chats to check on them. Off when the plugin is read-only.
+  const check = async () => {
+    try {
+      await load();
+      if (readOnly) return;
+      await reqApi(kitHome)(["watchdog", "--by", "plugin"], { timeoutMs: 240_000 });
+    } catch {
+      // req-kit missing or a check failing: the next one tries again.
+    }
+  };
+  const first = setTimeout(() => void check(), 60_000);
+  const timer = setInterval(() => void check(), 5 * 60_000);
   return () => {
+    clearTimeout(first);
+    clearInterval(timer);
     unsubscribe();
   };
 }

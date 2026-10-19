@@ -7,6 +7,47 @@ import { useStats } from "./data";
 import { minutes, tokens, TYPE_LABELS } from "./format";
 import { Chip, Status, useStyles } from "./ui";
 
+type Tokens = NonNullable<import("../shared/contracts").StatsSummary["tokens"]>;
+
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+/** Where the tokens went (1.13): a bar per step and per model, and the share spent on rework. */
+function TokenShare({ theme, compact, t }: { theme: import("@getpaseo/plugin/client").PluginHostProps["theme"]; compact: boolean; t: Tokens }) {
+  const s = useStyles(theme, compact);
+  const bar = (key: string, label: string, value: number, share: number, note: string) => (
+    <View key={key} style={{ gap: 2 }}>
+      <View style={[s.row, { justifyContent: "space-between", flexWrap: "nowrap" }]}>
+        <Text style={[s.text, { flexShrink: 1 }]}>{label}</Text>
+        <Text style={s.muted}>
+          {tokens(value)} · {pct(share)}
+          {note}
+        </Text>
+      </View>
+      <View style={{ height: 6, borderRadius: 3, backgroundColor: theme.colors.surface2, overflow: "hidden" }}>
+        <View style={{ width: `${Math.max(1, Math.round(share * 100))}%`, height: 6, backgroundColor: theme.colors.accent }} />
+      </View>
+    </View>
+  );
+  return (
+    <View style={[s.card, { gap: 10 }]}>
+      <Text style={s.heading}>token 花在哪</Text>
+      <Text style={s.text}>
+        合计 {tokens(t.total)} tokens
+        {t.rework ? `，其中返工（修订、修复、复验和第 2 轮起的评审）占 ${pct(t.rework.share)}` : ""}
+        {t.cachedShare !== null ? `；输入中 ${pct(t.cachedShare)} 来自提示缓存` : ""}
+      </Text>
+      {t.perRequirement.median !== null ? <Text style={s.muted}>每个完成的需求中位数 {tokens(t.perRequirement.median)}</Text> : null}
+      <View style={{ gap: 8 }}>{t.byStep.slice(0, 12).map((r) => bar(r.stepId, r.title, r.tokens, r.share, `（${r.steps} 次）`))}</View>
+      {t.byAgent.some((a) => a.agent !== "（未记录）") ? (
+        <>
+          <Text style={[s.text, { fontWeight: "600" }]}>按模型</Text>
+          <View style={{ gap: 8 }}>{t.byAgent.map((r) => bar(r.agent, r.agent, r.tokens, r.share, `（${r.steps} 步）`))}</View>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 function month(offset: number, now = new Date()): string {
   const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -50,6 +91,7 @@ export function StatsScreen({ theme, layout }: PluginScreenProps) {
               {card("agent 合计用时", minutes(d.usage.agentMinutes), `输入 ${tokens(d.usage.inputTokens)}，输出 ${tokens(d.usage.outputTokens)} tokens`)}
               {d.usage.costUsd !== null ? card("费用", `$${d.usage.costUsd.toFixed(2)}`) : null}
             </View>
+            {d.tokens?.total ? <TokenShare theme={theme} compact={layout.compact} t={d.tokens} /> : null}
             {d.waits.length > 0 ? (
               <View style={s.card}>
                 <Text style={s.heading}>等待</Text>

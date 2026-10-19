@@ -147,6 +147,8 @@ export interface CardCmdOptions {
   skipHealthCheck?: boolean;
   /** The time, for tests (1.12). */
   now?: Date;
+  /** Continues a requirement (`req resume`); tests replace it (1.13, factory watchdog). */
+  resume?: (repo: string, featureDir: string) => { ok: boolean; message: string };
 }
 
 export interface BeginResult {

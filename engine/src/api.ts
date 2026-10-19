@@ -17,6 +17,7 @@
 // Reading never changes anything. `run` performs the same command as `req <command>` in that
 // directory, so the engine stays the only one that changes a requirement's state.
 
+import { progressOf, typical } from "./estimate.js";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -67,11 +68,12 @@ export const READABLE_FILES = [
 
 const MAX_FILE_BYTES = 512 * 1024;
 
-export type Attention = "approval" | "business" | "interrupted" | "not_completed" | null;
+export type Attention = "approval" | "business" | "permission" | "interrupted" | "not_completed" | null;
 
 /** What a person needs to do about a requirement, if anything. */
-export function attentionOf(state: Pick<PipelineState, "status" | "pid" | "outcome"> | null): Attention {
+export function attentionOf(state: Pick<PipelineState, "status" | "pid" | "outcome" | "waitingPermission"> | null): Attention {
   if (!state) return null;
+  if (state.status === "running" && state.waitingPermission && isAlive(state.pid)) return "permission";
   if (state.status === "waiting_for_approval") return "approval";
   if (state.status === "waiting_for_business") return "business";
   if (state.status === "failed" || (state.status === "running" && !isAlive(state.pid))) return "interrupted";
@@ -135,6 +137,8 @@ export interface ListItem {
     card: { system: string; id: string; url: string | null; requester: string | null } | null;
     /** Whether a reply can be sent to the requirement's chat (req reply). */
     canReply: boolean;
+    /** 1.13, attention "permission": the step agent that waits for an approval. */
+    agentId?: string;
   } | null;
 }
 
@@ -178,10 +182,12 @@ function waitingOf(repo: string, featureDir: string, state: PipelineState | null
   } catch {
     card = null;
   }
+  const permission = attentionOf(state) === "permission" ? state.waitingPermission : null;
   return {
-    since: state.updatedAt,
-    questions: state.pendingQuestions ?? [],
-    reason: state.stopReason,
+    since: permission?.since ?? state.updatedAt,
+    questions: permission ? permission.requests : (state.pendingQuestions ?? []),
+    reason: permission ? `「${permission.stepTitle}」步骤在等待权限批准，批准前会一直停在这里` : state.stopReason,
+    ...(permission ? { agentId: permission.agentId } : {}),
     card,
     canReply: Boolean(state.originAgentId) && (state.status === "waiting_for_business" || state.status === "waiting_for_approval"),
   };
@@ -294,10 +300,20 @@ export function apiStatus(repoArg: string, feature: string) {
         }
       : null,
     steps: state ? state.history.map((h) => stepJson(h, state)) : [],
+    // 1.13: what to expect, from this machine's completed requirements of the same profile.
+    estimate: estimateOf(state),
     gate: state?.gate ?? null,
     external: Object.entries(state?.external ?? {}).map(([name, r]) => ({ name, id: r.id, url: r.url, status: r.status, syncedAt: r.syncedAt, pending: r.pending.length, lastError: r.pending.at(-1)?.error ?? null })),
     joint: (state?.joint ?? []).map((j) => ({ name: j.name, slug: j.slug, repo: j.repo, sourceRepo: j.sourceRepo, branch: j.branch, workspaceId: j.workspaceId, gate: j.gate ?? null })),
   };
+}
+
+function estimateOf(state: PipelineState | null) {
+  if (!state || state.status === "completed") return null;
+  const t = typical(state.profile ?? "standard");
+  if (!t) return null;
+  const p = progressOf(state, t);
+  return { basis: t.basis, profile: t.profile, typicalAgentMinutes: t.agentMinutes, typicalTokens: t.tokens, ...p };
 }
 
 export function apiFile(repoArg: string, feature: string, file: string) {
@@ -449,6 +465,14 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       if (!value) throw new ApiError("bad_arguments", "缺少 --json <设置>");
       const { message } = configureJson(["--set", value]);
       return { ok: true, message };
+    }
+    case "watchdog": {
+      // 1.13: continue pipelines whose process died (the plugin runs this every few minutes).
+      const by = (option(argv, "--by") ?? "manual") as "plugin" | "factory" | "manual";
+      const dryRun = flag(argv, "--dry-run");
+      return import("./watchdog.js").then(({ watchdogPass }) =>
+        watchdogPass({ by: ["plugin", "factory"].includes(by) ? by : "manual", dryRun, resume: (r, f) => apiRun("resume", r, f, []) }),
+      );
     }
     case "review-url": {
       // 1.13: the prototype review page of a requirement (starts the page's server when needed).

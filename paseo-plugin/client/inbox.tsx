@@ -17,6 +17,7 @@ type Layout = PluginHostProps["layout"];
 const KIND: Record<Exclude<Attention, null>, { label: string; tone: "warning" | "danger" | "muted"; todo: string }> = {
   approval: { label: "确认方案", tone: "warning", todo: "方案已通过审核。看一下“做完后会看到什么”，没问题就确认，开始写代码；要改就写下来。" },
   business: { label: "回答问题", tone: "warning", todo: "方案审核有问题只有你能决定，回答后开发会接着进行。" },
+  permission: { label: "批准权限", tone: "warning", todo: "有一个步骤在等你允许它做一项操作，批准前会一直停在这里。打开这个 agent，在它的对话里选择允许或拒绝；拿不准时请开发同事看一下。" },
   interrupted: { label: "已中断", tone: "danger", todo: "开发中断了，自动处理没能解决。看一下原因，能继续就继续。" },
   not_completed: { label: "没有完成", tone: "muted", todo: "流水线结束了，但有部分没有做完。完成报告里写了原因和建议。" },
 };
@@ -37,7 +38,7 @@ export function inboxItems(items: Requirement[]): Requirement[] {
     .sort((a, b) => (a.waiting?.since ?? a.updatedAt).localeCompare(b.waiting?.since ?? b.updatedAt));
 }
 
-function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layout: Layout; item: Requirement; open(): void; readOnly: boolean }) {
+function InboxCard({ theme, layout, item, open, readOnly, openAgent }: { theme: Theme; layout: Layout; item: Requirement; open(): void; readOnly: boolean; openAgent?: (agentId: string) => void }) {
   const s = useStyles(theme, layout.compact);
   const run = useAction();
   const toast = useToast();
@@ -77,8 +78,9 @@ function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layo
       </Text>
       <Text style={s.text}>{kind.todo}</Text>
 
-      {item.attention === "business" && w && w.questions.length > 0 ? (
+      {(item.attention === "business" || item.attention === "permission") && w && w.questions.length > 0 ? (
         <View style={{ gap: 4 }}>
+          {item.attention === "permission" ? <Text style={s.muted}>{w.reason}。要批准的操作：</Text> : null}
           {w.questions.map((q, i) => (
             <Text key={i} style={s.text}>
               {i + 1}. {q}
@@ -140,6 +142,7 @@ function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layo
             {item.attention === "business" && w?.canReply ? (
               <Button theme={theme} primary label={run.isPending ? "正在发送…" : "发送回答"} disabled={run.isPending || !text.trim()} onPress={() => void act("reply")} />
             ) : null}
+            {item.attention === "permission" && w?.agentId && openAgent ? <Button theme={theme} primary label="打开这个 agent" onPress={() => openAgent(w.agentId!)} /> : null}
             {item.attention === "interrupted" ? (
               <Button theme={theme} primary label={run.isPending ? "正在执行…" : "继续"} disabled={run.isPending} onPress={() => void act("resume")} />
             ) : null}
@@ -151,7 +154,7 @@ function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layo
   );
 }
 
-export function Inbox({ theme, layout, items, open }: { theme: Theme; layout: Layout; items: Requirement[]; open(item: Requirement): void }) {
+export function Inbox({ theme, layout, items, open, openAgent }: { theme: Theme; layout: Layout; items: Requirement[]; open(item: Requirement): void; openAgent?: (agentId: string) => void }) {
   const s = useStyles(theme, layout.compact);
   const { readOnly } = usePreferences();
   const waiting = inboxItems(items);
@@ -169,7 +172,7 @@ export function Inbox({ theme, layout, items, open }: { theme: Theme; layout: La
           <Text style={s.muted}>现在没有需要你处理的事。需要你确认或回答时，会出现在这里。</Text>
         </View>
       ) : (
-        waiting.map((item) => <InboxCard key={item.key} theme={theme} layout={layout} item={item} open={() => open(item)} readOnly={readOnly} />)
+        waiting.map((item) => <InboxCard key={item.key} theme={theme} layout={layout} item={item} open={() => open(item)} readOnly={readOnly} openAgent={openAgent} />)
       )}
     </View>
   );

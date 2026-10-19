@@ -116,7 +116,7 @@ test("接单器：只接登记空间中标题带 [AI] 的新卡片，按子系�
   }
 });
 
-test("接单器（1.12）：本机流水线的后台进程已退出但仍标着运行中时，请它的对话检查并继续，每个进程只提醒一次", async () => {
+test("接单器（1.13）：本机流水线的后台进程已退出但仍标着运行中时，直接继续（不经过对话），每个进程只继续一次", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "req-factory-resume-"));
   const repo = path.join(dir, "shop");
   const featureDir = "docs/features/20261017-export";
@@ -130,31 +130,42 @@ test("接单器（1.12）：本机流水线的后台进程已退出但仍标着�
   Object.assign(process.env, env);
   try {
     const { registerRequirement } = await import("../src/records.js");
-    const { writeState } = await import("../src/state.js");
     const { pollOnce } = await import("../src/factory.js");
     const dead = 2 ** 22 + 12345;
-    const write = (status: string, pid: number) =>
-      writeState(path.join(repo, featureDir, ".pipeline", "state.json"), {
-        version: 1, repo, featureDir, status, attempt: 1, specHash: "", originAgentId: "chat-1", pid,
-        startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), results: {}, history: [],
-        stopReason: null, outcome: null, profile: "standard", branch: null, milestones: [],
-      } as never);
+    const stateFile = path.join(repo, featureDir, ".pipeline", "state.json");
+    // Written directly: its last change is a while ago (a run that just wrote is left alone).
+    const write = (status: string, pid: number, minutesAgo = 10) =>
+      fs.writeFileSync(
+        stateFile,
+        JSON.stringify({
+          version: 1, repo, featureDir, status, attempt: 1, specHash: "", originAgentId: "chat-1", pid,
+          startedAt: new Date().toISOString(), updatedAt: new Date(Date.now() - minutesAgo * 60_000).toISOString(), results: {}, history: [],
+          stopReason: null, outcome: null, profile: "standard", branch: null, milestones: [],
+        }),
+      );
     write("running", dead);
     registerRequirement({ repo, featureDir, worktree: null }, env);
+    const resumed: string[][] = [];
+    const resume = (r: string, f: string) => (resumed.push([r, f]), { ok: true, message: "已在后台启动" });
 
-    const first = await pollOnce(configPath, { env });
+    const first = await pollOnce(configPath, { env, resume });
     assert.equal(first.resumed.length, 1, JSON.stringify(first));
-    const notes = () => fs.readFileSync(events, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.type === "notify");
-    assert.equal(notes().length, 1);
-    assert.equal(notes()[0].agentId, "chat-1");
-    assert.match(notes()[0].text, /定时检查[\s\S]*--status[\s\S]*--resume/);
+    assert.match(first.resumed[0], /已自动继续/);
+    assert.deepEqual(resumed, [[repo, featureDir]]);
+    const after = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(after.stopKind, "process_exit");
+    assert.equal(after.recoveries.at(-1).kind, "auto_resume");
+    // No model turn: the chat is not asked.
+    const notes = fs.existsSync(events) ? fs.readFileSync(events, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.type === "notify") : [];
+    assert.equal(notes.length, 0);
 
-    const again = await pollOnce(configPath, { env });
-    assert.equal(again.resumed.length, 0);
-    assert.equal(notes().length, 1, "同一个进程只提醒一次");
+    write("running", dead);
+    assert.equal((await pollOnce(configPath, { env, resume })).resumed.length, 0, "同一个进程只继续一次");
 
     write("running", process.pid);
-    assert.equal((await pollOnce(configPath, { env })).resumed.length, 0, "进程还在时不提醒");
+    assert.equal((await pollOnce(configPath, { env, resume })).resumed.length, 0, "进程还在时不动");
+    write("running", dead + 1, 0);
+    assert.equal((await pollOnce(configPath, { env, resume })).resumed.length, 0, "刚写过状态的不动");
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
     Object.assign(process.env, saved);

@@ -134,6 +134,10 @@ export interface StepUsageRecord {
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
+  /** 1.13: input tokens served from the prompt cache (part of inputTokens), when the agent reports them. */
+  cachedInputTokens?: number | null;
+  /** 1.13: the agent the step ran with (Paseo profile name or "provider/model"). */
+  agent?: string | null;
 }
 
 /** One pipeline run: a process from its start to its end (contracts/usage-record.md). */
@@ -217,6 +221,8 @@ export function runRecord(input: {
         inputTokens: h.usage?.inputTokens ?? null,
         outputTokens: h.usage?.outputTokens ?? null,
         costUsd: h.usage?.totalCostUsd ?? null,
+        cachedInputTokens: h.usage?.cachedInputTokens ?? null,
+        agent: h.agent ?? null,
       }),
     );
   const gateRuns = [...(state.gate?.runs ?? []), ...(state.joint ?? []).flatMap((j) => j.gate?.runs ?? [])].filter(

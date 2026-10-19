@@ -43,6 +43,7 @@ export type StopKind =
   | "transient"
   | "stopped"
   | "process_exit"
+  | "budget"
   | "other";
 
 /** Something the pipeline handled by itself (1.12). */
@@ -78,6 +79,16 @@ export interface StepRecord {
   reattached?: number;
   /** 1.12.1: the step's time limit was already given its one extra period (selfHeal); a later run waiting for the same agent gets none. */
   extendedTimeout?: boolean;
+  /** 1.13: the agent the step ran with: the Paseo profile name, or "provider/model". */
+  agent?: string;
+}
+
+/** 1.13: the requirement's token budget so far (config budget). */
+export interface BudgetState {
+  /** Tokens allowed before stopping: the budget, plus one more each time the person continued after a stop. */
+  allowance: number;
+  /** The allowance a warning was given for, so each level warns once. */
+  warnedAt: number | null;
 }
 
 export interface PipelineState {
@@ -97,6 +108,10 @@ export interface PipelineState {
   results: Record<string, Record<string, unknown>>;
   history: StepRecord[];
   stopReason: string | null;
+  /** 1.13: a step agent is waiting for someone to allow or deny an action; null otherwise. */
+  waitingPermission?: { agentId: string; stepTitle: string; requests: string[]; since: string } | null;
+  /** 1.13: token budget (config budget); absent until the first check. */
+  budget?: BudgetState;
   /** 1.12: why the run stopped for a person, as a code (contracts/usage-record.md); null while running or done. */
   stopKind?: StopKind | null;
   /** 1.12: what the pipeline handled by itself instead of stopping (retries, waiting longer, a fallback model…). */

@@ -121,6 +121,7 @@ export const STOP_LABELS: Record<string, string> = {
   transient: "限流、网络等临时错误（自动重试用完）",
   stopped: "被手动停止",
   process_exit: "后台进程意外退出",
+  budget: "用完 token 预算",
   other: "其他中断",
 };
 
@@ -236,6 +237,8 @@ export interface StatsSummary {
   /** Average minutes per requirement that waited, by kind, in the period's runs. */
   waits: Array<{ kind: WaitKind; label: string; requirements: number; averageMinutes: number }>;
   usage: { agentMinutes: number; inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
+  /** 1.13: where the tokens (input + output) of the period's runs went. */
+  tokens: TokenBreakdown;
   byBuilder: Array<{ builder: string; requirements: number; averageReviewRounds: number | null; averageCostUsd: number | null }>;
   /** 1.12: why the period's runs stopped for a person, most frequent first. */
   stops: Array<{ kind: string; label: string; necessary: boolean; runs: number }>;
@@ -253,6 +256,66 @@ export interface StatsSummary {
   /** Requirements that started from cards, by who asked for them (1.10); empty when there are none. */
   byRequester: Array<{ requester: string; requirements: number; completed: number; medianCycleHours: number | null }>;
   requirements: RequirementStats[];
+}
+
+export interface TokenBreakdown {
+  /** Input + output of the period's steps that reported usage; null when none did. */
+  total: number | null;
+  /** Share of input tokens served from the prompt cache, when agents report it. */
+  cachedShare: number | null;
+  byStep: Array<{ stepId: string; title: string; steps: number; tokens: number; share: number }>;
+  byAgent: Array<{ agent: string; steps: number; tokens: number; share: number }>;
+  /** Fixing and re-checking: revisions, review fixes, defect fixes, re-verification, and review rounds after the first. */
+  rework: { tokens: number; share: number } | null;
+  /** Tokens per completed requirement (all its runs). */
+  perRequirement: { median: number | null; byProfile: Array<{ profile: string; requirements: number; median: number | null }> };
+}
+
+const REWORK_STEPS = new Set(["design_revise", "review_fix", "defect_fix", "reverify"]);
+
+export function isRework(s: { stepId: string; round: number | null }): boolean {
+  return REWORK_STEPS.has(s.stepId) || ((s.stepId === "design_review" || s.stepId === "code_review") && (s.round ?? 1) > 1);
+}
+
+const stepTokens = (s: { inputTokens: number | null; outputTokens: number | null }) =>
+  s.inputTokens === null && s.outputTokens === null ? null : (s.inputTokens ?? 0) + (s.outputTokens ?? 0);
+
+export function tokenBreakdown(steps: RunRecord["steps"], done: RequirementStats[]): TokenBreakdown {
+  const counted = steps.flatMap((s) => {
+    const t = stepTokens(s);
+    return t === null ? [] : [{ s, t }];
+  });
+  const total = counted.length ? counted.reduce((a, x) => a + x.t, 0) : null;
+  const share = (n: number) => (total ? Math.round((n / total) * 1000) / 1000 : 0);
+  const group = (key: (s: RunRecord["steps"][number]) => string) => {
+    const m = new Map<string, { steps: number; tokens: number }>();
+    for (const { s, t } of counted) {
+      const k = key(s);
+      const g = m.get(k) ?? { steps: 0, tokens: 0 };
+      m.set(k, { steps: g.steps + 1, tokens: g.tokens + t });
+    }
+    return [...m.entries()].sort((a, b) => b[1].tokens - a[1].tokens);
+  };
+  const reworkTokens = counted.filter(({ s }) => isRework(s)).reduce((a, x) => a + x.t, 0);
+  const input = steps.reduce((a, s) => a + (s.inputTokens ?? 0), 0);
+  const cached = steps.reduce<number | null>((a, s) => (typeof s.cachedInputTokens === "number" ? (a ?? 0) + s.cachedInputTokens : a), null);
+  const reqTokens = (q: RequirementStats) => (q.inputTokens === null && q.outputTokens === null ? null : (q.inputTokens ?? 0) + (q.outputTokens ?? 0));
+  const profiles = new Map<string, number[]>();
+  for (const q of done) {
+    const t = reqTokens(q);
+    if (t !== null) profiles.set(q.profile, [...(profiles.get(q.profile) ?? []), t]);
+  }
+  return {
+    total,
+    cachedShare: cached !== null && input > 0 ? Math.round((cached / input) * 1000) / 1000 : null,
+    byStep: group((s) => s.stepId).map(([stepId, g]) => ({ stepId, title: STEPS[stepId as StepId]?.title ?? stepId, steps: g.steps, tokens: g.tokens, share: share(g.tokens) })),
+    byAgent: group((s) => s.agent ?? "（未记录）").map(([agent, g]) => ({ agent, steps: g.steps, tokens: g.tokens, share: share(g.tokens) })),
+    rework: total ? { tokens: reworkTokens, share: share(reworkTokens) } : null,
+    perRequirement: {
+      median: median([...profiles.values()].flat()),
+      byProfile: [...profiles.entries()].map(([profile, ts]) => ({ profile, requirements: ts.length, median: median(ts) })),
+    },
+  };
 }
 
 /** The summary of a period from run records (any machines). */
@@ -341,6 +404,7 @@ export function summarizeRuns(all: RunRecord[], period: Period): StatsSummary {
       outputTokens: steps.reduce<number | null>((s, x) => add(s, x.outputTokens), null),
       costUsd: steps.reduce<number | null>((s, x) => add(s, x.costUsd), null),
     },
+    tokens: tokenBreakdown(steps, done),
     byBuilder: [...builders.entries()].map(([builder, qs]) => ({
       builder,
       requirements: qs.length,
@@ -411,6 +475,25 @@ export function describeStats(s: StatsSummary): string {
     `- 完成：${s.completed.total} 个（${list(s.completed.byOutcome, OUTCOME_LABELS)}）`,
     s.cycleHours.median !== null ? `- 交付周期（首次开始到完成）：中位数 ${s.cycleHours.median} 小时，平均 ${s.cycleHours.average} 小时` : "- 交付周期：这段时间没有完成的需求",
     `- agent 合计用时：${hours(s.usage.agentMinutes)}；输入 ${tokens(s.usage.inputTokens)} tokens，输出 ${tokens(s.usage.outputTokens)} tokens${s.usage.costUsd !== null ? `，约 $${s.usage.costUsd.toFixed(2)}` : ""}`,
+  );
+  const t = s.tokens;
+  if (t.total) {
+    const pct = (x: number) => `${Math.round(x * 100)}%`;
+    lines.push("", "## token 花在哪", "", `- 合计 ${tokens(t.total)} tokens（输入 + 输出）${t.cachedShare !== null ? `；输入中 ${pct(t.cachedShare)} 来自提示缓存` : ""}`);
+    if (t.rework) lines.push(`- 返工（方案修订、评审问题修复、缺陷修复、复验，以及第 2 轮起的审核和评审）：${tokens(t.rework.tokens)}，占 ${pct(t.rework.share)}`);
+    if (t.perRequirement.median !== null) {
+      lines.push(
+        `- 每个完成的需求：中位数 ${tokens(t.perRequirement.median)}${t.perRequirement.byProfile.length > 1 ? `（${t.perRequirement.byProfile.map((p) => `${p.profile === "quick" ? "快速档" : p.profile === "standard" ? "标准档" : p.profile} ${tokens(p.median)}，${p.requirements} 个`).join("；")}）` : ""}`,
+      );
+    }
+    lines.push("", "| 步骤 | 次数 | tokens | 占比 |", "| --- | --- | --- | --- |");
+    for (const r of t.byStep) lines.push(`| ${r.title} | ${r.steps} | ${tokens(r.tokens)} | ${pct(r.share)} |`);
+    if (t.byAgent.length > 1 || t.byAgent[0]?.agent !== "（未记录）") {
+      lines.push("", "| 模型 | 步骤数 | tokens | 占比 |", "| --- | --- | --- | --- |");
+      for (const r of t.byAgent) lines.push(`| ${r.agent} | ${r.steps} | ${tokens(r.tokens)} | ${pct(r.share)} |`);
+    }
+  }
+  lines.push(
     "",
     "## 返工",
     "",

@@ -174,13 +174,22 @@ export function RequirementView({
         <View style={s.row}>
           <Text style={s.title}>{d.title}</Text>
           {d.attention ? (
-            <Badge theme={theme} tone={d.attention === "approval" || d.attention === "business" ? "warning" : "danger"}>
+            <Badge theme={theme} tone={d.attention === "approval" || d.attention === "business" || d.attention === "permission" ? "warning" : "danger"}>
               {ATTENTION_LABELS[d.attention]}
             </Badge>
           ) : null}
         </View>
         <Text style={s.muted}>{facts(d)}</Text>
         <Text style={s.text}>{d.stage}</Text>
+        {d.estimate && d.attention !== "approval" ? (
+          <Text style={s.muted}>
+            {d.estimate.over
+              ? `已超过同档位需求通常的用时（已用 ${minutes(d.estimate.usedAgentMinutes)}，通常 ${minutes(d.estimate.typicalAgentMinutes)}）`
+              : `预计还要约 ${minutes(Math.max(5, d.estimate.leftMinutes))}`}
+            {d.estimate.usedTokens !== null ? ` · 已用 ${tokens(d.estimate.usedTokens)} tokens${d.estimate.typicalTokens !== null ? `（通常 ${tokens(d.estimate.typicalTokens)}）` : ""}` : ""}
+            {` · 按本机最近 ${d.estimate.basis} 个同档位需求，不含等人的时间`}
+          </Text>
+        ) : null}
         {d.run?.stopReason && !d.running ? <Text style={s.danger}>{d.run.stopReason}</Text> : null}
         {d.attention === "business" ? <Text style={s.muted}>需求方的决定请在发起需求的对话中回答，回答后再继续。</Text> : null}
       </View>

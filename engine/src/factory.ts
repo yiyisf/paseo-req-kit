@@ -18,14 +18,11 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { cardRoutes, findCardEntry, hashText, parseJsonOutput } from "./card.js";
 import { beginFromCard, type CardCmdOptions, cardIntegrations, checkCards, withRuntime } from "./card-cmd.js";
-import { resumeCommand, statusCommand } from "./cli-args.js";
 import { loadConfig, type PipelineConfig } from "./config.js";
-import { watchdogPrompt } from "./messages.js";
 import { dispatchNotifiers } from "./notifiers.js";
-import { readIndex } from "./records.js";
 import { type IntegrationConfig, renderArgs, runCommand, type Runner } from "./integrations.js";
 import { defaultConfigPath, ENGINE_DIR, KIT_ROOT, kitHome, kitVersion } from "./locations.js";
-import { isAlive, readState, statePath } from "./state.js";
+import { isAlive } from "./state.js";
 
 const USAGE = `用法：
   req factory once      检查一次：为新卡片开始需求，把需求方的新回复转给需求会话
@@ -231,7 +228,7 @@ export async function pollOnce(configPath: string, opts: CardCmdOptions = {}, no
     }
 
     try {
-      await nudgeInterrupted(config, env, dir, result);
+      await continueInterrupted(env, opts, result, now);
     } catch (error) {
       result.errors.push(`续跑中断的需求：${(error as Error).message}`);
     }
@@ -351,31 +348,17 @@ function appendLog(dir: string, text: string, now: Date): void {
  * restarted, the process was killed): its chat gets the same message as the watchdog's, so
  * the chat checks and continues it. Once per process; a chat that cannot be reached is noted.
  */
-async function nudgeInterrupted(config: PipelineConfig, env: NodeJS.ProcessEnv, dir: string, result: PollResult): Promise<void> {
-  const file = path.join(dir, "nudged.json");
-  const nudged = readJson<Record<string, number>>(file, {});
-  const due: Array<{ key: string; pid: number; origin: string; featureDir: string; repo: string }> = [];
-  for (const entry of readIndex(env)) {
-    if (!entry.present) continue;
-    const state = readState(statePath(entry.repo, entry.featureDir));
-    if (!state || state.status !== "running" || isAlive(state.pid) || !state.originAgentId) continue;
-    if (nudged[entry.key] === state.pid) continue;
-    due.push({ key: entry.key, pid: state.pid, origin: state.originAgentId, featureDir: entry.featureDir, repo: entry.sourceRepo ?? entry.repo });
-  }
-  if (due.length === 0) return;
-  await withRuntime(config, async (runtime) => {
-    for (const d of due) {
-      const commands = { repo: d.repo, featureDir: d.featureDir, configPath: null };
-      try {
-        await runtime.notifyAgent(d.origin, watchdogPrompt({ featureDir: d.featureDir, statusCommand: statusCommand(commands), resumeCommand: resumeCommand(commands) }));
-        nudged[d.key] = d.pid;
-        result.resumed.push(`${path.join(d.repo, d.featureDir)}：后台进程已退出，已请它的对话检查并继续`);
-      } catch (error) {
-        result.errors.push(`${path.join(d.repo, d.featureDir)} 的后台进程已退出，但没能通知它的对话：${(error as Error).message}`);
-      }
-    }
-  });
-  writeJson(file, nudged);
+/**
+ * 1.13: pipelines whose background process died are continued directly (`req resume`), not by
+ * asking their chat: no model turn, and it works when the chat is archived or rate-limited.
+ */
+async function continueInterrupted(env: NodeJS.ProcessEnv, opts: CardCmdOptions, result: PollResult, now: Date): Promise<void> {
+  const { watchdogPass } = await import("./watchdog.js");
+  const { apiRun } = await import("./api.js");
+  const pass = watchdogPass({ env, by: "factory", now, resume: opts.resume ?? ((repo, featureDir) => apiRun("resume", repo, featureDir, [])) });
+  for (const r of pass.resumed) result.resumed.push(`${path.join(r.repo, r.featureDir)}：后台进程已退出，已自动继续`);
+  for (const r of pass.failed) result.errors.push(`${path.join(r.repo, r.featureDir)} 的后台进程已退出，自动继续失败：${r.message}`);
+  for (const r of pass.skipped) result.problems.push(`${r.featureDir}：${r.reason}`);
 }
 
 function describe(result: PollResult, now = new Date()): string[] {

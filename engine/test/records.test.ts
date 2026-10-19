@@ -130,7 +130,7 @@ function run(over: {
   end: string;
   status: string;
   outcome?: string | null;
-  steps?: Array<{ stepId: string; minutes: number; round?: number | null; cost?: number }>;
+  steps?: Array<{ stepId: string; minutes: number; round?: number | null; cost?: number; tokens?: [number, number]; cached?: number; agent?: string }>;
   machine?: string;
   type?: string | null;
   builder?: string;
@@ -156,9 +156,11 @@ function run(over: {
       endedAt: over.end,
       minutes: s.minutes,
       outcome: "completed",
-      inputTokens: 1000 * (i + 1),
-      outputTokens: 100,
+      inputTokens: s.tokens ? s.tokens[0] : 1000 * (i + 1),
+      outputTokens: s.tokens ? s.tokens[1] : 100,
       costUsd: s.cost ?? null,
+      ...(s.cached !== undefined ? { cachedInputTokens: s.cached } : {}),
+      ...(s.agent ? { agent: s.agent } : {}),
     })),
     gate: { runs: 2, failed: over.gateFailed ?? 0 },
   };
@@ -294,4 +296,71 @@ test("需要人处理的情况：等待确认、等待决定、中断、未完�
   assert.equal(attentionOf({ status: "running", pid: process.pid, outcome: null }), null);
   assert.equal(attentionOf({ status: "completed", pid: 1, outcome: "not_completed" }), "not_completed");
   assert.equal(attentionOf(null), null);
+});
+
+test("使用统计（1.13）：token 花在哪——按步骤、按模型、返工占比、提示缓存、每个需求的中位数", () => {
+  const runs = [
+    run({
+      key: "a",
+      start: "2026-10-01T01:00:00Z",
+      end: "2026-10-01T05:00:00Z",
+      status: "completed",
+      outcome: "completed",
+      steps: [
+        { stepId: "design", minutes: 30, tokens: [9000, 1000], cached: 6000, agent: "实现" },
+        { stepId: "implement", minutes: 60, tokens: [36000, 4000], cached: 30000, agent: "实现" },
+        { stepId: "code_review", minutes: 10, round: 1, tokens: [18000, 2000], agent: "评审" },
+        { stepId: "review_fix", minutes: 10, round: 1, tokens: [18000, 2000], agent: "实现" },
+        { stepId: "code_review", minutes: 8, round: 2, tokens: [9000, 1000], agent: "评审" },
+      ],
+    }),
+    run({ key: "b", start: "2026-10-02T01:00:00Z", end: "2026-10-02T02:00:00Z", status: "completed", outcome: "completed", steps: [{ stepId: "implement", minutes: 20, tokens: [9000, 1000] }] }),
+  ];
+  const t = summarizeRuns(runs, parsePeriod({ month: "2026-10" })).tokens;
+  assert.equal(t.total, 110_000);
+  assert.deepEqual(
+    t.byStep.map((r) => [r.stepId, r.tokens, r.share]),
+    [
+      ["implement", 50000, 0.455],
+      ["code_review", 30000, 0.273],
+      ["review_fix", 20000, 0.182],
+      ["design", 10000, 0.091],
+    ],
+  );
+  assert.deepEqual(t.byAgent.map((r) => [r.agent, r.tokens]), [["实现", 70000], ["评审", 30000], ["（未记录）", 10000]]);
+  // Rework: the fix and the second review round.
+  assert.deepEqual(t.rework, { tokens: 30000, share: 0.273 });
+  // Cached tokens are counted only where reported: 36000 of all 99000 input tokens.
+  assert.equal(t.cachedShare, Math.round((36000 / 99000) * 1000) / 1000);
+  assert.equal(t.perRequirement.median, 55000);
+  const md = describeStats(summarizeRuns(runs, parsePeriod({ month: "2026-10" })));
+  assert.match(md, /## token 花在哪/);
+  assert.match(md, /返工（.*）：3 万，占 27%/);
+  assert.match(md, /\| 代码实现 \| 2 \| 5 万 \| 46% \|/);
+  assert.match(md, /\| 实现 \| 3 \| 7 万 \| 64% \|/);
+});
+
+test("用时与 token 预估（1.13）：按同档位已完成需求的中位数；少于 3 个不估；超过时如实说明", async () => {
+  const { typical, remainingLine, typicalLine } = await import("../src/estimate.js");
+  const done = (key: string, minutes: number, tokens: number) =>
+    run({ key, start: "2026-10-01T01:00:00Z", end: "2026-10-01T05:00:00Z", status: "completed", outcome: "completed", steps: [{ stepId: "implement", minutes, tokens: [tokens, 0] }] });
+  assert.equal(typical("standard", [done("a", 60, 100_000), done("b", 120, 300_000)]), null);
+  const t = typical("standard", [done("a", 60, 100_000), done("b", 120, 300_000), done("c", 90, 200_000), run({ key: "d", start: "2026-10-01T01:00:00Z", end: "2026-10-01T02:00:00Z", status: "failed", steps: [{ stepId: "implement", minutes: 999 }] })])!;
+  assert.deepEqual(t, { profile: "standard", basis: 3, agentMinutes: 90, tokens: 200_000 });
+  assert.equal(typicalLine(t), "参考：本机最近 3 个标准档需求，agent 合计用时中位数约 1 小时 30 分，约 20 万 tokens（不含等人确认的时间）。");
+  const now = new Date("2026-10-02T01:30:00Z");
+  const step = (start: string, end: string | null, tokens: number) => ({ startedAt: start, endedAt: end, usage: { inputTokens: tokens, outputTokens: 0 } }) as never;
+  const state = { status: "running", profile: "standard", history: [step("2026-10-02T01:00:00Z", "2026-10-02T01:20:00Z", 50_000), step("2026-10-02T01:20:00Z", null, 10_000)] } as never;
+  assert.match(remainingLine(state, t, now)!, /^预计还要：约 1 小时（已用 30 分钟、6 万 tokens；本机最近 3 个标准档需求的中位数 1 小时 30 分、20 万 tokens；不含等人的时间）$/);
+  const long = { status: "failed", profile: "standard", history: [step("2026-10-02T00:00:00Z", "2026-10-02T02:00:00Z", 0)] } as never;
+  assert.match(remainingLine(long, t, now)!, /^预计：已超过通常的用时/);
+  assert.equal(remainingLine({ status: "completed", profile: "standard", history: [] } as never, t, now), null);
+});
+
+test("需要人处理（1.13）：运行中的步骤在等权限批准时归入“等待批准权限”，带上要批准的操作和 agent", () => {
+  const live = { status: "running", pid: process.pid, outcome: null };
+  assert.equal(attentionOf({ ...live, waitingPermission: { agentId: "a1", stepTitle: "代码实现", requests: ["运行 npm install"], since: "2026-10-19T01:00:00Z" } } as never), "permission");
+  assert.equal(attentionOf({ ...live, waitingPermission: null } as never), null);
+  // A dead process is an interruption, whatever it was waiting for.
+  assert.equal(attentionOf({ status: "running", pid: 2 ** 22 + 7, outcome: null, waitingPermission: { agentId: "a1", stepTitle: "x", requests: [], since: "" } } as never), "interrupted");
 });

@@ -20,6 +20,7 @@ import { describeFeatures, featuresWithRuns, findWorktreeRun, listFeatures, reso
 import { checkChatCwd, normalizeFeatureDir, preflight, type PreflightResult, specProfile, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import type { AgentRuntime } from "./runtime.js";
+import { remainingLine, typical, typicalLine } from "./estimate.js";
 import { ensurePipelineDir, hashFile, isAlive, pipelineDir, readState, statePath } from "./state.js";
 
 function fail(message: string): never {
@@ -159,6 +160,9 @@ if (args.status || args.stop) {
       process.exit(0);
     }
     console.log(describeStatus(state, featureDir));
+    // 1.13: what to expect, from this machine's completed requirements of the same profile.
+    const estimate = state ? remainingLine(state, typical(state.profile ?? "standard")) : null;
+    if (estimate) console.log(estimate);
     if (state && reservation) console.log(`已预约：${describeTime(new Date(reservation.at))} 开始（Paseo 定时任务，到时由对话执行；执行暂停命令可以取消）`);
     if (args.sourceRepo) console.log(`位置：为这个需求新建的工作区 ${repo}（需求文件在 ${path.join(repo, featureDir)}）`);
     // Live detail from Paseo, best effort: the plain status above never depends on the daemon.
@@ -405,6 +409,7 @@ console.log(
         ? `这个需求在为它新建的工作区中开发：${checked.repo}`
         : null,
     `功能目录：${checked.featureDir}`,
+    checked.mode.kind === "fresh" && !checked.entersVerify ? typicalLine(typical(profile)) : null,
     checked.branch ? `工作分支：${checked.branch}` : "不是 git 仓库：步骤不会提交代码。",
     loaded.sources.length > 1 ? `使用了项目配置：${loaded.sources[1]}` : null,
     `运行日志：${logPath}`,

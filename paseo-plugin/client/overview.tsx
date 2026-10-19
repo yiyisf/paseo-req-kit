@@ -85,7 +85,7 @@ export function OverviewScreen(props: PluginScreenProps & { openScreen: ScreenOp
           error={query.error}
           empty={query.data && items.length === 0 ? "这台机器上还没有记录任何需求。在 Paseo 对话中用 /req 开始一个；1.9 之前运行过的需求，在项目目录运行 req index --rebuild。" : null}
         />
-        {query.data && items.length > 0 ? <Inbox theme={theme} layout={layout} items={shown} open={open} /> : null}
+        {query.data && items.length > 0 ? <Inbox theme={theme} layout={layout} items={shown} open={open} openAgent={props.navigation ? (agentId) => props.navigation!.openAgent({ agentId }) : undefined} /> : null}
         <RequirementGroups theme={theme} layout={layout} items={shown} open={open} skip={["attention"]} />
       </ScrollView>
     </View>

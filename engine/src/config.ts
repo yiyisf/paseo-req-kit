@@ -240,6 +240,11 @@ export interface PipelineConfig {
    * starts this many hours after its summary is on the card, unless the requester objects; 0: off.
    */
   autoConfirm: { hours: number };
+  /**
+   * 1.13: tokens (input + output, all steps and attempts) one requirement may use before the
+   * pipeline stops to ask; null: no limit. A notice at warnPercent; continuing gives one more budget.
+   */
+  budget: { tokens: number | null; warnPercent: number };
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -349,6 +354,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   cardSource: null,
   factory: { pollMinutes: 5, titleTags: ["[AI]", "【AI】"], maxNewPerPoll: 3 },
   autoConfirm: { hours: 0 },
+  budget: { tokens: null, warnPercent: 80 },
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -417,6 +423,7 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
   merged.push = { ...base.push, ...(isRecord(raw.push) ? raw.push : {}) } as PipelineConfig["push"];
   merged.factory = { ...base.factory, ...(isRecord(raw.factory) ? raw.factory : {}) } as PipelineConfig["factory"];
   merged.autoConfirm = { ...base.autoConfirm, ...(isRecord(raw.autoConfirm) ? raw.autoConfirm : {}) } as PipelineConfig["autoConfirm"];
+  merged.budget = { ...base.budget, ...(isRecord(raw.budget) ? raw.budget : {}) } as PipelineConfig["budget"];
   if (isRecord(raw.cardSource)) {
     const c = raw.cardSource;
     merged.cardSource = {
@@ -632,6 +639,12 @@ function validate(config: PipelineConfig): void {
     throw new ConfigError('people 必须写成 { "<姓名>": { "<账号类型>": "<账号>" } }，例如 { "张广祥": { "um": "ZHANGGX001" } }');
   }
   if (typeof config.autoConfirm.hours !== "number" || config.autoConfirm.hours < 0) throw new ConfigError("autoConfirm.hours 必须是不小于 0 的小时数（0 表示关闭）");
+  if (config.budget.tokens !== null && (typeof config.budget.tokens !== "number" || !Number.isFinite(config.budget.tokens) || config.budget.tokens <= 0)) {
+    throw new ConfigError("budget.tokens 必须是正数（每个需求最多用多少 tokens，例如 3000000），或 null 表示不限");
+  }
+  if (typeof config.budget.warnPercent !== "number" || config.budget.warnPercent <= 0 || config.budget.warnPercent >= 100) {
+    throw new ConfigError("budget.warnPercent 必须在 1 到 99 之间（用到预算的百分之几时提醒）");
+  }
   const f = config.factory;
   if (typeof f.pollMinutes !== "number" || !(f.pollMinutes >= 1)) throw new ConfigError("factory.pollMinutes 必须是至少 1 的分钟数");
   if (!Number.isInteger(f.maxNewPerPoll) || f.maxNewPerPoll < 1) throw new ConfigError("factory.maxNewPerPoll 必须是正整数");

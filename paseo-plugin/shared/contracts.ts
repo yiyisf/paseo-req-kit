@@ -3,7 +3,7 @@
 import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export type Attention = "approval" | "business" | "interrupted" | "not_completed" | null;
+export type Attention = "approval" | "business" | "permission" | "interrupted" | "not_completed" | null;
 
 export interface Usage {
   steps: number;
@@ -43,6 +43,8 @@ export interface Requirement {
     reason: string | null;
     card: { system: string; id: string; url: string | null; requester: string | null } | null;
     canReply: boolean;
+    /** req-kit 1.13+, attention "permission": the step agent waiting for an approval. */
+    agentId?: string;
   } | null;
 }
 
@@ -74,6 +76,17 @@ export interface GateRun {
 
 export interface RequirementDetail extends Requirement {
   files: string[];
+  /** req-kit 1.13+: what to expect, from this machine's completed requirements of the same profile; null without enough history. */
+  estimate?: {
+    basis: number;
+    profile: string;
+    typicalAgentMinutes: number;
+    typicalTokens: number | null;
+    usedAgentMinutes: number;
+    usedTokens: number | null;
+    leftMinutes: number;
+    over: boolean;
+  } | null;
   run: {
     attempt: number;
     startedAt: string;
@@ -104,6 +117,15 @@ export interface StatsSummary {
   rework: { averageReviewRounds: number | null; withDefectRounds: number | null; gateRuns: number; gateFailed: number };
   waits: Array<{ kind: string; label: string; requirements: number; averageMinutes: number }>;
   usage: { agentMinutes: number; inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
+  /** req-kit 1.13+: where the tokens went. */
+  tokens?: {
+    total: number | null;
+    cachedShare: number | null;
+    byStep: Array<{ stepId: string; title: string; steps: number; tokens: number; share: number }>;
+    byAgent: Array<{ agent: string; steps: number; tokens: number; share: number }>;
+    rework: { tokens: number; share: number } | null;
+    perRequirement: { median: number | null; byProfile: Array<{ profile: string; requirements: number; median: number | null }> };
+  };
 }
 
 export interface KitInfo {

@@ -30,6 +30,7 @@
 | `schema` / `kind` | `1` / `"run"` |
 | `machine` / `kitVersion` | 主机名、req-kit 版本 |
 | `requirement` | `{ key, project, name, title, type, profile }`；从卡片开始的需求（1.10 起）另有 `requester`（卡片的提出人）和 `source`（`{ system, id }`） |
+| `steps[].cachedInputTokens` / `steps[].agent` | 1.13 起。输入中来自提示缓存的 tokens（agent 报告时）；这一步用的 agent（Paseo profile 名，或 "provider/model"）。更早的记录没有 |
 | `run` | `{ startedAt, endedAt, attempt, phase, phaseMode, status, outcome, stopReason, stopKind, recoveries }`；`status` 是运行结束时的状态，`outcome` 是完成时报告的结论；`stopKind`（1.12 起）是停下等人的原因代码（见 [state.md](state.md)），`recoveries`（1.12 起）是这次运行中自动处理的次数，按种类，如 `{ "retry": 2 }`。更早的记录没有这两项 |
 | `agents` | `{ builder, reviewer }`：当时配置的 agent（如 `claude/opus（bypassPermissions）`） |
 | `steps` | 这次运行中开始的步骤：`{ key, stepId, phase, attempt, round, startedAt, endedAt, minutes, outcome, inputTokens, outputTokens, costUsd }`；agent 没有报告的用量为 null |
@@ -43,6 +44,7 @@
 - 交付周期：需求第一次开始到完成（最后一次运行以"已完成"结束）的小时数，用这个需求的全部运行，算在完成的那段时间。
 - 代码评审轮数、缺陷修复轮数：不同的（尝试、轮次、仓库）个数；评审分方向或评审小组的几个成员算一轮。
 - 等待：相邻两次运行之间的间隔，按前一次结束时的状态归类：等待确认方案、等待需求方决定、研发完成到开始测试验证、中断到继续。
+- token 花在哪（1.13 起，`tokens`）：这段时间的步骤按 `stepId`、按 `agent` 合计 token（输入 + 输出）和占比；返工（`design_revise`、`review_fix`、`defect_fix`、`reverify`，以及 `design_review`、`code_review` 第 2 轮起）的合计和占比；报告了 `cachedInputTokens` 的，算出输入中来自提示缓存的比例；已完成需求的 token 中位数（按档位）。
 - 停下等人的原因（1.12 起）：这段时间结束的运行按 `stopKind` 计数；更早的记录按结束时的状态推断。确认方案、研发完成等待测试是必要的决定。
 - 无人工到提测的比例（1.12 起）：这段时间有进展、已经研发完成或完成的需求中，所有运行都只停在必要决定处的比例。
 - 自动处理的比例（1.12 起）：自动处理的次数 ÷（自动处理的次数 + 以中断结束的运行数）；需求方决定、缺陷复现不了不算中断。

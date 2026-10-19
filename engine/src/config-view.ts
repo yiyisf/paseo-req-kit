@@ -117,6 +117,11 @@ const CATALOG: Array<{ id: string; title: string; description: string; keys: Rec
       browserVerify: { label: "检查网页界面", description: "功能验证时用界面检查命令（不靠看图）检查网页；Paseo 有内置浏览器时也用它操作。", display: (v) => ({ auto: "自动", off: "关" })[String(v)] ?? String(v) },
       paseoServices: { label: "由 Paseo 启动服务", description: "用 paseo.json 中的服务脚本启动和重启服务。", display: (v) => ({ auto: "自动", off: "关" })[String(v)] ?? String(v) },
       serviceReadySeconds: { label: "等服务就绪", description: "启动服务后最多等多久。", display: (v) => `${v} 秒` },
+      budget: {
+        label: "每个需求的 token 预算",
+        description: "一个需求所有步骤合计（输入 + 输出）最多用多少 tokens；用到一定比例时提醒，用完后做完当前步骤就停下，继续开发会再给一份预算。",
+        display: (v) => { const b = v as PipelineConfig["budget"]; return b.tokens === null ? "不限" : `${b.tokens >= 10_000 ? `${Math.round(b.tokens / 1000) / 10} 万` : b.tokens}，用到 ${b.warnPercent}% 时提醒`; },
+      },
     },
   },
   {
