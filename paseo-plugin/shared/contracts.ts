@@ -34,6 +34,8 @@ export interface Requirement {
   updatedAt: string;
   usage: Usage | null;
   present: boolean;
+  /** req-kit 1.13+: it has an interface prototype, which the review page shows. */
+  hasPrototype?: boolean;
   /** req-kit 1.12+: what a requirement that needs a person is waiting for; absent before. */
   waiting?: {
     since: string;
@@ -160,6 +162,13 @@ export const runRpc = defineRpc({
     text: z.string().max(8000).optional(),
   }),
   output: z.object({ ok: z.boolean(), message: z.string() }),
+});
+
+/** req api review-url (1.13): the address of the requirement's prototype review page. */
+export const reviewUrlRpc = defineRpc({
+  name: "req.review-url",
+  input: target,
+  output: z.object({ url: z.string(), readOnly: z.boolean() }),
 });
 
 /** req api config (1.12): every setting, its value in words and which file set it. */

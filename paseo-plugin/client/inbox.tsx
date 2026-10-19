@@ -8,6 +8,7 @@ import { Text, View } from "react-native";
 import type { Attention, Requirement } from "../shared/contracts";
 import { useAction, usePreferences } from "./data";
 import { facts } from "./format";
+import { ReviewLink } from "./review-link";
 import { Badge, Button, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
@@ -98,6 +99,7 @@ function InboxCard({ theme, layout, item, open, readOnly }: { theme: Theme; layo
         </View>
       ) : (
         <>
+          {item.attention === "approval" && item.hasPrototype ? <ReviewLink theme={theme} compact={layout.compact} repo={repo} featureDir={item.featureDir} waiting /> : null}
           {writing && w?.canReply ? (
             <View style={{ gap: 8 }}>
               <TextInput

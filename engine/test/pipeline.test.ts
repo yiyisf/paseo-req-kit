@@ -1390,9 +1390,15 @@ test("浏览器验证：步骤 agent 有 Paseo 浏览器工具时，验证类步
   const off = setup({ browserVerify: "off" });
   assert.equal(runMain(off, { capabilities: { paseoTools: true, browser: true } }).code, 0);
   assert.doesNotMatch(events(off).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "", /用浏览器验证/);
+  assert.doesNotMatch(events(off).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "", /界面检查命令/);
+  // 1.13: without Paseo's browser (the web UI, no desktop app), verification still checks pages, in words.
   const none = setup();
   assert.equal(runMain(none, { capabilities: { paseoTools: true, browser: false } }).code, 0);
-  assert.doesNotMatch(events(none).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "", /用浏览器验证/);
+  const verify = events(none).find((e) => e.type === "start" && e.key === "verify")?.prompt ?? "";
+  assert.doesNotMatch(verify, /用浏览器验证/);
+  assert.match(verify, /界面检查命令：node ".*req\.mjs" ui-check/);
+  assert.match(verify, /# 不靠看图检查网页界面/);
+  assert.match(prompt("verify"), /# 不靠看图检查网页界面[\s\S]*# 用浏览器验证网页界面/);
 });
 
 test("自动新建工作区：在主分支上用 --worktree 启动，需求移到新 worktree 提交，步骤放进那里但仍挂在对话下；之后从原对话查看和继续", async () => {

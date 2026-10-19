@@ -99,6 +99,8 @@ function currentSteps(state: PipelineState | null) {
 }
 
 export interface ListItem {
+  /** 1.13: the requirement has an interface prototype (the review page can show it). */
+  hasPrototype?: boolean;
   key: string;
   project: string;
   repo: string;
@@ -163,6 +165,7 @@ function item(repo: string, branch: string | null, featureDir: string, extra: { 
     usage: usageOf(state),
     present: true,
     waiting: waitingOf(repo, featureDir, state),
+    hasPrototype: fs.existsSync(path.join(repo, featureDir, "prototype")),
   };
 }
 
@@ -447,8 +450,20 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       const { message } = configureJson(["--set", value]);
       return { ok: true, message };
     }
+    case "review-url": {
+      // 1.13: the prototype review page of a requirement (starts the page's server when needed).
+      const feature = need("需求");
+      const readOnly = flag(argv, "--read-only");
+      const { repo: r, featureDir } = locate(repo, feature);
+      return import("./review.js").then(async ({ ensureReviewServer, keyOf, reviewUrl }) => {
+        const key = keyOf(r, featureDir);
+        if (!key) throw new ApiError("not_found", `${featureDir} 不在本机的需求列表中`);
+        if (!fs.existsSync(path.join(r, featureDir, "prototype"))) throw new ApiError("not_found", `${featureDir} 还没有界面原型`);
+        return { url: reviewUrl(await ensureReviewServer(), key, readOnly), readOnly };
+      });
+    }
     default:
-      throw new ApiError("bad_arguments", `没有 "${command ?? ""}" 这个 api 命令。可用：version、list、status、file、stats、index、run、models、set-agents、config`);
+      throw new ApiError("bad_arguments", `没有 "${command ?? ""}" 这个 api 命令。可用：version、list、status、file、stats、index、run、models、set-agents、config、review-url`);
   }
 }
 
@@ -456,7 +471,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
   let code = 0;
   let out: Record<string, unknown>;
   try {
-    out = { schema: API_SCHEMA, kitVersion: kitVersion(), data: apiMain(process.argv.slice(2)) };
+    out = { schema: API_SCHEMA, kitVersion: kitVersion(), data: await apiMain(process.argv.slice(2)) };
     const data = out.data as { ok?: boolean } | null;
     if (data && data.ok === false) code = 1;
   } catch (error) {

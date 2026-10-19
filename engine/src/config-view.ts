@@ -114,7 +114,7 @@ const CATALOG: Array<{ id: string; title: string; description: string; keys: Rec
       specReview: { label: "需求说明审阅", description: "开发前由另一个模型审一遍需求说明。", display: (v) => ({ off: "关", standard: "标准档", always: "所有档位" })[String(v)] ?? String(v) },
       requirementTypes: { label: "按类型的做法", description: "缺陷、重构、评估各走自己的做法。", display: (v) => list((v as string[]).map((t) => ({ defect: "缺陷", refactor: "重构", assessment: "评估" })[t] ?? t)) },
       slices: { label: "按切片实现", description: "方案分几片时逐片实现。", display: (v) => { const s = v as PipelineConfig["slices"]; return `${profilesText(s.profiles)}，最多 ${s.max} 片`; } },
-      browserVerify: { label: "用浏览器验证", description: "Paseo 有内置浏览器时，验证网页界面。", display: (v) => ({ auto: "自动", off: "关" })[String(v)] ?? String(v) },
+      browserVerify: { label: "检查网页界面", description: "功能验证时用界面检查命令（不靠看图）检查网页；Paseo 有内置浏览器时也用它操作。", display: (v) => ({ auto: "自动", off: "关" })[String(v)] ?? String(v) },
       paseoServices: { label: "由 Paseo 启动服务", description: "用 paseo.json 中的服务脚本启动和重启服务。", display: (v) => ({ auto: "自动", off: "关" })[String(v)] ?? String(v) },
       serviceReadySeconds: { label: "等服务就绪", description: "启动服务后最多等多久。", display: (v) => `${v} 秒` },
     },

@@ -30,6 +30,9 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req digest --schedule "0 9 * * 1"
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
   req sync <需求>              把需求同步到对接的外部系统（补发失败的调用、补建卡片、更新状态）
+  req review <需求>            在浏览器打开原型审查页：点选要改的地方、直接改文字，提交意见或确认方案
+  req ui-check <网址> [--prototype <原型文件>] [--width 1280,390]
+                               不靠看图检查网页：显示不全、遮挡、超出屏幕、文字太淡、报错，和原型对文字
   req reply <需求> <回复>      把回答或方案意见转给需求的对话（插件的"等你处理"用它）
   req integration test [需求]  只显示对接外部系统时会执行的命令，不真正调用
   req start --from <系统>:<卡号>  从需求管理系统中的一张卡片开始需求（没有人开着对话也可以）
@@ -214,6 +217,12 @@ switch (command) {
     break;
   case "integration":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "integration-cmd.ts"), ...rest]) : 1;
+    break;
+  case "review":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "review.ts"), ...rest]) : 1;
+    break;
+  case "ui-check":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "ui-check.ts"), ...rest]) : 1;
     break;
   case "docs":
     code = node([path.join(kitRoot, "bin", "req-docs.mjs"), ...rest]);

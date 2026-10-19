@@ -30,7 +30,7 @@ import {
   permissionMessage,
   resultFollowUp,
 } from "./messages.js";
-import { kitVersion } from "./locations.js";
+import { KIT_ROOT, kitVersion } from "./locations.js";
 import { type AgentUsage, describeTotals, totals } from "./usage.js";
 import { dispatchNotifiers, type NotifierEventType, peopleOf } from "./notifiers.js";
 import { describeExternal, type IntegrationEvent, renderArgs, resolveCommand, type Runner, syncIntegration } from "./integrations.js";
@@ -964,15 +964,23 @@ function mergeExtras(
 /** Steps that check the result the way a user would. */
 const BROWSER_STEPS: readonly StepId[] = ["verify", "defect_fix", "reverify"];
 
-/** Points verification at Paseo's built-in browser when the step agents have it. */
+/**
+ * How verification looks at web pages: `req ui-check` (1.13; reports in words, needs no vision
+ * and no Paseo desktop) always, plus Paseo's built-in browser when the step agents have it.
+ */
 async function browserExtras(ctx: PipelineContext, id: StepId): Promise<{ contextLines: string[]; sections: string[] } | null> {
   if (!BROWSER_STEPS.includes(id) || ctx.config.browserVerify === "off") return null;
-  if (ctx.capabilities === undefined) ctx.capabilities = await ctx.runtime.capabilities().catch(() => null);
-  if (!ctx.capabilities?.browser) return null;
-  return {
-    contextLines: ["浏览器：可以用 Paseo 内置浏览器（browser_* 工具）验证网页界面"],
-    sections: [readToolPrompt({ ...ctx.prompts, repo: ctx.repo }, "browser-verify.md")],
+  const prompts = { ...ctx.prompts, repo: ctx.repo };
+  const out = {
+    contextLines: [`界面检查命令：node "${path.join(KIT_ROOT, "bin", "req.mjs")}" ui-check`],
+    sections: [readToolPrompt(prompts, "ui-check.md")],
   };
+  if (ctx.capabilities === undefined) ctx.capabilities = await ctx.runtime.capabilities().catch(() => null);
+  if (ctx.capabilities?.browser) {
+    out.contextLines.push("浏览器：可以用 Paseo 内置浏览器（browser_* 工具）验证网页界面");
+    out.sections.push(readToolPrompt(prompts, "browser-verify.md"));
+  }
+  return out;
 }
 
 /** Steps that need the project's services running. */

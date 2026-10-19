@@ -1,7 +1,7 @@
 // The daemon side: each RPC is one `req api` call. Management actions are refused here too
 // when the plugin is set to read-only, not only hidden in the app.
 import type { RpcInput } from "@getpaseo/plugin";
-import type { configRpc, ConfigViewData, fileRpc, KitInfo, ModelsData, Requirement, RequirementDetail, runRpc, setAgentsRpc, statsRpc, StatsSummary, statusRpc } from "../shared/contracts";
+import type { configRpc, ConfigViewData, fileRpc, KitInfo, ModelsData, Requirement, RequirementDetail, reviewUrlRpc, runRpc, setAgentsRpc, statsRpc, StatsSummary, statusRpc } from "../shared/contracts";
 import { coalesce, type ReqRunner } from "./req";
 
 export interface Handlers {
@@ -14,6 +14,7 @@ export interface Handlers {
   models(): Promise<ModelsData>;
   config(input: RpcInput<typeof configRpc>): Promise<ConfigViewData>;
   setAgents(input: RpcInput<typeof setAgentsRpc>): Promise<{ ok: boolean; message: string }>;
+  reviewUrl(input: RpcInput<typeof reviewUrlRpc>): Promise<{ url: string; readOnly: boolean }>;
 }
 
 export function createHandlers(input: { req: ReqRunner; kitHome: () => string; readOnly: () => Promise<boolean> }): Handlers {
@@ -44,6 +45,11 @@ export function createHandlers(input: { req: ReqRunner; kitHome: () => string; r
       const extra = action === "verify" && verifyEnv ? ["--verify-env", verifyEnv] : action === "reply" ? [text!.trim()] : [];
       const result = (await req(["run", action, featureDir, "--repo", repo, ...extra], { timeoutMs: 200_000 })) as { ok: boolean; message: string };
       return { ok: result.ok, message: result.message };
+    },
+    async reviewUrl({ repo, featureDir }) {
+      // Read-only plugin: the page opens without the buttons that send or confirm.
+      const ro = await input.readOnly();
+      return (await req(["review-url", featureDir, "--repo", repo, ...(ro ? ["--read-only"] : [])], { timeoutMs: 30_000 })) as { url: string; readOnly: boolean };
     },
     async config({ repo }) {
       return (await req(repo ? ["config", "--repo", repo] : ["config", "--machine"])) as ConfigViewData;

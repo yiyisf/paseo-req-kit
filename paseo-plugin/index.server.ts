@@ -1,5 +1,5 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { configRpc, fileRpc, listRpc, modelsRpc, preferences, runRpc, setAgentsRpc, statsRpc, statusRpc, versionRpc } from "./shared/contracts";
+import { configRpc, fileRpc, listRpc, modelsRpc, preferences, reviewUrlRpc, runRpc, setAgentsRpc, statsRpc, statusRpc, versionRpc } from "./shared/contracts";
 import { createHandlers } from "./server/handlers";
 import { kitHomeOf, reqApi } from "./server/req";
 
@@ -38,6 +38,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(modelsRpc, () => handlers.models());
   server.handle(configRpc, (input) => handlers.config(input));
   server.handle(setAgentsRpc, (input) => handlers.setAgents(input));
+  server.handle(reviewUrlRpc, (input) => handlers.reviewUrl(input));
   return () => {
     unsubscribe();
   };

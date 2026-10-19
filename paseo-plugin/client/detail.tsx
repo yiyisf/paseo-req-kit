@@ -9,6 +9,7 @@ import type { Action, RequirementDetail, Step } from "../shared/contracts";
 import { useAction, useDocument, usePreferences, useRequirement, useRequirements } from "./data";
 import { ACTION_TEXT, actionsFor, ago, ATTENTION_LABELS, facts, FILE_LABELS, minutes, tokens } from "./format";
 import { Markdown, tsvToMarkdown } from "./markdown";
+import { ReviewLink } from "./review-link";
 import { Badge, Button, Chip, Status, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
@@ -191,6 +192,8 @@ export function RequirementView({
           ))}
         </View>
       ) : null}
+
+      {d.hasPrototype ? <ReviewLink theme={theme} compact={layout.compact} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} waiting={d.attention === "approval"} /> : null}
 
       {d.files.length > 0 ? (
         <View style={{ gap: 6 }}>

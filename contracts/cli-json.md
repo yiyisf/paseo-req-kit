@@ -31,6 +31,7 @@
 | `req api models` | 1.12 起。`{ current, choices, recommended }`：本机配置中现在的 `agents`；daemon 上能无人值守运行的选择（`{ id, label, provider, profile }`，Paseo profile 在前）；按推荐的 `agents`。连不上 daemon 时报错 |
 | `req api config [--repo <目录>] [--machine]` | 1.12 起。`{ sources, ignored, error, repo, groups }`：`sources` 是生效的配置文件（`layer` 为 `machine` / `team` / `project`，按叠加顺序）；`groups` 按主题分组，每项 `{ key, label, description, display, value, setBy, scope, changed }`：`display` 是用大白话写的值，`value` 中看起来像密钥的值和个人账号替换为 `••••`，`setBy` 是写了它的文件，`changed` 表示与默认值不同。配置有错误时 `error` 写明原因，值按各文件所写。`--machine` 不看项目配置 |
 | `req api set-agents --json <设置>` | 1.12 起。`{ ok, message }`。`<设置>` 是 `{ builder, reviewer, fallback }`（`fallback` 可以为 null），检查后写入本机配置的 `agents`，原文件备份 |
+| `req api review-url <需求> [--repo <目录>] [--read-only]` | 1.13 起。`{ url, readOnly }`：这个需求的原型审查页地址（需要时在后台启动审查页的服务）。`--read-only` 的地址只能看，不能提交意见或确认方案。需求不在本机的需求索引中或还没有 `prototype/` 时报 `not_found` |
 
 `<需求>` 的写法与 `req status` 相同：功能目录、目录名或名称中能唯一确定的一部分。需求在为它新建的工作区中开发时，`--repo` 写对话所在的目录或那个工作区都可以。
 
@@ -56,6 +57,7 @@
 | `updatedAt` | 最近一次变化的时间 |
 | `usage` | `{ steps, agentMinutes, inputTokens, outputTokens, costUsd }`；没运行过为 null |
 | `present` | 目录是否还在 |
+| `hasPrototype` | 1.13 起。功能目录中有界面原型（`prototype/`），可以用原型审查页查看 |
 
 ## 详情（`status`）
 

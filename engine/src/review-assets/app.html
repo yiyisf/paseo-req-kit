@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>原型审查 · req-kit</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="heading">
+        <span class="eyebrow">原型审查</span>
+        <h1 id="title">正在打开…</h1>
+        <span id="status" class="pill" hidden></span>
+      </div>
+      <div class="controls">
+        <div class="group" id="filesGroup" hidden><span class="label">页面</span><div class="seg" id="files"></div></div>
+        <div class="group" id="statesGroup" hidden><span class="label">状态</span><div class="seg" id="states"></div></div>
+        <div class="group"><span class="label">宽度</span><div class="seg" id="widths"></div></div>
+        <div class="group"><span class="label">操作</span><div class="seg" id="modes"></div></div>
+        <label class="check"><input type="checkbox" id="showRegions" checked /> 标出要看的地方</label>
+        <label class="check" id="diffWrap" hidden><input type="checkbox" id="showDiff" /> 标出这一版改了哪里</label>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="stage" aria-label="原型">
+        <p class="hint" id="hint"></p>
+        <div class="frame-wrap" id="frameWrap">
+          <div class="sizer" id="sizer"><iframe id="frame" title="界面原型"></iframe></div>
+        </div>
+        <p class="empty" id="empty" hidden></p>
+      </section>
+
+      <aside class="side">
+        <details class="card" id="guide" open>
+          <summary>怎么用</summary>
+          <ol>
+            <li>先看标出来的地方（①②③），它们是这次要改的，右边有对应的验收标准。</li>
+            <li>想改哪里，就<strong>点哪里</strong>：选一种改法，再用自己的话补一句，不用专业词汇。</li>
+            <li>想换文字，<strong>双击文字</strong>直接改成你想要的字。</li>
+            <li>都看完了，在最下面提交修改意见；没有要改的，就同意开始写代码。</li>
+          </ol>
+        </details>
+
+        <section class="card">
+          <h2>要看的地方</h2>
+          <ul class="list" id="regions"></ul>
+        </section>
+
+        <section class="card" id="changesCard" hidden>
+          <h2>这一版的变化</h2>
+          <div id="changes"></div>
+        </section>
+
+        <section class="card">
+          <h2>我的意见 <span class="count" id="count"></span></h2>
+          <ul class="list" id="comments"></ul>
+          <label class="field">
+            <span>总体意见（可以不写）</span>
+            <textarea id="general" rows="3" placeholder="例如：整体颜色太暗了，参考现在的订单列表页"></textarea>
+          </label>
+          <p class="muted small" id="saved"></p>
+        </section>
+
+        <section class="card actions" id="actions">
+          <p class="muted" id="actionNote"></p>
+          <button type="button" class="primary" id="submitChanges">提交修改意见</button>
+          <button type="button" class="secondary" id="approve">没有要改的，同意开始写代码</button>
+          <p id="result" class="result" role="status" aria-live="polite"></p>
+        </section>
+      </aside>
+    </main>
+
+    <div class="pop" id="pop" role="dialog" aria-modal="false" aria-labelledby="popTitle" hidden>
+      <p class="pop-title" id="popTitle"></p>
+      <p class="pop-sub" id="popSub"></p>
+      <div class="chips" id="kinds" role="radiogroup" aria-label="怎么改"></div>
+      <label class="field" id="newTextField" hidden>
+        <span id="newTextLabel">改成</span>
+        <input type="text" id="newText" />
+      </label>
+      <label class="field">
+        <span id="noteLabel">用你自己的话说说（可以不写）</span>
+        <textarea id="note" rows="2"></textarea>
+      </label>
+      <div class="pop-actions">
+        <button type="button" class="secondary" id="popCancel">取消</button>
+        <button type="button" class="primary" id="popOk">添加</button>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

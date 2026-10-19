@@ -1,7 +1,7 @@
 // Data hooks: every read is an RPC to the daemon side (req api), cached by React Query.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
-import { configRpc, fileRpc, listRpc, modelsRpc, preferences, runRpc, setAgentsRpc, statsRpc, statusRpc, versionRpc, type Action, type AgentProfileData } from "../shared/contracts";
+import { configRpc, fileRpc, listRpc, modelsRpc, preferences, reviewUrlRpc, runRpc, setAgentsRpc, statsRpc, statusRpc, versionRpc, type Action, type AgentProfileData } from "../shared/contracts";
 
 export function usePreferences(): { readOnly: boolean; refreshMs: number } {
   const settings = useSettings(preferences);
@@ -71,4 +71,15 @@ export function useSetAgents() {
 export function useConfigView(repo: string | null) {
   const config = useRpc(configRpc);
   return useQuery({ queryKey: ["req", "config", repo ?? ""], queryFn: () => config(repo ? { repo } : {}), retry: false });
+}
+
+/** The prototype review page's address (1.13); it stays valid while its server runs. */
+export function useReviewUrl(repo: string, featureDir: string, enabled: boolean) {
+  const reviewUrl = useRpc(reviewUrlRpc);
+  return useQuery({
+    queryKey: ["req", "review-url", repo, featureDir],
+    queryFn: () => reviewUrl({ repo, featureDir }),
+    enabled: enabled && Boolean(repo && featureDir),
+    retry: false,
+  });
 }
