@@ -59,12 +59,11 @@ jobs:
       - run: npm install --no-audit --no-fund --ignore-scripts
       - run: npm run typecheck
 
-  # 1.13: most people run req-kit on Windows. For now this only reports (it does not block a
-  # release): tests written for Linux (sh, symlinks, signals) are being made portable one by one.
+  # 1.13: most people run req-kit on Windows; the release workflow requires the same tests to
+  # pass there before it tags and publishes.
   windows:
     runs-on: windows-latest
     timeout-minutes: 40
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,13 +77,13 @@ jobs:
           set -o pipefail
           npm test 2>&1 | tee test.log
       - name: Failed tests
-        if: always()
+        if: failure()
         shell: bash
         run: |
           if ! grep -qE "^not ok" test.log; then echo "所有测试都通过了"; exit 0; fi
           details=$(grep -E -A16 "^not ok" test.log | grep -vE "^\s+(at |---|\.\.\.|duration_ms|type:|location:|failureType:|stack:|code:|operator:)|^--$" | head -160 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
-          echo "::warning title=Windows details::$details"
-          grep -E "^not ok" test.log | head -9 | sed 's/^/::warning title=Windows::/' || true
+          echo "::error title=Windows details::$details"
+          grep -E "^not ok" test.log | head -9 | sed 's/^/::error title=Windows::/' || true
       - name: Commands start on Windows
         if: always()
         shell: pwsh

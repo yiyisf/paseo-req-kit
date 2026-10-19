@@ -64,8 +64,27 @@ jobs:
             fi
           fi
 
-  release:
+  # 1.13: most people run req-kit on Windows, so its tests pass there too before anything is
+  # tagged or published.
+  windows:
     needs: tag
+    if: ${{ needs.tag.outputs.tag != '' }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.create == 'true' && github.sha || format('refs/tags/{0}', needs.tag.outputs.tag) }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci || npm install
+        shell: bash
+      - run: npm test
+        shell: bash
+
+  release:
+    needs: [tag, windows]
     if: ${{ needs.tag.outputs.tag != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
