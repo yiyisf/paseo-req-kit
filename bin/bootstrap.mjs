@@ -188,6 +188,18 @@ async function daemonStatus(url) {
   }
 }
 
+/** The useful lines of a failed `paseo daemon start`: its error and the log path it names. */
+export function startProblem(result) {
+  if (result.error?.code === "ETIMEDOUT") return "等了 11 分钟仍没有就绪";
+  if (result.error) return result.error.message;
+  const lines = `${result.stderr}\n${result.stdout}`
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const pick = lines.filter((l) => /error|fail|logs?:|EADDRINUSE|denied|not ready/i.test(l));
+  return (pick.length > 0 ? pick : lines).slice(0, 4).join(" / ").slice(0, 600);
+}
+
 async function ask(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -321,12 +333,26 @@ async function main(argv) {
       if ((await daemonStatus(daemonUrl)).up) {
         if (changed) warn("Paseo daemon 正在运行，网页界面要在重启后生效：paseo daemon restart（会中断正在运行的 agent，方便时再重启）");
         else ok("Paseo daemon 正在运行");
-      } else if (paseo(["daemon", "start"]).status === 0) {
+      } else {
+        // `paseo daemon start` waits until the daemon listens (up to 10 minutes; the first start
+        // on a new machine can take a while), so it gets more time than other paseo calls.
+        say("  正在启动 Paseo daemon（第一次启动可能要一两分钟）……");
+        const started = paseo(["daemon", "start"], { timeout: 660_000 });
         // Wait for it to answer: the wizard below asks the daemon for the agents.
-        const wait = Number(process.env.REQ_KIT_PASEO_WAIT ?? 15);
-        for (let i = 0; i < wait && !(await daemonStatus(daemonUrl)).up; i++) await new Promise((r) => setTimeout(r, 1000));
-        ok("已启动 Paseo daemon");
-      } else warn("没能启动 Paseo daemon，请运行 paseo daemon start 查看原因");
+        const wait = Number(process.env.REQ_KIT_PASEO_WAIT ?? 30);
+        let up = (await daemonStatus(daemonUrl)).up;
+        for (let i = 0; i < wait && !up; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          up = (await daemonStatus(daemonUrl)).up;
+        }
+        if (up) ok("已启动 Paseo daemon");
+        else {
+          const why = startProblem(started);
+          if (started.status === 0) warn(`已运行 paseo daemon start，但 ${daemonUrl} 还没有响应${why ? `：${why}` : ""}`);
+          else warn(`没能启动 Paseo daemon${why ? `：${why}` : ""}`);
+          say("    稍后运行 paseo daemon status 查看；还是没有启动时运行 paseo daemon start，日志在它写出的 Logs 路径。不影响这次安装，启动后再运行 req doctor");
+        }
+      }
       say(`  Paseo 网页界面：${daemonUrl}/`);
     }
 

@@ -159,7 +159,9 @@ test("一键安装：没有 Paseo 时安装与 req-kit 匹配的 Paseo 命令行
   assert.match(r.stdout, /已开启 Paseo 自带的网页界面/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, "paseo-config.json"), "utf8"))["features.webUi.enabled"], true);
   assert.ok(paseoCalls(home).some((c) => c.join(" ") === "daemon start"));
-  assert.match(r.stdout, /已启动 Paseo daemon/);
+  // Nothing answers on the test address: said plainly, the install goes on.
+  assert.match(r.stdout, /已运行 paseo daemon start，但 http:\/\/127\.0\.0\.1:9 还没有响应/);
+  assert.match(r.stdout, /稍后运行 paseo daemon status 查看/);
   assert.match(r.stdout, /Paseo 网页界面：http:\/\/127\.0\.0\.1:9\//);
   // The Paseo step comes before setup (the wizard needs the daemon).
   assert.ok(r.stdout.indexOf("检查 Paseo") < r.stdout.indexOf("启用这个版本"));
@@ -321,4 +323,23 @@ test("npx 安装：PATH 中找命令时跳过 npx 临时目录里的副本；npm
   assert.equal(which("nothing-here", env), null);
   assert.ok(sameRegistry("https://npm.example.internal", "https://NPM.example.internal/"));
   assert.ok(!sameRegistry("https://a.example/", "https://b.example/"));
+});
+
+test("npx 安装：paseo daemon start 失败时写出它的错误和日志位置，安装继续", async () => {
+  const { startProblem } = await import("../bin/bootstrap.mjs");
+  assert.equal(
+    startProblem({ status: 1, stdout: "", stderr: "Error: Daemon failed to start (exit 1). Logs: /h/.paseo/daemon.log\nlisten EADDRINUSE 127.0.0.1:6767\nat x" }),
+    "Error: Daemon failed to start (exit 1). Logs: /h/.paseo/daemon.log / listen EADDRINUSE 127.0.0.1:6767",
+  );
+  const timeout = Object.assign(new Error("spawnSync paseo ETIMEDOUT"), { code: "ETIMEDOUT" });
+  assert.equal(startProblem({ status: null, stdout: "", stderr: "", error: timeout }), "等了 11 分钟仍没有就绪");
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-sh-home-"));
+  const prefix = path.join(home, "npm-global");
+  fs.mkdirSync(prefix);
+  const env = paseoEnv(home, { FAKE_NPM_REGISTRY: registry({ latest: VERSION }), FAKE_NPM_PREFIX: prefix, REQ_KIT_PASEO_BIN: "", FAKE_PASEO_START_FAIL: "listen EADDRINUSE 127.0.0.1:6767" });
+  const r = runWithPaseo(home, env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /没能启动 Paseo daemon：Error: Daemon failed to start \(exit 1\)\. Logs: \/home\/x\/\.paseo\/daemon\.log \/ listen EADDRINUSE/);
+  assert.equal(installedVersion(home), VERSION);
 });

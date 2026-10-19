@@ -26,6 +26,7 @@ if (a === "--version") {
   write({ ...read(), [d]: JSON.parse(e) });
   out({ action: "saved", applied: true });
 } else if (a === "daemon" && b === "start") {
+  if (process.env.FAKE_PASEO_START_FAIL) fail(`Error: Daemon failed to start (exit 1). Logs: /home/x/.paseo/daemon.log\n${process.env.FAKE_PASEO_START_FAIL}`);
   process.stdout.write("daemon started\n");
 } else if (a === "plugin" && b === "ls") {
   const state = read();
