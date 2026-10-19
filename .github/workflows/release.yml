@@ -16,8 +16,9 @@ name: release
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+    # Every push to main (not only version bumps): after a failed release, the commit with the
+    # fix releases the same version. Already tagged: the tag job says so and stops.
     branches: [main]
-    paths: ["package.json", ".github/workflows/release.yml"]
   # Re-run the release of an existing tag with this (current) workflow, e.g. from the
   # GitHub web page on a phone: Actions → release → Run workflow → tag.
   workflow_dispatch:
