@@ -506,6 +506,7 @@ export function describeStats(s: StatsSummary): string {
     reattach: "接着等还在做的 agent",
     reuse_result: "沿用旧 agent 的结果",
     extend_timeout: "超时后多等一轮",
+    stop_scan: "打断大目录搜索",
     redo: "新开 agent 重做",
     fallback: "换备用模型",
     auto_resume: "自动继续",

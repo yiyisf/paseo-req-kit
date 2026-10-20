@@ -56,6 +56,10 @@ export interface FakeScenario {
   services?: { names: string[]; failing?: string[]; output?: string };
   quota?: ProviderQuota[] | null;
   activity?: ActivityItem[] | null;
+  /** Agents report no token usage (like a provider that does not). */
+  noUsage?: boolean;
+  /** The tool call every agent is running (the scan guard looks at it); started this many minutes ago. */
+  runningTool?: { kind: string; text: string; minutesAgo: number; callId?: string } | null;
   capabilities?: { paseoTools: boolean; browser: boolean } | null;
   setup?: { status: "completed" | "failed" | "none" | "timeout"; error: string | null };
   /** Paseo cannot schedule (older daemon). */
@@ -229,7 +233,7 @@ export const createRuntime: RuntimeFactory = async () => {
             error: null,
             lastMessage: "完成",
             pendingPermissions: [],
-            usage: { inputTokens: 12_000, outputTokens: 800, totalCostUsd: 0.05 },
+            usage: scenario.noUsage ? null : { inputTokens: 12_000, outputTokens: 800, totalCostUsd: 0.05 },
           };
           if (behavior.hang) {
             await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 50)));
@@ -355,6 +359,11 @@ export const createRuntime: RuntimeFactory = async () => {
     async recentActivity(agentId, limit) {
       record({ type: "recentActivity", agentId, limit });
       return scenario.activity ?? null;
+    },
+    async runningTool(agentId) {
+      record({ type: "runningTool", agentId });
+      const t = scenario.runningTool;
+      return t ? { kind: t.kind, text: t.text, callId: t.callId ?? "call-1", startedAt: new Date(Date.now() - t.minutesAgo * 60_000).toISOString() } : null;
     },
     async capabilities() {
       return scenario.capabilities ?? null;

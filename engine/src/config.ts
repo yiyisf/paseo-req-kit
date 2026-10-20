@@ -245,6 +245,12 @@ export interface PipelineConfig {
    * pipeline stops to ask; null: no limit. A notice at warnPercent; continuing gives one more budget.
    */
   budget: { tokens: number | null; warnPercent: number };
+  /**
+   * 1.13: interrupt a step agent's search of a very large directory (the whole disk, the home
+   * directory, ~/.m2, the global node_modules, …) after a minute, and any search after `minutes`,
+   * and tell it how to find what it needs instead. `paths`: more directories never to search whole.
+   */
+  scanGuard: import("./scan-guard.js").ScanGuardSettings;
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -355,6 +361,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   factory: { pollMinutes: 5, titleTags: ["[AI]", "【AI】"], maxNewPerPoll: 3 },
   autoConfirm: { hours: 0 },
   budget: { tokens: null, warnPercent: 80 },
+  scanGuard: { enabled: true, minutes: 5, paths: [] },
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -424,6 +431,7 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
   merged.factory = { ...base.factory, ...(isRecord(raw.factory) ? raw.factory : {}) } as PipelineConfig["factory"];
   merged.autoConfirm = { ...base.autoConfirm, ...(isRecord(raw.autoConfirm) ? raw.autoConfirm : {}) } as PipelineConfig["autoConfirm"];
   merged.budget = { ...base.budget, ...(isRecord(raw.budget) ? raw.budget : {}) } as PipelineConfig["budget"];
+  merged.scanGuard = { ...base.scanGuard, ...(isRecord(raw.scanGuard) ? raw.scanGuard : {}) } as PipelineConfig["scanGuard"];
   if (isRecord(raw.cardSource)) {
     const c = raw.cardSource;
     merged.cardSource = {
@@ -645,6 +653,10 @@ function validate(config: PipelineConfig): void {
   if (typeof config.budget.warnPercent !== "number" || config.budget.warnPercent <= 0 || config.budget.warnPercent >= 100) {
     throw new ConfigError("budget.warnPercent 必须在 1 到 99 之间（用到预算的百分之几时提醒）");
   }
+  const sg = config.scanGuard;
+  if (typeof sg.enabled !== "boolean") throw new ConfigError("scanGuard.enabled 必须是 true 或 false");
+  if (typeof sg.minutes !== "number" || !(sg.minutes >= 1)) throw new ConfigError("scanGuard.minutes 必须是至少 1 的分钟数（搜索运行多久后打断）");
+  if (!Array.isArray(sg.paths) || !sg.paths.every((p) => typeof p === "string" && p.trim())) throw new ConfigError('scanGuard.paths 必须是目录路径的数组，例如 ["D:/share"]');
   const f = config.factory;
   if (typeof f.pollMinutes !== "number" || !(f.pollMinutes >= 1)) throw new ConfigError("factory.pollMinutes 必须是至少 1 的分钟数");
   if (!Number.isInteger(f.maxNewPerPoll) || f.maxNewPerPoll < 1) throw new ConfigError("factory.maxNewPerPoll 必须是正整数");

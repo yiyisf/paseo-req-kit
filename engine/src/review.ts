@@ -11,6 +11,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { ENGINE_DIR, KIT_ROOT, kitHome, kitVersion } from "./locations.js";
@@ -510,7 +511,8 @@ async function serve(env: NodeJS.ProcessEnv): Promise<void> {
     token,
     readToken,
     version: kitVersion(),
-    publicUrl: env.REQ_KIT_REVIEW_PUBLIC_URL?.trim() || `http://127.0.0.1:${port}`,
+    // Listening for other computers without a public address: this computer's name is the best guess.
+    publicUrl: env.REQ_KIT_REVIEW_PUBLIC_URL?.trim() || `http://${/^(127\.|localhost$|::1$)/.test(host) ? "127.0.0.1" : os.hostname()}:${port}`,
     startedAt: new Date().toISOString(),
   };
   fs.mkdirSync(kitHome(env), { recursive: true });

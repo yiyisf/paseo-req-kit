@@ -122,6 +122,11 @@ const CATALOG: Array<{ id: string; title: string; description: string; keys: Rec
         description: "一个需求所有步骤合计（输入 + 输出）最多用多少 tokens；用到一定比例时提醒，用完后做完当前步骤就停下，继续开发会再给一份预算。",
         display: (v) => { const b = v as PipelineConfig["budget"]; return b.tokens === null ? "不限" : `${b.tokens >= 10_000 ? `${Math.round(b.tokens / 1000) / 10} 万` : b.tokens}，用到 ${b.warnPercent}% 时提醒`; },
       },
+      scanGuard: {
+        label: "打断大目录搜索",
+        description: "步骤 agent 搜索整个磁盘、用户目录、Maven 仓库（.m2）、全局 node_modules 等很大的目录时，一分钟后打断它并告诉它该怎么查；任何搜索运行太久也打断。",
+        display: (v) => { const g = v as PipelineConfig["scanGuard"]; return g.enabled ? `开，搜索超过 ${g.minutes} 分钟也打断${g.paths.length ? `；另外不许整个搜索：${g.paths.join("、")}` : ""}` : "关"; },
+      },
     },
   },
   {

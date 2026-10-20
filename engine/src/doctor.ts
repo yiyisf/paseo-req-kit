@@ -18,6 +18,8 @@ import { defaultConfigPath, findDependency, KIT_ROOT, kitVersion } from "./locat
 import { PROJECT_DIR } from "./prompts.js";
 import { describeAgentProfile, ProfileResolutionError, profilesFromDaemonConfig, resolveConfigProfiles, usesPaseoProfiles } from "./paseo-profiles.js";
 import { isAlive, STATE_VERSION } from "./state.js";
+import { readRuns, runsFile } from "./records.js";
+import { byRequirement, dedupe } from "./stats.js";
 import { resolveCommand } from "./integrations.js";
 
 const counts = { fail: 0, warn: 0 };
@@ -160,12 +162,28 @@ function configuration(configPath: string, repo: string | null): PipelineConfig 
       if (satisfies(kitVersion(), required)) report("ok", `版本要求 ${required}：当前 ${kitVersion()} 满足`);
       else report("warn", `团队或项目要求 req-kit ${required}，当前为 ${kitVersion()}`, "按 docs/guide/安装与升级.md 升级到符合要求的版本");
     }
+    budgetUsage(loaded.config);
     return loaded.config;
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
     report("fail", error.message, `编辑 ${configPath}`);
     return null;
   }
+}
+
+/** 1.13: a token budget only works when the agents report usage; this machine's recent requirements say whether they do. */
+function budgetUsage(config: PipelineConfig): void {
+  if (config.budget.tokens === null) return;
+  let recent: ReturnType<typeof byRequirement> = [];
+  try {
+    recent = byRequirement(dedupe(readRuns(runsFile()))).slice(-3);
+  } catch {
+    return;
+  }
+  if (recent.length === 0) return;
+  if (recent.every((q) => q.inputTokens === null && q.outputTokens === null)) {
+    report("warn", `设了 token 预算（每个需求 ${config.budget.tokens}），但本机最近 ${recent.length} 个需求的 agent 都没有报告 token 用量，预算不会起作用`, "换用会报告用量的 agent；不需要预算时把 budget.tokens 设为 null");
+  } else report("ok", "token 预算：agent 会报告用量");
 }
 
 /** Daemon address from the raw file, so the daemon can be checked even when the agents are not filled in yet. */

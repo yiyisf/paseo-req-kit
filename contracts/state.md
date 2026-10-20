@@ -21,7 +21,7 @@
 | `stopKind` | string \| null | 可选，1.12 起。停下等人的原因代码：必要的决定 `approval`（确认方案）、`phase_gate`（研发完成，等待测试）、`business`（需求方决定）、`reproduce`（缺陷复现不了）；中断 `timeout`、`agent_error`、`invalid_result`、`transient`、`stopped`、`process_exit`、`budget`（1.13，用完 token 预算）、`other`。运行中或完成时为 null |
 | `budget` | object | 可选，1.13 起，配置了 `budget.tokens` 时。`{ allowance, warnedAt }`：停下前允许用到的 tokens（预算，每次用完后继续再加一份）；已经提醒过的那一档 |
 | `waitingPermission` | object \| null | 可选，1.13 起。步骤 agent 在等权限批准时：`{ agentId, stepTitle, requests, since }`；没有在等时为 null |
-| `recoveries` | array | 可选，1.12 起。流水线自己处理掉的问题（最多保留 200 条）：`at`、`key`（步骤键）、`kind`（`retry` 重试 / `reattach` 接着等上一次的 agent / `reuse_result` 沿用上一次 agent 的结果 / `extend_timeout` 超时后多等一轮 / `redo` 新开 agent 重做 / `fallback` 换备用模型 / `auto_resume` 预约自动继续 / `quota_wait` 预约在额度恢复后继续 / `self_answer` 方案审核的问题由 builder 自答）、`detail` |
+| `recoveries` | array | 可选，1.12 起。流水线自己处理掉的问题（最多保留 200 条）：`at`、`key`（步骤键）、`kind`（`retry` 重试 / `reattach` 接着等上一次的 agent / `reuse_result` 沿用上一次 agent 的结果 / `extend_timeout` 超时后多等一轮 / `redo` 新开 agent 重做 / `fallback` 换备用模型 / `auto_resume` 预约自动继续 / `quota_wait` 预约在额度恢复后继续 / `self_answer` 方案审核的问题由 builder 自答 / `stop_scan` 打断了搜索大目录的命令，1.13 起）、`detail` |
 | `profile` | `quick` \| `standard` | 档位 |
 | `branch` | string \| null | 工作分支，启动时确定 |
 | `milestones` | string[] | 已发送的进展通知，续跑时不重复发送 |

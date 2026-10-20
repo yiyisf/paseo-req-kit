@@ -1,3 +1,4 @@
+import { judge as judgeScan } from "./scan-guard.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -200,6 +201,13 @@ async function checkBudget(ctx: PipelineContext, stepTitle: string): Promise<voi
   const budget = (ctx.state.budget ??= { allowance: limit, warnedAt: null });
   const used = tokensUsed(ctx.state);
   if (used >= budget.allowance) throw new BudgetReached(used, budget.allowance);
+  // 1.13: agents that report no usage make the budget do nothing; say so once instead of keeping quiet.
+  const finished = ctx.state.history.filter((h) => h.endedAt);
+  if (used === 0 && finished.length > 0 && !budget.noUsageNoticed && finished.every((h) => !h.usage || (h.usage.inputTokens === undefined && h.usage.outputTokens === undefined))) {
+    budget.noUsageNoticed = true;
+    save(ctx);
+    await notifyOrigin(ctx, noUsageMessage(shownFeatureDir(ctx), limit));
+  }
   if (used >= (budget.allowance * ctx.config.budget.warnPercent) / 100 && budget.warnedAt !== budget.allowance) {
     budget.warnedAt = budget.allowance;
     save(ctx);
@@ -207,6 +215,10 @@ async function checkBudget(ctx: PipelineContext, stepTitle: string): Promise<voi
     await notifyOrigin(ctx, text);
     await notifyExternal(ctx, "milestone", `需求 ${featureName(ctx.featureDir)} 的 token 用量已到预算的 ${ctx.config.budget.warnPercent}%`, { used, budget: budget.allowance });
   }
+}
+
+export function noUsageMessage(featureDir: string, limit: number): string {
+  return `【需求开发流水线通知】${featureDir} 设了每个需求 ${tokenText(limit)} tokens 的预算，但已完成的步骤里 agent 都没有报告 token 用量，所以预算不会起作用，token 统计和预计也没有数据。流水线照常继续。要让预算生效，请换用会报告用量的 agent（Paseo 里能看到用量的那种）；不需要预算时可以在配置里把 budget.tokens 设为 null。这条消息只是告知，不需要处理。`;
 }
 
 class BusinessDecisionNeeded extends Error {
@@ -621,8 +633,37 @@ interface Deadline {
   record?: StepRecord;
 }
 
+/** How often the scan guard looks at the running tool call. */
+const SCAN_CHECK_SECONDS = 60;
+/** At most this many interruptions per turn; after that the step's time limit takes over. */
+const SCAN_MAX_INTERRUPTS = 5;
+
+interface ScanGuardMemory {
+  interrupted: Set<string>;
+  count: number;
+}
+
+/** 1.13: interrupts a search of a very large directory (or a search that runs too long), once per tool call. */
+async function guardScan(ctx: PipelineContext, agent: StepAgent, def: StepDef, key: string, memory: ScanGuardMemory): Promise<void> {
+  if (!ctx.config.scanGuard.enabled || memory.count >= SCAN_MAX_INTERRUPTS) return;
+  const tool = await ctx.runtime.runningTool(agent.id).catch(() => null);
+  if (!tool || memory.interrupted.has(tool.callId)) return;
+  const verdict = judgeScan(tool, ctx.config.scanGuard);
+  if (!verdict) return;
+  memory.interrupted.add(tool.callId);
+  memory.count += 1;
+  try {
+    await ctx.runtime.interruptAgent(agent.id, verdict.message);
+  } catch (error) {
+    ctx.log(`打断「${def.title}」的搜索失败：${(error as Error).message}`);
+    return;
+  }
+  recover(ctx, key, "stop_scan", `「${def.title}」的命令${verdict.reason}，已打断并告诉 agent 改用别的办法：${tool.text.replace(/\s+/g, " ").slice(0, 120)}`);
+}
+
 async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: Deadline): Promise<AgentUsage | null> {
   const notifiedPermissions = new Set<string>();
+  const guard: ScanGuardMemory = { interrupted: new Set(), count: 0 };
   let consecutiveErrors = 0;
   for (;;) {
     let remaining = deadline.at - Date.now();
@@ -644,7 +685,9 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
     }
     let outcome;
     try {
-      outcome = await agent.wait(Math.min(ctx.config.waitChunkSeconds * 1000, remaining));
+      // 1.13: with the scan guard on, look at the running tool call about once a minute.
+      const chunk = ctx.config.scanGuard.enabled ? Math.min(ctx.config.waitChunkSeconds, SCAN_CHECK_SECONDS) : ctx.config.waitChunkSeconds;
+      outcome = await agent.wait(Math.min(chunk * 1000, remaining));
       consecutiveErrors = 0;
     } catch (error) {
       consecutiveErrors += 1;
@@ -665,6 +708,7 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
       case "idle":
         return outcome.usage ?? null;
       case "timeout":
+        await guardScan(ctx, agent, def, deadline.key, guard);
         continue;
       case "error":
         throw new AgentErrored(def.title, `agent 报告错误：${outcome.error ?? "未知错误"}`);

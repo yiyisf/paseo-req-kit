@@ -65,6 +65,8 @@ time	step	ref	decision	alternatives	reason	kind	needs_human
 
 **遵循项目已有的做法。** 开始前阅读 `CLAUDE.md`、`AGENTS.md`、`README`、`CONTRIBUTING`（存在哪个读哪个），以及 `GLOSSARY.md`（业务与领域术语；较早的项目可能叫 `CONTEXT.md`）和 `docs/adr/`（已有决定）。命名、目录结构、测试写法、提交信息格式都跟随项目现状。
 
+**只在仓库里搜索，不要扫大目录。** 不要搜索整个磁盘、用户目录、依赖缓存（Maven 的 `~/.m2`、Gradle 的 `~/.gradle`、npm 缓存、全局 `node_modules`）或整个 `node_modules`，这类搜索要几十分钟，流水线会在一分钟后打断它。在仓库里找用 `git grep -n` 或 `git ls-files`。要看某个依赖：先从 `pom.xml`、`build.gradle`、`package.json` 确定它的坐标和版本，再直接打开那一个目录（如 `~/.m2/repository/<groupId 的点换成 />/<artifactId>/<版本>/`、`node_modules/<包名>/`），用 `unzip -l`、`jar tf` 看那一个 jar。不知道类在哪个依赖里时，`mvn dependency:tree` 比搜索快。
+
 **只做这个需求。** 不顺手重构无关代码，不升级无关依赖，不改无关的格式。看到无关的问题可以在产物里提一句，留给人来决定。
 
 **多轮的步骤。** `<pipeline-context>` 写明"第 2 轮"或之后时，说明这一步之前已经执行过：

@@ -50,7 +50,7 @@ export type StopKind =
 export interface Recovery {
   at: string;
   key: string;
-  kind: "retry" | "reattach" | "reuse_result" | "extend_timeout" | "redo" | "fallback" | "auto_resume" | "quota_wait" | "self_answer";
+  kind: "retry" | "reattach" | "reuse_result" | "extend_timeout" | "redo" | "fallback" | "auto_resume" | "quota_wait" | "self_answer" | "stop_scan";
   detail: string;
 }
 
@@ -89,6 +89,8 @@ export interface BudgetState {
   allowance: number;
   /** The allowance a warning was given for, so each level warns once. */
   warnedAt: number | null;
+  /** 1.13: the person was told the agents report no token usage (so the budget cannot work). */
+  noUsageNoticed?: boolean;
 }
 
 export interface PipelineState {

@@ -85,3 +85,26 @@ export function describeActivity(items: ActivityItem[], now = new Date()): strin
     return `  ${when ? `${when}：` : ""}${a.text}`;
   });
 }
+
+/**
+ * 1.13: the tool call still running at the end of the timeline (for the scan guard): its
+ * command or search pattern and when it started (the first entry seen for that call).
+ */
+export function runningToolOf(entries: TimelineEntry[]): import("./scan-guard.js").RunningTool | null {
+  const calls = new Map<string, { first: string; last: Record<string, unknown> }>();
+  for (const entry of entries) {
+    const it = entry.item as Record<string, unknown> | null;
+    if (!it || typeof it !== "object" || it.type !== "tool_call" || typeof it.callId !== "string") continue;
+    const seen = calls.get(it.callId);
+    if (seen) seen.last = it;
+    else calls.set(it.callId, { first: entry.timestamp, last: it });
+  }
+  const running = [...calls.entries()].filter(([, c]) => c.last.status === "running");
+  if (running.length === 0) return null;
+  const [callId, call] = running[running.length - 1];
+  const detail = (call.last.detail ?? {}) as Record<string, unknown>;
+  const kind = String(detail.type ?? "unknown");
+  const raw = kind === "shell" ? detail.command : kind === "search" ? detail.query : (detail.command ?? "");
+  const text = Array.isArray(raw) ? raw.join(" ") : String(raw ?? "");
+  return { kind, text, startedAt: call.first, callId };
+}

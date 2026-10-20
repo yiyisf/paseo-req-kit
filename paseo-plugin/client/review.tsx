@@ -6,7 +6,7 @@ import { Text, View } from "react-native";
 import { useReviewUrl } from "./data";
 import { openReview } from "./nav";
 import { Button, Status, useStyles } from "./ui";
-import { canEmbedPages, embeddedPage } from "./web";
+import { canEmbedPages, embeddedPage, reviewUnreachable } from "./web";
 
 type Theme = PluginHostProps["theme"];
 
@@ -28,6 +28,16 @@ export function ReviewScreen({ theme, layout, params }: PluginScreenProps) {
     );
   }
   const { url, readOnly } = review.data;
+  if (reviewUnreachable(url)) {
+    return (
+      <View style={[s.screen, { padding: 12 }]}>
+        <View style={[s.card, { gap: 8 }]}>
+          <Text style={s.text}>原型审查页只在运行 Paseo 的那台电脑上能打开（地址是 {new URL(url).host}），你现在是从另一台电脑打开的 Paseo 网页，所以看不到。</Text>
+          <Text style={s.muted}>{`办法：到运行 Paseo 的那台电脑上打开 Paseo 网页再点"审查原型"；或者请管理员在那台电脑上设置环境变量 REQ_KIT_REVIEW_HOST=0.0.0.0 和 REQ_KIT_REVIEW_PUBLIC_URL=http://<那台电脑的地址>:6781，再重启 Paseo daemon，审查页就能从别的电脑打开（能连上那台电脑的人都能看到审查页，提交意见要用页面地址里的口令）。也可以直接看功能目录里的 preview.md 和 prototype/。`}</Text>
+        </View>
+      </View>
+    );
+  }
   const frame = canEmbedPages ? embeddedPage(url, `原型审查：${params.title ?? featureDir}`) : null;
   return (
     <View style={[s.screen, { gap: 6 }]}>

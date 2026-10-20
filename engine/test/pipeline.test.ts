@@ -2454,4 +2454,31 @@ test("token 预算（1.13）：到提醒比例时告知一次，用完时做完�
   const none = setup();
   assert.equal(runMain(none, {}).code, 0);
   assert.equal(state(none).budget, undefined);
+
+  // Agents that report no usage: the budget cannot work, said once, and the run goes on.
+  const blind = setup({ budget: { tokens: 30_000, warnPercent: 80 } });
+  const blindRun = runMain(blind, { noUsage: true });
+  assert.equal(blindRun.code, 0, blindRun.out);
+  const blindNotes = events(blind).filter((e) => e.type === "notify").map((e) => e.text ?? "");
+  assert.equal(blindNotes.filter((t) => /agent 都没有报告 token 用量，所以预算不会起作用/.test(t)).length, 1);
+  assert.equal(state(blind).budget.noUsageNoticed, true);
+});
+
+test("搜索大目录的命令：一分钟后打断并告诉 agent 怎么查，同一个命令只打断一次；构建命令和关掉时不打断", () => {
+  const scan = setup();
+  const run = runMain(scan, { steps: { implement: { finishAfterWaits: 3 } }, runningTool: { kind: "shell", text: "find ~/.m2 -name '*.jar'", minutesAgo: 2 } });
+  assert.equal(run.code, 0, run.out);
+  const interrupts = events(scan).filter((e) => e.type === "interrupt");
+  assert.equal(interrupts.length, 1);
+  assert.match(String(interrupts[0].text), /已停止你刚才的命令「find ~\/\.m2 -name '\*\.jar'」：它在搜索Maven 本地仓库（\.m2）/);
+  assert.match(String(interrupts[0].text), /mvn dependency:tree/);
+  assert.deepEqual(state(scan).recoveries.map((r: { kind: string }) => r.kind), ["stop_scan"]);
+
+  const build = setup();
+  assert.equal(runMain(build, { steps: { implement: { finishAfterWaits: 3 } }, runningTool: { kind: "shell", text: "mvn -q test", minutesAgo: 30 } }).code, 0);
+  assert.equal(events(build).filter((e) => e.type === "interrupt").length, 0);
+
+  const off = setup({ scanGuard: { enabled: false, minutes: 5, paths: [] } });
+  assert.equal(runMain(off, { steps: { implement: { finishAfterWaits: 3 } }, runningTool: { kind: "shell", text: "find / -name x", minutesAgo: 9 } }).code, 0);
+  assert.equal(events(off).filter((e) => e.type === "runningTool" || e.type === "interrupt").length, 0);
 });
