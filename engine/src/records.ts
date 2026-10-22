@@ -47,6 +47,8 @@ export interface IndexEntry {
   /** Name of the project: the source checkout's directory name. */
   project: string;
   registeredAt: string;
+  /** 1.14: the chat the requirement is being aligned in (registered before the pipeline ran). */
+  chatAgentId?: string | null;
 }
 
 export function indexDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -59,7 +61,7 @@ export function requirementKey(sourceOrRepo: string, featureDir: string): string
 }
 
 /** Records where this requirement lives, if it is not recorded that way already. Never throws. */
-export function registerRequirement(state: Pick<PipelineState, "repo" | "featureDir" | "worktree">, env: NodeJS.ProcessEnv = process.env): void {
+export function registerRequirement(state: Pick<PipelineState, "repo" | "featureDir" | "worktree">, env: NodeJS.ProcessEnv = process.env, chatAgentId: string | null = null): void {
   if (recordingOff(env)) return;
   try {
     const source = state.worktree?.sourceRepo ?? null;
@@ -75,6 +77,7 @@ export function registerRequirement(state: Pick<PipelineState, "repo" | "feature
       workspaceId: state.worktree?.workspaceId ?? null,
       project: path.basename(real(source ?? state.repo)),
       registeredAt: existing?.registeredAt ?? new Date().toISOString(),
+      ...(chatAgentId ?? existing?.chatAgentId ? { chatAgentId: chatAgentId ?? existing?.chatAgentId ?? null } : {}),
     };
     if (existing && JSON.stringify(existing) === JSON.stringify(entry)) return;
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -84,6 +87,24 @@ export function registerRequirement(state: Pick<PipelineState, "repo" | "feature
   } catch {
     // The index is a convenience; the run goes on without it.
   }
+}
+
+/**
+ * 1.14: a requirement whose interview has started: marked in its feature directory
+ * (.pipeline/tracked.json, not committed) and registered with its chat, so the plugin lists it
+ * before the pipeline ever runs.
+ */
+export function trackRequirement(repo: string, featureDir: string, chatAgentId: string | null, env: NodeJS.ProcessEnv = process.env): void {
+  const marker = path.join(repo, featureDir, ".pipeline", "tracked.json");
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  let since = new Date().toISOString();
+  try {
+    since = (JSON.parse(fs.readFileSync(marker, "utf8")) as { since?: string }).since ?? since;
+  } catch {
+    // First time.
+  }
+  fs.writeFileSync(marker, `${JSON.stringify({ since, chatAgentId }, null, 2)}\n`);
+  registerRequirement({ repo, featureDir, worktree: null }, env, chatAgentId);
 }
 
 function readEntry(file: string): IndexEntry | null {
@@ -104,7 +125,8 @@ export function readIndex(env: NodeJS.ProcessEnv = process.env): Array<IndexEntr
     .filter((n) => n.endsWith(".json"))
     .map((n) => readEntry(path.join(dir, n)))
     .filter((e): e is IndexEntry => e !== null)
-    .map((e) => ({ ...e, present: fs.existsSync(path.join(e.repo, e.featureDir, ".pipeline", "state.json")) }));
+    // 1.14: a requirement still in its interview has no state yet, only its notes.
+    .map((e) => ({ ...e, present: ["spec.md", "alignment.md", ".pipeline/state.json", ".pipeline/tracked.json"].some((f) => fs.existsSync(path.join(e.repo, e.featureDir, f))) }));
 }
 
 /** Removes the entries whose requirement is gone. Returns how many. */

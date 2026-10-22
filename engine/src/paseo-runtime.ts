@@ -307,6 +307,11 @@ export function createRuntimeWithClient(
       if (!directory) throw new Error("Paseo 没有返回新工作区的目录");
       return { workspaceId: workspace.id, directory };
     },
+    async openWorkspace(directory) {
+      if (!client.workspaces) throw new Error("这个 Paseo 版本不支持接手已有的工作区目录");
+      const handle = await client.workspaces.open({ cwd: directory });
+      return { workspaceId: handle.id };
+    },
     async waitForWorkspaceSetup(workspaceId, timeoutMs) {
       const api = await getScripts();
       if (!api) return { status: "none", error: null };

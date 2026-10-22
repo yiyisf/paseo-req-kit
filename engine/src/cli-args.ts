@@ -11,6 +11,7 @@ export const USAGE = `用法：
   start-pipeline [--feature <功能目录>] --status   查看进度（不写 --feature 时：工作区里只有一个需求运行过就看它）
   start-pipeline --feature <功能目录> --stop       停止（之后可用 --resume 继续）
   start-pipeline --list                           列出这个项目所有工作区中的需求
+  start-pipeline --feature <功能目录> --track     开始谈需求时登记它，Paseo 插件里从"对齐中"就能看到（1.14）
   start-pipeline --card-fields                    团队对接了外部系统时，确认需求说明时要一并确认的卡片字段
   start-pipeline --feature <功能目录> --spec-review  确认前请另一个模型独立审阅需求说明草稿（后台进行，结果发回对话）
   start-pipeline --feature <功能目录> --worktree     为这个需求新建 Paseo worktree 工作区并在那里开发（对话目录不变）
@@ -54,6 +55,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       stop: { type: "boolean", default: false },
       list: { type: "boolean", default: false },
       "card-fields": { type: "boolean", default: false },
+      track: { type: "boolean", default: false },
       "spec-review": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       "source-repo": { type: "string" },
@@ -124,6 +126,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     stop: values.stop ?? false,
     list: values.list ?? false,
     cardFields: values["card-fields"] ?? false,
+    track: values.track ?? false,
     specReview: values["spec-review"] ?? false,
     worktree: values.worktree ?? false,
     sourceRepo: values["source-repo"] ? path.resolve(values["source-repo"]) : null,

@@ -22,12 +22,12 @@
 | --- | --- |
 | `req api version` | `{ kitVersion, kitRoot, apiSchema, paseo, featuresDir }`：`paseo` 是这个版本支持的 Paseo 范围 |
 | `req api list [--repo <目录>]` | 这个仓库所有工作区中的需求，数组，每项见下面的"需求" |
-| `req api list --all` | 本机记录过的所有需求（[需求索引](usage-record.md)），同上；目录已不在的 `present: false` |
+| `req api list --all` | 本机记录过的所有需求（[需求索引](usage-record.md)），同上；目录已不在的 `present: false`。1.14 起还包括：用 `--track` 登记、还在对齐中的需求（`stage` 为"对齐中"，没有 `spec.md` 时 `title` 取自 `alignment.md`），以及索引里出现过的项目中没登记的需求 |
 | `req api status <需求> [--repo <目录>]` | 一个需求的详情，见下面的"详情" |
 | `req api file <需求> <文件> [--repo <目录>]` | `{ featureDir, file, size, truncated, content }`；只能读取功能目录中的文档（见下），最多 512 KB |
 | `req api stats [--since 30d] [--month 2026-10]` | `req stats --json` 的内容，见 [使用记录](usage-record.md) |
 | `req api index [--rebuild <目录>…] [--prune]` | 不带选项：索引的全部条目；`--rebuild`：`{ scanned, registered, pruned, total }` |
-| `req api run <approve\|stop\|resume\|verify\|sync\|reply> <需求> [--repo <目录>] [选项]` | `{ command, featureDir, ok, exitCode, message }`。在 `--repo`（默认当前目录）中执行与 `req <命令> <需求>` 完全相同的操作；`ok` 为 false 时退出码为 1 |
+| `req api run <approve\|stop\|resume\|verify\|sync\|reply\|start> <需求> [--repo <目录>] [选项]` | `{ command, featureDir, ok, exitCode, message }`。在 `--repo`（默认当前目录）中执行与 `req <命令> <需求>` 完全相同的操作；`ok` 为 false 时退出码为 1。`start`（1.14）：在项目主目录中自动加 `--worktree`（上次已建好工作区的接着用），并把进展发回登记时的对话 |
 | `req api models` | 1.12 起。`{ current, choices, recommended }`：本机配置中现在的 `agents`；daemon 上能无人值守运行的选择（`{ id, label, provider, profile }`，Paseo profile 在前）；按推荐的 `agents`。连不上 daemon 时报错 |
 | `req api config [--repo <目录>] [--machine]` | 1.12 起。`{ sources, ignored, error, repo, groups }`：`sources` 是生效的配置文件（`layer` 为 `machine` / `team` / `project`，按叠加顺序）；`groups` 按主题分组，每项 `{ key, label, description, display, value, setBy, scope, changed }`：`display` 是用大白话写的值，`value` 中看起来像密钥的值和个人账号替换为 `••••`，`setBy` 是写了它的文件，`changed` 表示与默认值不同。配置有错误时 `error` 写明原因，值按各文件所写。`--machine` 不看项目配置 |
 | `req api set-agents --json <设置>` | 1.12 起。`{ ok, message }`。`<设置>` 是 `{ builder, reviewer, fallback }`（`fallback` 可以为 null），检查后写入本机配置的 `agents`，原文件备份 |
@@ -52,8 +52,8 @@
 | `status` | 状态文件的 `status`；还没运行过为 null |
 | `running` | 后台进程是否在运行 |
 | `phase` | `develop` / `verify` |
-| `attention` | 需要人处理的事：`approval`（确认方案）、`business`（需求方决定）、`permission`（1.13，步骤在等权限批准；`waiting.questions` 是要批准的操作，`waiting.agentId` 是那个 agent）、`interrupted`（中断，可以继续）、`not_completed`（结束但未完成）；没有为 null |
-| `waiting` | 1.12 起。`attention` 不为 null 时：`since`（从什么时候开始等）、`questions`（需求方要回答的问题）、`reason`（停止原因）、`card`（`{ system, id, url, requester }`，从卡片开始的需求）、`canReply`（能否用 `req api run reply <需求> <回复>` 把回复转给需求的对话）；否则为 null |
+| `attention` | 需要人处理的事：`approval`（确认方案）、`business`（需求方决定）、`permission`（1.13，步骤在等权限批准；`waiting.questions` 是要批准的操作，`waiting.agentId` 是那个 agent）、`interrupted`（中断，可以继续）、`not_completed`（结束但未完成）、`not_started`（1.14，需求说明已确认超过 30 分钟、或已为它建好工作区，但流水线没有运行过）；没有为 null |
+| `waiting` | 1.12 起。`attention` 不为 null 时：`since`（从什么时候开始等）、`questions`（需求方要回答的问题）、`reason`（停止原因）、`card`（`{ system, id, url, requester }`，从卡片开始的需求）、`canReply`（能否用 `req api run reply <需求> <回复>` 把回复转给需求的对话）、`canStart`（1.14，`not_started` 时为 true：可以用 `req api run start <需求>` 开始开发）；否则为 null |
 | `current` | 正在运行的步骤 `[{ key, title, agentId }]` |
 | `updatedAt` | 最近一次变化的时间 |
 | `usage` | `{ steps, agentMinutes, inputTokens, outputTokens, costUsd }`；没运行过为 null |

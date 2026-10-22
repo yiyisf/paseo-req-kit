@@ -20,6 +20,7 @@ const KIND: Record<Exclude<Attention, null>, { label: string; tone: "warning" | 
   permission: { label: "批准权限", tone: "warning", todo: "有一个步骤在等你允许它做一项操作，批准前会一直停在这里。打开这个 agent，在它的对话里选择允许或拒绝；拿不准时请开发同事看一下。" },
   interrupted: { label: "已中断", tone: "danger", todo: "开发中断了，自动处理没能解决。看一下原因，能继续就继续。" },
   not_completed: { label: "没有完成", tone: "muted", todo: "流水线结束了，但有部分没有做完。完成报告里写了原因和建议。" },
+  not_started: { label: "还没开始开发", tone: "warning", todo: "需求说明已经确认，但开发没有开始。确认无误就点“开始开发”，进展会发回谈需求的那个对话。" },
 };
 
 /** Plain waiting time: "等了 3 小时". */
@@ -48,7 +49,7 @@ function InboxCard({ theme, layout, item, open, readOnly, openAgent }: { theme: 
   const w = item.waiting;
   const repo = item.sourceRepo ?? item.repo;
 
-  const act = async (action: "approve" | "resume" | "reply") => {
+  const act = async (action: "approve" | "resume" | "reply" | "start") => {
     try {
       const result = await run.mutateAsync({ action, repo, featureDir: item.featureDir, ...(action === "reply" ? { text } : {}) });
       const first = result.message.split("\n").find((l) => l.trim()) ?? "";
@@ -93,6 +94,7 @@ function InboxCard({ theme, layout, item, open, readOnly, openAgent }: { theme: 
           {w.reason}
         </Text>
       ) : null}
+      {item.attention === "not_started" && w?.reason ? <Text style={s.text}>{w.reason}</Text> : null}
 
       {readOnly ? (
         <View style={s.row}>
@@ -145,6 +147,9 @@ function InboxCard({ theme, layout, item, open, readOnly, openAgent }: { theme: 
             {item.attention === "permission" && w?.agentId && openAgent ? <Button theme={theme} primary label="打开这个 agent" onPress={() => openAgent(w.agentId!)} /> : null}
             {item.attention === "interrupted" ? (
               <Button theme={theme} primary label={run.isPending ? "正在执行…" : "继续"} disabled={run.isPending} onPress={() => void act("resume")} />
+            ) : null}
+            {item.attention === "not_started" && w?.canStart ? (
+              <Button theme={theme} primary label={run.isPending ? "正在开始…" : "开始开发"} disabled={run.isPending} onPress={() => void act("start")} />
             ) : null}
             <Button theme={theme} label={item.attention === "approval" ? "看方案和确认预览" : item.attention === "not_completed" ? "看完成报告" : "查看详情"} onPress={open} />
           </View>

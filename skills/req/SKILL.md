@@ -65,6 +65,7 @@ metadata:
 
 | 做什么 | 命令 |
 | --- | --- |
+| 登记需求 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --track`（建好功能目录后立即执行，Paseo 插件里从"对齐中"就能看到这个需求） |
 | 需求说明审阅 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --spec-review` |
 | 卡片字段 | `node "{{PIPELINE_LAUNCHER}}" --card-fields` |
 | 启动 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录>` |

@@ -7,6 +7,7 @@ export const ATTENTION_LABELS: Record<Exclude<Attention, null>, string> = {
   permission: "等待批准权限",
   interrupted: "已中断，可以继续",
   not_completed: "结束但未完成",
+  not_started: "已确认，未开始开发",
 };
 
 export const TYPE_LABELS: Record<string, string> = { defect: "缺陷", refactor: "重构", assessment: "评估" };
@@ -88,13 +89,15 @@ export function facts(r: Requirement): string {
 /** What a person can do from here, by the requirement's state. */
 export function actionsFor(
   r: Pick<Requirement, "attention" | "running" | "status"> & { external?: Array<{ pending: number; id: string | null }> },
-): Array<"approve" | "stop" | "resume" | "verify" | "sync"> {
-  const base: Array<"approve" | "stop" | "resume" | "verify" | "sync"> = r.running
+): Array<"approve" | "stop" | "resume" | "verify" | "sync" | "start"> {
+  const base: Array<"approve" | "stop" | "resume" | "verify" | "sync" | "start"> = r.running
     ? ["stop"]
     : r.attention === "approval"
       ? ["approve"]
       : r.attention === "interrupted" || r.attention === "business"
         ? ["resume"]
+        : r.attention === "not_started"
+          ? ["start"]
         : r.status === "phase_done"
           ? ["verify"]
           : [];
@@ -106,6 +109,7 @@ export function actionsFor(
 export const ACTION_TEXT = {
   approve: { label: "确认方案", confirm: "确认 preview.md 中的方案，开始写代码？请先看过确认预览和原型。" },
   stop: { label: "停止", confirm: "停止这个需求的流水线？正在运行的步骤会被中断，之后可以继续。" },
+  start: { label: "开始开发", confirm: "按已确认的需求说明开始开发？在项目主目录中的需求会新建自己的工作区；进展发回谈需求的那个对话。" },
   resume: { label: "继续", confirm: "从中断处继续？需求说明改过的话，只处理变化的部分。" },
   verify: { label: "开始测试验证", confirm: "开始测试验证？选择在哪里验证。" },
   sync: { label: "同步到外部系统", confirm: "把这个需求同步到对接的外部系统：补发没有成功的调用、补建卡片、更新状态。" },

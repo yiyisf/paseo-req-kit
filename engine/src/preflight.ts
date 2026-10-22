@@ -31,6 +31,8 @@ export interface LaunchArgs {
   list: boolean;
   /** --card-fields: what /req confirms with the spec for the external systems (card.json). */
   cardFields?: boolean;
+  /** 1.14 --track: register a requirement being aligned, before the pipeline runs (shown in the plugin). */
+  track?: boolean;
   /** --spec-review: independent review of the draft spec, before confirmation. */
   specReview: boolean;
   /** --worktree: create a Paseo worktree workspace for this requirement and develop there. */

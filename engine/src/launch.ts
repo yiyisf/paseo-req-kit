@@ -16,6 +16,7 @@ import { loadConfig, PHASE_MODE_LABELS, type PipelineConfig, PROFILE_LABELS } fr
 import { cardFieldsText } from "./integrations.js";
 import { defaultConfigPath, ENGINE_DIR } from "./locations.js";
 import { describeLiveActivity, describeStatus, stopPipeline } from "./control.js";
+import { trackRequirement } from "./records.js";
 import { describeFeatures, featuresWithRuns, findWorktreeRun, listFeatures, resolveFeatureArg } from "./features.js";
 import { checkChatCwd, normalizeFeatureDir, preflight, type PreflightResult, specProfile, verifyPhaseProblem } from "./preflight.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
@@ -88,6 +89,22 @@ if (args.cardFields) {
     process.exit(0);
   } catch (error) {
     console.error((error as Error).message);
+    process.exit(2);
+  }
+}
+
+if (args.track) {
+  // 1.14: the requirement shows in the plugin from the start of the interview, with its chat.
+  try {
+    const repo = fs.realpathSync(args.repo);
+    const featureDir = normalizeFeatureDir(repo, args.featureDir);
+    const dir = path.join(repo, featureDir);
+    if (!fs.existsSync(dir)) throw new Error(`功能目录不存在：${featureDir}`);
+    trackRequirement(repo, featureDir, args.originAgentId);
+    console.log(`已登记需求：${featureDir}（Paseo 的 req-kit 插件里能看到它，状态"对齐中"${args.originAgentId ? "，关联这个对话" : ""}）`);
+    process.exit(0);
+  } catch (error) {
+    console.error(`没能登记需求：${(error as Error).message}`);
     process.exit(2);
   }
 }
@@ -344,7 +361,9 @@ if (args.worktree) {
   try {
     ownWorktree = await Promise.race([
       create(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("连接 Paseo 新建工作区超过 2 分钟没有完成")), 120_000).unref()),
+      // 1.14: big repositories (Windows especially) can take minutes to check out. Giving up early
+      // left a branch with only the spec on it; now it waits, and a later start continues there.
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("连接 Paseo 新建工作区超过 15 分钟没有完成。工作区可能稍后才建好：再执行一次启动命令，会在已建好的工作区里接着开始")), 15 * 60_000).unref()),
     ]);
   } catch (error) {
     fail(`没能为这个需求新建工作区：${(error as Error).message}`);
@@ -356,7 +375,7 @@ if (args.worktree) {
   try {
     checked = preflight(args, hashFile);
   } catch (error) {
-    fail(`新工作区 ${ownWorktree.repo} 已建好，但无法在那里启动：${(error as Error).message}`);
+    fail(`新工作区 ${ownWorktree.repo} 已建好，但无法在那里启动：${(error as Error).message}\n问题解决后再执行一次启动命令，会在这个工作区里接着开始（不会再新建）。`);
   }
 }
 
@@ -403,8 +422,10 @@ console.log(
         ? "只做研发：写好提测说明和研发报告后结束，测试由人完成。"
         : null,
     ownWorktree
-      ? `已为这个需求新建工作区：${ownWorktree.repo}（分支 ${ownWorktree.branch}，在 Paseo 侧边栏中可以看到）。开发在那里进行，步骤仍挂在这个对话下；这个对话的工作目录不变。` +
-        `需求文件已移到 ${path.join(ownWorktree.repo, checked.featureDir)}${ownWorktree.removedSource ? "" : "（这里原有的已提交版本保留不动）"}，之后读写需求文件请用这个路径。`
+      ? `${ownWorktree.reused ? "在上次已建好的工作区中开始" : "已为这个需求新建工作区"}：${ownWorktree.repo}（分支 ${ownWorktree.branch}，在 Paseo 侧边栏中可以看到）。开发在那里进行，步骤仍挂在这个对话下；这个对话的工作目录不变。` +
+        `需求文件已移到 ${path.join(ownWorktree.repo, checked.featureDir)}${ownWorktree.removedSource ? "" : "（这里原有的已提交版本保留不动）"}，之后读写需求文件请用这个路径。` +
+        (ownWorktree.carried.length ? `\n访谈中改过的 ${ownWorktree.carried.join("、")} 也一起带过去提交了；这里的未提交改动保留不动，确认无误后可以撤销。` : "") +
+        ownWorktree.warnings.map((w) => `\n注意：${w}`).join("")
       : args.sourceRepo
         ? `这个需求在为它新建的工作区中开发：${checked.repo}`
         : null,

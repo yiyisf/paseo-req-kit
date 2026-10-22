@@ -26,6 +26,7 @@ import { FEATURES_DIR, findWorktreeRun, listFeatures, resolveFeatureArg, summari
 import { defaultConfigPath, KIT_ROOT, kitVersion } from "./locations.js";
 import { configView } from "./config-view.js";
 import { pruneIndex, readIndex, registerRequirement, requirementKey } from "./records.js";
+import { listWorktreeRecords } from "./worktree.js";
 import { isAlive, type PipelineState, readState, statePath, type StepRecord } from "./state.js";
 import { parsePeriod, summarizeRuns } from "./stats.js";
 import { readRuns, runsFile } from "./records.js";
@@ -68,7 +69,7 @@ export const READABLE_FILES = [
 
 const MAX_FILE_BYTES = 512 * 1024;
 
-export type Attention = "approval" | "business" | "permission" | "interrupted" | "not_completed" | null;
+export type Attention = "approval" | "business" | "permission" | "interrupted" | "not_completed" | "not_started" | null;
 
 /** What a person needs to do about a requirement, if anything. */
 export function attentionOf(state: Pick<PipelineState, "status" | "pid" | "outcome" | "waitingPermission"> | null): Attention {
@@ -139,7 +140,44 @@ export interface ListItem {
     canReply: boolean;
     /** 1.13, attention "permission": the step agent that waits for an approval. */
     agentId?: string;
+    /** 1.14, attention "not_started": the plugin can start development (req api run start). */
+    canStart?: boolean;
   } | null;
+}
+
+/** 1.14: a confirmed spec with no run gets attention after this long (the chat may still be starting it). */
+export const NOT_STARTED_AFTER_MS = 30 * 60_000;
+
+function recordFor(repo: string, featureDir: string) {
+  let real = repo;
+  try {
+    real = fs.realpathSync(repo);
+  } catch {
+    // As given.
+  }
+  return listWorktreeRecords().find((r) => r.repo === real && r.featureDir === featureDir) ?? null;
+}
+
+/** A confirmed requirement nobody started: its own worktree already made (a start that failed), or just confirmed. */
+function notStartedOf(repo: string, featureDir: string, confirmed: boolean, updatedAt: string, now = Date.now()): NonNullable<ListItem["waiting"]> | null {
+  if (!confirmed) return null;
+  const real = (() => {
+    try {
+      return fs.realpathSync(repo);
+    } catch {
+      return repo;
+    }
+  })();
+  const made = recordFor(real, featureDir);
+  if (!made && now - new Date(updatedAt).getTime() < NOT_STARTED_AFTER_MS) return null;
+  return {
+    since: made?.createdAt ?? updatedAt,
+    questions: [],
+    reason: made ? "新工作区已经建好，但开发没有开始（上次启动没有完成）。点\"开始开发\"会在这个工作区里接着开始。" : "需求说明已经确认，但开发还没有开始。",
+    card: null,
+    canReply: false,
+    canStart: true,
+  };
 }
 
 function item(repo: string, branch: string | null, featureDir: string, extra: { sourceRepo: string | null; workspaceId: string | null; project: string }): ListItem | null {
@@ -147,6 +185,12 @@ function item(repo: string, branch: string | null, featureDir: string, extra: { 
   const summary = summarize({ path: repo, branch }, name);
   if (!summary) return null;
   const state = readStateSafe(repo, featureDir);
+  const notStarted = state ? null : notStartedOf(repo, summary.featureDir, summary.confirmed, summary.updatedAt);
+  // 1.14: a worktree made for it before the pipeline ran: it still belongs to the chat's checkout.
+  if (!state && !extra.sourceRepo) {
+    const made = recordFor(repo, summary.featureDir);
+    if (made) extra = { ...extra, sourceRepo: made.sourceRepo, workspaceId: extra.workspaceId ?? made.workspaceId, project: path.basename(made.sourceRepo) };
+  }
   return {
     key: requirementKey(extra.sourceRepo ?? repo, featureDir),
     project: extra.project,
@@ -163,12 +207,12 @@ function item(repo: string, branch: string | null, featureDir: string, extra: { 
     status: state?.status ?? null,
     running: !!state && state.status === "running" && isAlive(state.pid),
     phase: state?.phase ?? null,
-    attention: attentionOf(state),
+    attention: attentionOf(state) ?? (notStarted ? "not_started" : null),
     current: currentSteps(state),
     updatedAt: summary.updatedAt,
     usage: usageOf(state),
     present: true,
-    waiting: waitingOf(repo, featureDir, state),
+    waiting: waitingOf(repo, featureDir, state) ?? notStarted,
     hasPrototype: fs.existsSync(path.join(repo, featureDir, "prototype")),
   };
 }
@@ -206,7 +250,8 @@ export function apiList(input: { repo: string; all: boolean }): ListItem[] {
       .filter((x): x is ListItem => x !== null);
   }
   const out: ListItem[] = [];
-  for (const e of readIndex()) {
+  const index = readIndex();
+  for (const e of index) {
     const found = e.present ? item(e.repo, null, e.featureDir, { sourceRepo: e.sourceRepo, workspaceId: e.workspaceId, project: e.project }) : null;
     out.push(
       found ?? {
@@ -234,7 +279,36 @@ export function apiList(input: { repo: string; all: boolean }): ListItem[] {
       },
     );
   }
+  // 1.14: requirements in projects this machine knows that were never registered (the chat did not
+  // run --track, or an older version): found in the projects' feature directories.
+  const seen = new Set(out.map((x) => x.key));
+  const projects = new Set(index.filter((e) => e.present).map((e) => e.sourceRepo ?? e.repo));
+  for (const dir of projects) {
+    let found: ReturnType<typeof listFeatures> = [];
+    try {
+      found = listFeatures(dir);
+    } catch {
+      continue;
+    }
+    for (const f of found) {
+      const state = readStateSafe(f.worktree, f.featureDir);
+      const source = state?.worktree?.sourceRepo ?? (samePathSafe(f.worktree, dir) ? null : dir);
+      const x = item(f.worktree, f.branch, f.featureDir, { sourceRepo: source, workspaceId: state?.worktree?.workspaceId ?? null, project: path.basename(dir) });
+      if (x && !seen.has(x.key)) {
+        seen.add(x.key);
+        out.push(x);
+      }
+    }
+  }
   return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function samePathSafe(a: string, b: string): boolean {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch {
+    return a === b;
+  }
 }
 
 /** The repository and feature directory a requirement argument names, as `req status` resolves it. */
@@ -346,9 +420,35 @@ export function apiIndex(input: { rebuild: string[]; prune: boolean }) {
   return { scanned: [...dirs], registered, pruned, total: readIndex().length };
 }
 
-const RUNNABLE = ["approve", "stop", "resume", "verify", "sync", "reply"] as const;
+const RUNNABLE = ["approve", "stop", "resume", "verify", "sync", "reply", "start"] as const;
 
 /** Runs `req <command> <需求>` where people would, and reports what it said. */
+/**
+ * 1.14, starting from the plugin: like the chat would. In a project's main checkout the
+ * requirement gets its own worktree (or continues in the one an earlier start made); the
+ * pipeline reports to the chat the requirement was aligned in.
+ */
+export function startOptions(cwd: string, feature: string): string[] {
+  const out: string[] = [];
+  const git = (...a: string[]) => spawnSync("git", a, { cwd, encoding: "utf8", windowsHide: true });
+  const dirs = git("rev-parse", "--git-dir", "--git-common-dir");
+  if (dirs.status === 0) {
+    const [own, common] = dirs.stdout.trim().split(/\r?\n/).map((d) => path.resolve(cwd, d.trim()));
+    const branch = git("branch", "--show-current").stdout.trim();
+    // In the main checkout, unless the requirement's own branch is checked out here ("develop here").
+    if (own === common && branch !== `feature/${path.basename(feature)}`) out.push("--worktree");
+  }
+  let featureDir = feature;
+  try {
+    featureDir = resolveFeatureArg(cwd, feature);
+  } catch {
+    // The launcher reports it.
+  }
+  const chat = readIndex().find((e) => e.key === requirementKey(cwd, featureDir))?.chatAgentId;
+  if (chat) out.push("--origin-agent", chat);
+  return out;
+}
+
 export function apiRun(command: string, repoArg: string, feature: string, extra: string[]) {
   if (!(RUNNABLE as readonly string[]).includes(command)) throw new ApiError("not_allowed", `只能执行：${RUNNABLE.join("、")}`);
   if (!fs.existsSync(repoArg)) throw new ApiError("not_found", `目录不存在：${repoArg}`);
@@ -357,6 +457,7 @@ export function apiRun(command: string, repoArg: string, feature: string, extra:
   const env = { ...process.env };
   delete env.PASEO_AGENT_ID;
   delete env.PASEO_AGENT_CWD;
+  if (command === "start") extra = [...extra, ...startOptions(cwd, feature)];
   const r = spawnSync(process.execPath, [path.join(KIT_ROOT, "bin", "req.mjs"), command, feature, ...extra], {
     cwd,
     env,

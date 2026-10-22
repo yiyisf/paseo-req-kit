@@ -103,12 +103,12 @@ test("需求索引与运行记录：流水线结束时登记需求、追加一�
   const envelope = JSON.parse(cli.stdout);
   assert.equal(envelope.schema, 1);
   assert.equal(envelope.data[0].featureDir, FEATURE);
-  const refused = spawnSync(process.execPath, [path.join(ROOT, "bin", "req.mjs"), "api", "run", "start", "sms-login"], { env: process.env, encoding: "utf8", cwd: p.repo });
+  const refused = spawnSync(process.execPath, [path.join(ROOT, "bin", "req.mjs"), "api", "run", "restart", "sms-login"], { env: process.env, encoding: "utf8", cwd: p.repo });
   assert.equal(refused.status, 1);
   assert.equal(JSON.parse(refused.stdout).error.code, "not_allowed");
 
   // Gone from disk: still listed, marked; --prune forgets it.
-  fs.rmSync(path.join(p.repo, FEATURE, ".pipeline"), { recursive: true });
+  fs.rmSync(path.join(p.repo, FEATURE), { recursive: true });
   assert.equal(apiList({ repo: p.repo, all: true })[0].present, false);
   const prune = spawnSync(process.execPath, [path.join(ROOT, "bin", "req.mjs"), "index", "--prune"], { env: process.env, encoding: "utf8", cwd: p.repo });
   assert.match(prune.stdout, /移除了 1 个/);

@@ -19,7 +19,11 @@
 }
 ```
 
-`key` 由对话所在的目录（没有自己的工作区时即 `repo`）和功能目录算出。`req index --rebuild` 为 1.9 之前运行过的需求补登，`req index --prune` 移除目录已不在的。
+`key` 由对话所在的目录（没有自己的工作区时即 `repo`）和功能目录算出。1.14 起：开始谈需求时（`start-pipeline --feature <功能目录> --track`）就登记，此时多一个可选字段 `chatAgentId`（谈需求的对话），之后的登记保留它；新建需求自己的工作区时，条目改为指向那个工作区。目录里有 `spec.md`、`alignment.md` 或 `.pipeline/` 下的状态或登记标记时算作存在。
+
+## 新建工作区的记录 `worktrees/<key>.json`（1.14）
+
+用 `--worktree` 启动时，工作区一建好就写下：`{ schema, sourceRepo, featureDir, repo, workspaceId, branch, baseRef, createdAt, originAgentId }`。之后的启动失败了，再次启动时在这个工作区里接着做，不再新建；插件据此把"工作区已建、开发没开始"的需求列进"等你处理"。`req index --rebuild` 为 1.9 之前运行过的需求补登，`req index --prune` 移除目录已不在的。
 
 ## 使用记录 `usage/runs.jsonl`
 

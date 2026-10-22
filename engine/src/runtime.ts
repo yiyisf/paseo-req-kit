@@ -135,6 +135,8 @@ export interface AgentRuntime {
   stopServices(target: ServiceTarget, names: string[]): Promise<void>;
   /** Creates a Paseo worktree workspace (paseo.json setup runs in the background). */
   createWorktree(request: WorktreeRequest): Promise<{ workspaceId: string; directory: string }>;
+  /** 1.14: the Paseo workspace of an existing directory (opened as one if it is not yet). */
+  openWorkspace?(directory: string): Promise<{ workspaceId: string }>;
   /** Waits for the workspace's paseo.json setup; "none" when there is nothing to wait for or it cannot be read. */
   waitForWorkspaceSetup(workspaceId: string, timeoutMs: number): Promise<{ status: "completed" | "failed" | "none" | "timeout"; error: string | null }>;
   /** Subscription windows of the given providers; null when Paseo has no usage data. */

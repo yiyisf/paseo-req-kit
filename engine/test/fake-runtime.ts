@@ -348,6 +348,10 @@ export const createRuntime: RuntimeFactory = async () => {
       record({ type: "createWorktree", ...request, directory });
       return { workspaceId: `fake-wks-${worktreeCounter}`, directory: fs.realpathSync(directory) };
     },
+    async openWorkspace(directory) {
+      record({ type: "openWorkspace", directory });
+      return { workspaceId: "fake-wks-opened" };
+    },
     async waitForWorkspaceSetup(workspaceId, timeoutMs) {
       record({ type: "waitForWorkspaceSetup", workspaceId, timeoutMs });
       return scenario.setup ?? { status: "completed", error: null };

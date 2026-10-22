@@ -114,7 +114,27 @@ function mtime(file: string): number {
 export function summarize(worktree: Worktree, name: string): FeatureSummary | null {
   const dir = path.join(worktree.path, FEATURES_DIR, name);
   const specFile = path.join(dir, "spec.md");
-  if (!fs.existsSync(specFile)) return null;
+  const alignmentFile = path.join(dir, "alignment.md");
+  if (!fs.existsSync(specFile)) {
+    // 1.14: still in the interview (registered with --track, or the notes have begun).
+    if (!fs.existsSync(alignmentFile) && !fs.existsSync(path.join(dir, ".pipeline", "tracked.json"))) return null;
+    const notes = fs.existsSync(alignmentFile) ? fs.readFileSync(alignmentFile, "utf8") : "";
+    const updated = Math.max(mtime(alignmentFile), mtime(path.join(dir, ".pipeline", "tracked.json")), mtime(dir));
+    return {
+      name,
+      featureDir: `${FEATURES_DIR.split(path.sep).join("/")}/${name}`,
+      worktree: worktree.path,
+      branch: worktree.branch,
+      title: (/^#\s+(.+)$/m.exec(notes)?.[1] ?? name).replace(/^(访谈记录|需求对齐|对齐记录)[:：\s]*/, "").trim() || name,
+      type: null,
+      specVersion: null,
+      confirmed: false,
+      profile: null,
+      stage: "对齐中",
+      updatedAt: new Date(updated || Date.now()).toISOString(),
+      usage: null,
+    };
+  }
   const spec = fs.readFileSync(specFile, "utf8");
   const stateFile = path.join(dir, ".pipeline", "state.json");
   let state: RawState | null = null;

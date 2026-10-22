@@ -3,7 +3,7 @@
 import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export type Attention = "approval" | "business" | "permission" | "interrupted" | "not_completed" | null;
+export type Attention = "approval" | "business" | "permission" | "interrupted" | "not_completed" | "not_started" | null;
 
 export interface Usage {
   steps: number;
@@ -45,6 +45,8 @@ export interface Requirement {
     canReply: boolean;
     /** req-kit 1.13+, attention "permission": the step agent waiting for an approval. */
     agentId?: string;
+    /** req-kit 1.14+, attention "not_started": development can be started from here. */
+    canStart?: boolean;
   } | null;
 }
 
@@ -171,7 +173,7 @@ export const statsRpc = defineRpc({
   output: z.custom<StatsSummary>(),
 });
 
-export const ACTIONS = ["approve", "stop", "resume", "verify", "sync", "reply"] as const;
+export const ACTIONS = ["approve", "stop", "resume", "verify", "sync", "reply", "start"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 export const runRpc = defineRpc({
