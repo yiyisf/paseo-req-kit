@@ -45,6 +45,7 @@ test("需求总览：按需要处理、待验收、开发中等分组，已验�
     featureDir: `docs/features/${name}`,
     worktree: "/r",
     branch: `feature/${name}`,
+    developed: true,
     title: name.toUpperCase(),
     type: null,
     specVersion: 1,

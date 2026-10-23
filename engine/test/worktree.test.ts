@@ -155,3 +155,21 @@ test("从需求对齐开始显示：登记后列为对齐中；确认后久未�
   trackRequirement(repo, name, null);
   assert.equal(apiList({ repo, all: true }).filter((x) => x.featureDir === name).length, 1);
 });
+
+test("已开发的需求不算没开始：合并到主分支的副本没有运行状态，但有完成报告、验收记录（1.14.0-beta.2）", () => {
+  home();
+  const { repo } = repoWithSpec();
+  const dir = path.join(repo, FEATURE);
+  const old = new Date(Date.now() - NOT_STARTED_AFTER_MS - 60_000);
+  for (const [f, text] of [["design.md", "# 方案\n"], ["report.md", "# 完成报告\n"], ["acceptance.md", "# 验收记录\n\n- 验收结论：通过\n"]]) fs.writeFileSync(path.join(dir, f), text);
+  for (const f of fs.readdirSync(dir)) fs.utimesSync(path.join(dir, f), old, old);
+  trackRequirement(repo, FEATURE, null);
+  const accepted = apiList({ repo, all: true }).find((x) => x.featureDir === FEATURE)!;
+  assert.equal(accepted.stage, "已验收");
+  assert.equal(accepted.attention, null);
+  assert.equal(accepted.waiting, null);
+  fs.rmSync(path.join(dir, "acceptance.md"));
+  const done = apiList({ repo, all: true }).find((x) => x.featureDir === FEATURE)!;
+  assert.equal(done.stage, "待验收");
+  assert.equal(done.attention, null);
+});

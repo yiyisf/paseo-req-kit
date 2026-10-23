@@ -185,7 +185,7 @@ function item(repo: string, branch: string | null, featureDir: string, extra: { 
   const summary = summarize({ path: repo, branch }, name);
   if (!summary) return null;
   const state = readStateSafe(repo, featureDir);
-  const notStarted = state ? null : notStartedOf(repo, summary.featureDir, summary.confirmed, summary.updatedAt);
+  const notStarted = state || summary.developed ? null : notStartedOf(repo, summary.featureDir, summary.confirmed, summary.updatedAt);
   // 1.14: a worktree made for it before the pipeline ran: it still belongs to the chat's checkout.
   if (!state && !extra.sourceRepo) {
     const made = recordFor(repo, summary.featureDir);

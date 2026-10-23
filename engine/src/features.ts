@@ -29,6 +29,8 @@ export interface FeatureSummary {
   profile: ProfileName | null;
   /** Plain-language stage, e.g. "对齐中", "开发中", "待验收", "已验收". */
   stage: string;
+  /** 1.14.0-beta.2: the pipeline ran for it (its state, or the documents only it writes, are here). */
+  developed: boolean;
   /** Last change to the feature directory's state or spec, ISO time. */
   updatedAt: string;
   /** Time and usage of all pipeline attempts, in words; null before the first run. */
@@ -77,13 +79,27 @@ interface RawState {
   history?: Array<{ attempt: number; startedAt: string; endedAt: string | null; usage?: Record<string, number> | null }>;
 }
 
-function stageOf(confirmed: boolean, state: RawState | null, acceptance: string | null): string {
+/**
+ * Files only the pipeline writes: their presence means it ran, even where its state is not (a
+ * copy merged into the main branch: the state file under .pipeline/ is never committed).
+ */
+const PIPELINE_OUTPUTS = ["design.md", "assessment.md", "diagnosis.md", "implementation.md", "handoff.md", "verification.md", "report.md"];
+
+export function developedIn(dir: string): boolean {
+  return PIPELINE_OUTPUTS.some((f) => fs.existsSync(path.join(dir, f)));
+}
+
+function stageOf(confirmed: boolean, state: RawState | null, acceptance: string | null, developed = false, reported = false): string {
   if (acceptance) {
     const verdict = headerValue(acceptance, "验收结论");
     if (verdict?.startsWith("通过")) return "已验收";
     if (verdict?.startsWith("不通过")) return "验收未通过";
   }
-  if (!state) return confirmed ? "已确认，未开始开发" : "对齐中";
+  if (!state) {
+    // 1.14.0-beta.2: developed elsewhere (e.g. merged here from its own branch) is not "not started".
+    if (developed) return reported ? "待验收" : "已开发（这个目录里没有运行状态）";
+    return confirmed ? "已确认，未开始开发" : "对齐中";
+  }
   switch (state.status) {
     case "running":
       return state.pid && isAlive(state.pid) ? "开发中" : "已中断（可继续）";
@@ -131,6 +147,7 @@ export function summarize(worktree: Worktree, name: string): FeatureSummary | nu
       confirmed: false,
       profile: null,
       stage: "对齐中",
+      developed: false,
       updatedAt: new Date(updated || Date.now()).toISOString(),
       usage: null,
     };
@@ -146,6 +163,7 @@ export function summarize(worktree: Worktree, name: string): FeatureSummary | nu
   const acceptanceFile = path.join(dir, "acceptance.md");
   const acceptance = fs.existsSync(acceptanceFile) ? fs.readFileSync(acceptanceFile, "utf8") : null;
   const confirmed = isSpecConfirmed(spec);
+  const developed = state !== null || developedIn(dir);
   const version = Number(headerValue(spec, "版本"));
   const updated = Math.max(mtime(specFile), mtime(stateFile), mtime(acceptanceFile), mtime(path.join(dir, "changes.md")));
   return {
@@ -158,7 +176,8 @@ export function summarize(worktree: Worktree, name: string): FeatureSummary | nu
     specVersion: Number.isInteger(version) && version > 0 ? version : null,
     confirmed,
     profile: specProfile(spec),
-    stage: stageOf(confirmed, state, acceptance),
+    stage: stageOf(confirmed, state, acceptance, developed, fs.existsSync(path.join(dir, "report.md"))),
+    developed,
     updatedAt: new Date(updated || Date.now()).toISOString(),
     usage: state?.history && state.history.length > 0 ? describeTotals(totals(state.history)) : null,
   };
