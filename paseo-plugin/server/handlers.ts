@@ -46,10 +46,10 @@ export function createHandlers(input: { req: ReqRunner; kitHome: () => string; r
       const result = (await req(["run", action, featureDir, "--repo", repo, ...extra], { timeoutMs: 200_000 })) as { ok: boolean; message: string };
       return { ok: result.ok, message: result.message };
     },
-    async reviewUrl({ repo, featureDir }) {
+    async reviewUrl({ repo, featureDir, page }) {
       // Read-only plugin: the page opens without the buttons that send or confirm.
       const ro = await input.readOnly();
-      return (await req(["review-url", featureDir, "--repo", repo, ...(ro ? ["--read-only"] : [])], { timeoutMs: 30_000 })) as { url: string; readOnly: boolean };
+      return (await req(["review-url", featureDir, "--repo", repo, ...(page === "check" ? ["--page", "check"] : []), ...(ro ? ["--read-only"] : [])], { timeoutMs: 30_000 })) as { url: string; readOnly: boolean };
     },
     async config({ repo }) {
       return (await req(repo ? ["config", "--repo", repo] : ["config", "--machine"])) as ConfigViewData;

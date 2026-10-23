@@ -579,12 +579,16 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       // 1.13: the prototype review page of a requirement (starts the page's server when needed).
       const feature = need("需求");
       const readOnly = flag(argv, "--read-only");
+      // 1.14 --page check: the acceptance checklist page of the same server.
+      const page = option(argv, "--page") === "check" ? "check" : "prototype";
       const { repo: r, featureDir } = locate(repo, feature);
       return import("./review.js").then(async ({ ensureReviewServer, keyOf, reviewUrl }) => {
         const key = keyOf(r, featureDir);
         if (!key) throw new ApiError("not_found", `${featureDir} 不在本机的需求列表中`);
-        if (!fs.existsSync(path.join(r, featureDir, "prototype"))) throw new ApiError("not_found", `${featureDir} 还没有界面原型`);
-        return { url: reviewUrl(await ensureReviewServer(), key, readOnly), readOnly };
+        if (page === "prototype" && !fs.existsSync(path.join(r, featureDir, "prototype"))) throw new ApiError("not_found", `${featureDir} 还没有界面原型`);
+        if (page === "check" && !fs.existsSync(path.join(r, featureDir, "spec.md"))) throw new ApiError("not_found", `${featureDir} 中没有 spec.md`);
+        const url = reviewUrl(await ensureReviewServer(), key, readOnly);
+        return { url: page === "check" ? `${url}check/` : url, readOnly };
       });
     }
     default:

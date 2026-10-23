@@ -31,6 +31,8 @@ const HELP = `req-kit ${version}（${kitRoot}）
                                让 Paseo 按时间表发送需求总览（例子为每周一 9:00）；取消：req digest --cancel <ID>
   req sync <需求>              把需求同步到对接的外部系统（补发失败的调用、补建卡片、更新状态）
   req review <需求>            在浏览器打开原型审查页：点选要改的地方、直接改文字，提交意见或确认方案
+  req try <需求> [--stop]      把做好的需求跑起来试用：给出访问地址和测试数据（--stop 停止）
+  req checklist <需求>         验收清单：按验收标准逐条勾选，提交后写成验收记录
   req ui-check <网址> [--prototype <原型文件>] [--width 1280,390]
                                不靠看图检查网页：显示不全、遮挡、超出屏幕、文字太淡、报错，和原型对文字
   req reply <需求> <回复>      把回答或方案意见转给需求的对话（插件的"等你处理"用它）
@@ -220,6 +222,12 @@ switch (command) {
     break;
   case "review":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "review.ts"), ...rest]) : 1;
+    break;
+  case "try":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "try.ts"), ...rest]) : 1;
+    break;
+  case "checklist":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "checklist-cmd.ts"), ...rest]) : 1;
     break;
   case "ui-check":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "ui-check.ts"), ...rest]) : 1;

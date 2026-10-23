@@ -74,11 +74,11 @@ export function useConfigView(repo: string | null) {
 }
 
 /** The prototype review page's address (1.13); it stays valid while its server runs. */
-export function useReviewUrl(repo: string, featureDir: string, enabled: boolean) {
+export function useReviewUrl(repo: string, featureDir: string, enabled: boolean, page: "prototype" | "check" = "prototype") {
   const reviewUrl = useRpc(reviewUrlRpc);
   return useQuery({
-    queryKey: ["req", "review-url", repo, featureDir],
-    queryFn: () => reviewUrl({ repo, featureDir }),
+    queryKey: ["req", "review-url", repo, featureDir, page],
+    queryFn: () => reviewUrl({ repo, featureDir, ...(page === "check" ? { page } : {}) }),
     enabled: enabled && Boolean(repo && featureDir),
     retry: false,
   });

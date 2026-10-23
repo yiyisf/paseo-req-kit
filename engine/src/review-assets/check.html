@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验收清单</title>
+<link rel="stylesheet" href="check.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="eyebrow" id="project"></div>
+    <h1 id="title">验收清单</h1>
+    <div class="muted" id="sub"></div>
+  </div>
+  <div class="top-actions">
+    <button id="try" class="btn">把它跑起来试用</button>
+    <button id="try-stop" class="btn" hidden>停止试用</button>
+  </div>
+</header>
+<main>
+  <section id="try-box" class="card" hidden></section>
+  <section id="notes" class="card notes" hidden></section>
+  <p class="muted intro">一条一条看：照着"前置条件"准备，按"操作"去做，看到的和"预期结果"一样就点<b>通过</b>；不一样点<b>不对</b>，写下看到了什么。流水线没验证或没通过的排在最前面。进度会自动保存。</p>
+  <ol id="items" class="items"></ol>
+</main>
+<footer class="bar">
+  <div class="summary" id="summary"></div>
+  <label class="reviewer">验收人 <input id="reviewer" placeholder="你的名字（可不填）" maxlength="60"></label>
+  <button id="submit" class="btn primary" disabled>提交验收结果</button>
+</footer>
+<div id="toast" class="toast" hidden></div>
+<script src="check.js"></script>
+</body>
+</html>

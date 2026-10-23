@@ -15,6 +15,7 @@ import os from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { ENGINE_DIR, KIT_ROOT, kitHome, kitVersion } from "./locations.js";
+import { type Answer, acceptanceFailMessage, acceptanceText, buildChecklist, recordAcceptance, verdictOf } from "./checklist.js";
 import { readIndex } from "./records.js";
 import { readState, statePath } from "./state.js";
 
@@ -203,6 +204,8 @@ export interface ReviewServerOptions {
   env?: NodeJS.ProcessEnv;
   /** Runs `req approve|reply …` in the requirement's checkout; tests replace it. */
   run?: (command: "approve" | "reply", repo: string, featureDir: string, extra: string[]) => { ok: boolean; message: string };
+  /** 1.14: `req try <需求> --json [--stop]` for the checklist page's "试用" button; tests replace it. */
+  tryRun?: (repo: string, featureDir: string, stop: boolean) => { ok: boolean; message: string; services?: unknown[]; howTo?: string[] };
   onRequest?: () => void;
 }
 
@@ -304,9 +307,28 @@ function defaultRun(command: "approve" | "reply", repo: string, featureDir: stri
   return { ok: r.status === 0, message: r.error ? r.error.message : `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
 }
 
+function defaultTry(repo: string, featureDir: string, stop: boolean) {
+  const env = { ...process.env };
+  delete env.PASEO_AGENT_ID;
+  delete env.PASEO_AGENT_CWD;
+  const r = spawnSync(process.execPath, [path.join(KIT_ROOT, "bin", "req.mjs"), "try", featureDir, "--json", ...(stop ? ["--stop"] : [])], {
+    cwd: repo,
+    env,
+    encoding: "utf8",
+    timeout: 300_000,
+    windowsHide: true,
+  });
+  try {
+    return JSON.parse((r.stdout ?? "").trim().split("\n").at(-1) ?? "") as { ok: boolean; message: string; services?: unknown[]; howTo?: string[] };
+  } catch {
+    return { ok: false, message: r.error ? r.error.message : `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() || "没有启动" };
+  }
+}
+
 export function createReviewServer(opts: ReviewServerOptions): http.Server {
   const env = opts.env ?? process.env;
   const run = opts.run ?? defaultRun;
+  const tryRun = opts.tryRun ?? defaultTry;
   return http.createServer((req, res) => {
     opts.onRequest?.();
     handle(req, res).catch((error: Error) => json(res, 500, { ok: false, message: error.message }));
@@ -332,6 +354,11 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
       res.writeHead(301, { location: `${url.pathname}/` });
       return res.end();
     }
+    if (rest === "check") {
+      res.writeHead(301, { location: `${url.pathname}/` });
+      return res.end();
+    }
+    if (rest.startsWith("check/")) return handleChecklist(req, res, rest.slice("check/".length), entry, featureAbs, full);
     if (rest === "") return sendFile(res, path.join(ASSETS, "app.html"));
     if (rest === "app.js" || rest === "app.css") return sendFile(res, path.join(ASSETS, rest));
     if (rest.startsWith("proto/cur/")) return sendFile(res, inside(prototypeDir, rest.slice("proto/cur/".length)), PROTOTYPE_CSP);
@@ -397,6 +424,72 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
       fs.writeFileSync(path.join(reviewDir, "submitted", `${stamp}-${action}.json`), JSON.stringify({ action, comments, general: body?.general ?? "", result, versions: dirHash(prototypeDir) }, null, 2));
       if (result.ok) fs.rmSync(path.join(reviewDir, "draft.json"), { force: true });
       return json(res, result.ok ? 200 : 409, result);
+    }
+    return send(res, 404, "没有这个页面");
+  }
+
+  // 1.14: the acceptance checklist, /r/<token>/f/<key>/check/…
+  async function handleChecklist(req: http.IncomingMessage, res: http.ServerResponse, rest: string, entry: { repo: string; featureDir: string; key: string; project: string }, featureAbs: string, full: boolean) {
+    const checkDir = path.join(featureAbs, ".pipeline", "check");
+    if (rest === "") return sendFile(res, path.join(ASSETS, "check.html"));
+    if (rest === "check.js" || rest === "check.css") return sendFile(res, path.join(ASSETS, rest));
+    if (rest === "api/info" && req.method === "GET") {
+      const state = readState(statePath(entry.repo, entry.featureDir));
+      let draft: unknown = { answers: [], reviewer: "" };
+      try {
+        draft = JSON.parse(fs.readFileSync(path.join(checkDir, "draft.json"), "utf8"));
+      } catch {
+        /* none yet */
+      }
+      const acceptance = fs.existsSync(path.join(featureAbs, "acceptance.md")) ? fs.readFileSync(path.join(featureAbs, "acceptance.md"), "utf8") : "";
+      return json(res, 200, {
+        ...buildChecklist(featureAbs),
+        project: entry.project,
+        featureDir: entry.featureDir,
+        readOnly: !full,
+        running: state?.status === "running",
+        accepted: /^[-*]\s*验收结论[:：]\s*(.+)$/m.exec(acceptance)?.[1]?.trim() ?? null,
+        draft,
+      });
+    }
+    if (rest === "api/draft" && req.method === "PUT") {
+      if (!full) return json(res, 403, { ok: false, message: "这是只读链接" });
+      const body = (await readBody(req)) as { answers?: unknown; reviewer?: unknown } | null;
+      if (!body || !Array.isArray(body.answers)) return json(res, 400, { ok: false, message: "格式不对" });
+      fs.mkdirSync(checkDir, { recursive: true });
+      fs.writeFileSync(path.join(checkDir, "draft.json"), JSON.stringify({ answers: body.answers, reviewer: typeof body.reviewer === "string" ? body.reviewer : "", savedAt: new Date().toISOString() }, null, 2));
+      return json(res, 200, { ok: true });
+    }
+    if (rest === "api/try" && req.method === "POST") {
+      if (!full) return json(res, 403, { ok: false, message: "这是只读链接" });
+      const body = (await readBody(req)) as { stop?: boolean } | null;
+      return json(res, 200, tryRun(entry.repo, entry.featureDir, body?.stop === true));
+    }
+    if (rest === "api/submit" && req.method === "POST") {
+      if (!full) return json(res, 403, { ok: false, message: "这是只读链接，不能提交" });
+      const body = (await readBody(req)) as { answers?: Answer[]; reviewer?: string } | null;
+      const answers = (Array.isArray(body?.answers) ? body.answers : []).filter((a) => a && typeof a.id === "string" && ["pass", "fail", "skip"].includes(a.mark));
+      const list = buildChecklist(featureAbs);
+      const v = verdictOf(list, answers);
+      if (v.verdict === "通过" && v.missing.length > 0) {
+        return json(res, 400, { ok: false, message: `还有 ${v.missing.length} 条必须验的没有核对（${v.missing.map((i) => i.id).join("、")}）。核对完，或者有不对的标"不对"后再提交。` });
+      }
+      const file = path.join(featureAbs, "acceptance.md");
+      const previous = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+      const reviewer = body?.reviewer?.trim() || "需求方（验收页）";
+      const text = acceptanceText(list, answers, { verdict: v.verdict, reviewer: reviewer.slice(0, 60), date: new Date().toISOString().slice(0, 10), previous });
+      const { committed } = recordAcceptance(entry.repo, entry.featureDir, text);
+      fs.rmSync(path.join(checkDir, "draft.json"), { force: true });
+      if (v.verdict === "通过") {
+        return json(res, 200, { ok: true, verdict: v.verdict, committed, message: `已记录：验收通过${committed ? "，验收记录已提交" : ""}。下一步请开发同事审阅代码并合并。` });
+      }
+      const told = run("reply", entry.repo, entry.featureDir, ["--acceptance", acceptanceFailMessage(entry.featureDir, list, answers)]);
+      return json(res, 200, {
+        ok: true,
+        verdict: v.verdict,
+        committed,
+        message: told.ok ? "已记录：验收不通过。不对的地方已经转给这个需求的对话，它会和你确定怎么处理。" : `已记录：验收不通过，但没能转给需求的对话（${told.message.split("\n")[0]}）。请在需求的对话里说"验收不通过"。`,
+      });
     }
     return send(res, 404, "没有这个页面");
   }
@@ -530,7 +623,7 @@ async function serve(env: NodeJS.ProcessEnv): Promise<void> {
 // ---------------------------------------------------------------------------
 // req review <需求> [--no-open] [--read-only]
 
-function openBrowser(url: string) {
+export function openBrowser(url: string) {
   const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
   try {
     const child = spawn(cmd, args as string[], { stdio: "ignore", detached: true, windowsHide: true });

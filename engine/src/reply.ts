@@ -8,7 +8,10 @@ import { pluginReplyMessage } from "./messages.js";
 import { loadRuntimeFactory } from "./runtime-loader.js";
 import { readState, statePath } from "./state.js";
 
-async function main(argv: string[]): Promise<number> {
+async function main(argvIn: string[]): Promise<number> {
+  // 1.14 --acceptance: the checklist page found problems; the text is the whole notice.
+  const acceptance = argvIn.includes("--acceptance");
+  const argv = argvIn.filter((a) => a !== "--acceptance");
   const [feature, ...words] = argv;
   const text = words.join(" ").trim();
   if (!feature || !text) {
@@ -17,7 +20,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const { repo, featureDir } = locate(process.cwd(), feature);
   const state = readState(statePath(repo, featureDir));
-  if (!state || (state.status !== "waiting_for_business" && state.status !== "waiting_for_approval")) {
+  if (!state || (!acceptance && state.status !== "waiting_for_business" && state.status !== "waiting_for_approval")) {
     console.error(`${featureDir} 现在没有在等待回答或确认，不用回复。`);
     return 1;
   }
@@ -36,7 +39,7 @@ async function main(argv: string[]): Promise<number> {
   try {
     await runtime.notifyAgent(
       state.originAgentId,
-      pluginReplyMessage({
+      acceptance ? text.slice(0, 8000) : pluginReplyMessage({
         featureDir,
         waitingFor: state.status === "waiting_for_approval" ? "approval" : "business",
         text: text.slice(0, 8000),
@@ -46,7 +49,7 @@ async function main(argv: string[]): Promise<number> {
   } finally {
     await runtime.close().catch(() => undefined);
   }
-  console.log("已转给这个需求的对话，它会按回复更新需求说明并继续开发。");
+  console.log(acceptance ? "已转给这个需求的对话。" : "已转给这个需求的对话，它会按回复更新需求说明并继续开发。");
   return 0;
 }
 

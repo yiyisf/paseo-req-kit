@@ -1,0 +1,57 @@
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f3f6; --text: #1c2430; --muted: #5d6b7c; --border: #dfe3e9;
+  --accent: #2457d6; --accent-text: #ffffff; --accent-soft: #e8eefc; --ok: #15803d; --ok-soft: #e7f6ec; --danger: #b91c1c; --danger-soft: #fdecec; --warn: #b45309; --warn-soft: #fdf3e2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c; --surface: #1a2029; --surface-2: #222a35; --text: #e6eaf0; --muted: #9aa7b8; --border: #2e3846;
+    --accent: #6f9bff; --accent-text: #0d1420; --accent-soft: #1f2c47; --ok: #4ade80; --ok-soft: #173322; --danger: #f87171; --danger-soft: #3a1c1c; --warn: #fbbf24; --warn-soft: #3a2c12;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; padding-bottom: 96px; }
+.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 20px 24px 8px; flex-wrap: wrap; }
+.eyebrow { font-size: 13px; color: var(--muted); }
+h1 { margin: 2px 0 4px; font-size: 22px; }
+.muted { color: var(--muted); }
+main { padding: 0 24px; max-width: 980px; }
+.intro { margin: 8px 0 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 12px 0; }
+.notes h2, .card h2 { font-size: 15px; margin: 0 0 6px; }
+.notes ul { margin: 0; padding-left: 20px; }
+.items { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.item { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.item.pass { border-left-color: var(--ok); }
+.item.fail { border-left-color: var(--danger); }
+.item.skip { border-left-color: var(--warn); }
+.item-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.id { font-weight: 700; font-variant-numeric: tabular-nums; }
+.item-title { font-weight: 600; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.badge.fail { background: var(--danger-soft); color: var(--danger); }
+.badge.unverified { background: var(--warn-soft); color: var(--warn); }
+.badge.pass { background: var(--ok-soft); color: var(--ok); }
+.details { margin: 8px 0 0; padding-left: 18px; }
+.details li { margin: 2px 0; }
+.evidence { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.marks { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.btn { font: inherit; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 14px; cursor: pointer; min-height: 36px; }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+.btn.on-pass { background: var(--ok); color: #fff; border-color: var(--ok); }
+.btn.on-fail { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn.on-skip { background: var(--warn); color: #fff; border-color: var(--warn); }
+textarea { width: 100%; margin-top: 8px; font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px; min-height: 64px; }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: var(--surface); border-top: 1px solid var(--border); flex-wrap: wrap; }
+.summary { flex: 1; min-width: 200px; }
+.reviewer input { font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; width: 160px; }
+.toast { position: fixed; right: 24px; bottom: 84px; background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 10px; max-width: 520px; white-space: pre-line; }
+.services a { color: var(--accent); }
+pre.howto { white-space: pre-wrap; font: inherit; margin: 6px 0 0; }
+.done { background: var(--ok-soft); border-color: var(--ok); }
+
+@media (max-width: 640px) { body { padding-bottom: 200px; } }

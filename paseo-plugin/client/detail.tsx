@@ -9,7 +9,7 @@ import type { Action, RequirementDetail, Step } from "../shared/contracts";
 import { useAction, useDocument, usePreferences, useRequirement, useRequirements } from "./data";
 import { ACTION_TEXT, actionsFor, ago, ATTENTION_LABELS, facts, FILE_LABELS, minutes, tokens } from "./format";
 import { Markdown, tsvToMarkdown } from "./markdown";
-import { ReviewButton } from "./review";
+import { ChecklistButton, ReviewButton } from "./review";
 import { Badge, Button, Chip, Status, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
@@ -168,6 +168,8 @@ export function RequirementView({
   if (!d) return <Status theme={theme} loading={query.isPending} error={query.error} />;
   const steps = allSteps ? d.steps : d.steps.slice(-12);
   const actions = readOnly ? [] : actionsFor(d);
+  // 1.14: finished (it has a report) and not running: the requester can try it and accept it.
+  const canAccept = d.files.includes("report.md") && !d.running;
   return (
     <View style={{ gap: 16 }}>
       <View style={{ gap: 4 }}>
@@ -194,8 +196,9 @@ export function RequirementView({
         {d.attention === "business" ? <Text style={s.muted}>需求方的决定请在发起需求的对话中回答，回答后再继续。</Text> : null}
       </View>
 
-      {actions.length > 0 || d.hasPrototype ? (
+      {actions.length > 0 || d.hasPrototype || canAccept ? (
         <View style={s.row}>
+          {canAccept ? <ChecklistButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} primary={d.stage.startsWith("待验收") || d.stage === "验收未通过"} /> : null}
           {d.hasPrototype ? <ReviewButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} waiting={d.attention === "approval"} /> : null}
           {actions.map((a) => (
             <Button key={a} theme={theme} primary={a !== "stop" && !(a === "approve" && d.hasPrototype)} label={ACTION_TEXT[a].label} onPress={() => setAction(a)} />

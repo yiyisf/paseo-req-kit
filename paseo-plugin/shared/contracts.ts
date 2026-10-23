@@ -191,7 +191,8 @@ export const runRpc = defineRpc({
 /** req api review-url (1.13): the address of the requirement's prototype review page. */
 export const reviewUrlRpc = defineRpc({
   name: "req.review-url",
-  input: target,
+  /** page (1.14): "check" for the acceptance checklist; the prototype review page otherwise. */
+  input: target.extend({ page: z.enum(["prototype", "check"]).optional() }),
   output: z.object({ url: z.string(), readOnly: z.boolean() }),
 });
 
