@@ -49,6 +49,10 @@
 6. **评审意见**：按级别排列
 7. **处理记录**：留空，由下一步填写
 
+## 人工评审意见
+
+`code-review.md` 中有"人工评审"一节、列出 HR-1、HR-2… 时，那是评审人在插件的代码审查页上提出的意见，这一次尝试就是为了处理它们。逐条核对是否已经解决：没有解决的按"重要"重新提出（在 CR 意见里注明对应的 HR 编号）；评审人的意见与 spec 冲突时，按 spec 判断，并写明冲突、记入 `decisions.tsv`（`needs_human` 写 `yes`）。
+
 ## 第 2 轮及以后
 
 上一轮的意见已经由修复步骤处理，处理记录在 `code-review.md` 中。这一轮：
@@ -60,11 +64,18 @@
 ## 结果文件
 
 ```json
-{ "verdict": "pass" }
+{
+  "verdict": "changes_required",
+  "findings": [
+    { "id": "CR-1", "severity": "阻塞", "file": "src/order/export.ts", "line": 42, "title": "导出没有校验权限，普通用户也能导出全部订单", "suggestion": "调用 checkPermission('order:export')" }
+  ]
+}
 ```
 
 - `verdict`，二选一：
   - `pass`：没有尚未解决的"阻塞"或"重要"级别意见。
   - `changes_required`：存在尚未解决的"阻塞"或"重要"级别意见，接下来会执行评审问题修复。
+
+- `findings`：这一轮提出的每条意见（和 `code-review.md` 中的 CR 编号一致），给 Paseo 插件的代码审查页使用：人在改动的代码旁边看到它们，决定要不要改。`severity` 写"阻塞"、"重要"、"建议"或"待核实"；`file` 是相对仓库根目录的路径，`line` 是改动后文件中的行号（不确定就省略）；`title` 一句话说清问题，`suggestion` 一句话说修复方向。没有意见时写空数组。
 
 代码改动不存在，或者无法确定评审范围时，选择 `changes_required` 并在结论里说明情况。

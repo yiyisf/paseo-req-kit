@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>代码审查</title>
+<link rel="stylesheet" href="code.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="eyebrow" id="project"></div>
+    <h1 id="title">代码审查</h1>
+    <div class="muted" id="sub"></div>
+  </div>
+</header>
+<section id="status" class="banner" hidden></section>
+<div class="layout">
+  <nav class="files" id="files" aria-label="改动的文件"></nav>
+  <main>
+    <section id="summary" class="card" hidden></section>
+    <section id="ai" class="card" hidden></section>
+    <p class="muted intro">点代码行写意见（只对这一行）；AI 的意见可以标<b>要改</b>或<b>不用改</b>。看完在下面选择<b>退回修改</b>（流水线会按意见改，改完再评审、再验证）或<b>评审通过</b>。进度会自动保存。</p>
+    <div id="diffs"></div>
+    <section class="card">
+      <h2>总体意见（可不填）</h2>
+      <textarea id="note" rows="3" placeholder="例如：整体可以，但导出接口要加权限校验"></textarea>
+    </section>
+  </main>
+</div>
+<footer class="bar">
+  <div class="summary" id="count"></div>
+  <label class="field">审核人 <input id="reviewers" placeholder="@用户名，用逗号分开"></label>
+  <label class="field">评审人 <input id="reviewer" placeholder="你的名字" maxlength="60"></label>
+  <div class="actions">
+    <button id="changes" class="btn danger" disabled>退回修改</button>
+    <button id="approve" class="btn primary" disabled>评审通过</button>
+  </div>
+</footer>
+<div id="toast" class="toast" hidden></div>
+<script src="code.js"></script>
+</body>
+</html>

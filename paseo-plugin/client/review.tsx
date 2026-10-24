@@ -4,7 +4,7 @@ import type { PluginHostProps, PluginScreenProps } from "@getpaseo/plugin/client
 import { ExternalLink } from "@getpaseo/plugin/client/ui";
 import { Text, View } from "react-native";
 import { useReviewUrl } from "./data";
-import { openChecklist, openReview } from "./nav";
+import { openChecklist, openCodeReview, openReview } from "./nav";
 import { Button, Status, useStyles } from "./ui";
 import { canEmbedPages, embeddedPage, reviewUnreachable } from "./web";
 
@@ -13,6 +13,11 @@ type Theme = PluginHostProps["theme"];
 /** 1.14: the acceptance checklist, primary while the requirement waits for acceptance. */
 export function ChecklistButton({ theme, repo, featureDir, title, primary }: { theme: Theme; repo: string; featureDir: string; title: string; primary: boolean }) {
   return <Button theme={theme} primary={primary} label="验收清单（可一键试用）" onPress={() => openChecklist({ repo, featureDir, title })} />;
+}
+
+/** 1.14: the code review page: AI findings next to the code, the person's comments, pass or send back. */
+export function CodeReviewButton({ theme, repo, featureDir, title, primary, label }: { theme: Theme; repo: string; featureDir: string; title: string; primary: boolean; label: string }) {
+  return <Button theme={theme} primary={primary} label={label} onPress={() => openCodeReview({ repo, featureDir, title })} />;
 }
 
 /** The button on a requirement with a prototype: primary while the design waits for confirmation. */
@@ -24,7 +29,7 @@ export function ReviewScreen({ theme, layout, params }: PluginScreenProps) {
   const s = useStyles(theme, layout.compact);
   const repo = params.repo ?? "";
   const featureDir = params.featureDir ?? "";
-  const page = params.page === "check" ? "check" : "prototype";
+  const page = params.page === "check" ? "check" : params.page === "code" ? "code" : "prototype";
   const review = useReviewUrl(repo, featureDir, true, page);
   if (!review.data) {
     return (
@@ -44,12 +49,17 @@ export function ReviewScreen({ theme, layout, params }: PluginScreenProps) {
       </View>
     );
   }
-  const frame = canEmbedPages ? embeddedPage(url, `${page === "check" ? "验收清单" : "原型审查"}：${params.title ?? featureDir}`) : null;
+  const name = page === "check" ? "验收清单" : page === "code" ? "代码审查" : "原型审查";
+  const frame = canEmbedPages ? embeddedPage(url, `${name}：${params.title ?? featureDir}`) : null;
   return (
     <View style={[s.screen, { gap: 6 }]}>
       <View style={[s.row, { paddingHorizontal: 12, paddingTop: 8, justifyContent: "space-between" }]}>
         <Text style={s.muted}>
-          {page === "check"
+          {page === "code"
+            ? readOnly
+              ? "插件设为只读：可以看改动和 AI 意见，不能提交评审。"
+              : "点代码行写意见，AI 的意见标要改或不用改；看完在底部退回修改或评审通过。"
+            : page === "check"
             ? readOnly
               ? "插件设为只读：可以看清单，不能提交。"
               : "逐条核对：通过、不对（写下看到了什么）、先不验；需要时点右上角把它跑起来。"
@@ -61,8 +71,8 @@ export function ReviewScreen({ theme, layout, params }: PluginScreenProps) {
       </View>
       {frame ?? (
         <View style={[s.card, { margin: 12, gap: 8 }]}>
-          <Text style={s.text}>{page === "check" ? "验收清单" : "原型审查页"}在浏览器中打开效果最好（手机上屏幕较小，建议用电脑）。</Text>
-          <ExternalLink href={url}>{page === "check" ? "打开验收清单" : "打开原型审查页"}</ExternalLink>
+          <Text style={s.text}>{page === "prototype" ? "原型审查页" : name}在浏览器中打开效果最好（手机上屏幕较小，建议用电脑）。</Text>
+          <ExternalLink href={url}>{page === "prototype" ? "打开原型审查页" : `打开${name}`}</ExternalLink>
         </View>
       )}
     </View>

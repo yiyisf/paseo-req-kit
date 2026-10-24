@@ -15,3 +15,8 @@ export function openReview(input: { repo: string; featureDir: string; title: str
 export function openChecklist(input: { repo: string; featureDir: string; title: string }): void {
   opener?.({ screenId: "review", params: { repo: input.repo, featureDir: input.featureDir, title: input.title, page: "check" } });
 }
+
+/** 1.14: the code review page of a requirement (the same screen, another page). */
+export function openCodeReview(input: { repo: string; featureDir: string; title: string }): void {
+  opener?.({ screenId: "review", params: { repo: input.repo, featureDir: input.featureDir, title: input.title, page: "code" } });
+}

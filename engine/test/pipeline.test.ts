@@ -2482,3 +2482,22 @@ test("搜索大目录的命令：一分钟后打断并告诉 agent 怎么查，�
   assert.equal(runMain(off, { steps: { implement: { finishAfterWaits: 3 } }, runningTool: { kind: "shell", text: "find / -name x", minutesAgo: 9 } }).code, 0);
   assert.equal(events(off).filter((e) => e.type === "runningTool" || e.type === "interrupt").length, 0);
 });
+
+test("人工代码评审退回（1.14）：--review-fix 开始新的一次增量尝试，需求说明不变；没有待处理的意见时不启动", () => {
+  const env = setup();
+  assert.equal(runMain(env, {}).code, 0);
+  const refused = runMain(env, {}, ["--resume", "--review-fix"]);
+  assert.equal(refused.code, 2);
+  assert.match(refused.out, /没有待处理的人工代码评审意见/);
+  const dir = path.join(env.repo, FEATURE, ".pipeline", "code-review");
+  fs.mkdirSync(dir, { recursive: true });
+  const human = { status: "changes_requested", at: new Date().toISOString(), reviewer: "王工", reviewers: [], head: null, items: [{ id: "HR-1", file: null, line: null, finding: null, text: "加权限校验" }], note: "", consumedAttempt: null };
+  fs.writeFileSync(path.join(dir, "human.json"), JSON.stringify(human));
+  const run = runMain(env, {}, ["--resume", "--review-fix"]);
+  assert.equal(run.code, 0, run.out);
+  const s = state(env);
+  assert.equal(s.attempt, 2);
+  assert.match(s.incremental.reason, /人工代码评审提出了 1 条修改意见/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "human.json"), "utf8")).consumedAttempt, 2);
+  assert.ok(starts(env).filter((k) => k === "design").length >= 2, "从方案设计开始");
+});

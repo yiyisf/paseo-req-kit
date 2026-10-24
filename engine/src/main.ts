@@ -1,6 +1,7 @@
 // The long-running pipeline process. Normally started by launch.ts, detached
 // from the chat agent's shell; can also be run in the foreground for debugging.
 
+import { pendingHumanReview, writeHumanReview } from "./code-review.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -191,11 +192,20 @@ async function main(): Promise<number> {
       approval:
         args.approve && mode.previous.status === "waiting_for_approval"
           ? { attempt: mode.previous.attempt, status: "approved", at: now }
-          : startOver
-            ? null
-            : (mode.previous.approval ?? null),
+          : // 1.14: code review comments do not change what the requester confirmed: no second confirmation.
+            args.reviewFix && mode.previous.approval?.status === "approved"
+            ? { ...mode.previous.approval, attempt: mode.previous.attempt + 1 }
+            : startOver
+              ? null
+              : (mode.previous.approval ?? null),
       gate: mode.kind === "restart" ? null : (mode.previous.gate ?? null),
     };
+    // 1.14: the person's code review comments are this attempt's to handle.
+    if (args.reviewFix && mode.kind === "resume-from-design") {
+      const featureAbs = path.join(repo, featureDir);
+      const pending = pendingHumanReview(featureAbs);
+      if (pending) writeHumanReview(featureAbs, { ...pending, consumedAttempt: mode.previous.attempt + 1 });
+    }
     if (checked.entersVerify) {
       // A develop-only run that ends with its development report gets a full report after verification.
       delete state.results.report;

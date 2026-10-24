@@ -15,6 +15,7 @@ import os from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { ENGINE_DIR, KIT_ROOT, kitHome, kitVersion } from "./locations.js";
+import { buildCodeReview, recordHumanReview, startReviewFix, type Submission } from "./code-review.js";
 import { type Answer, acceptanceFailMessage, acceptanceText, buildChecklist, recordAcceptance, verdictOf } from "./checklist.js";
 import { readIndex } from "./records.js";
 import { readState, statePath } from "./state.js";
@@ -204,6 +205,8 @@ export interface ReviewServerOptions {
   env?: NodeJS.ProcessEnv;
   /** Runs `req approve|reply …` in the requirement's checkout; tests replace it. */
   run?: (command: "approve" | "reply", repo: string, featureDir: string, extra: string[]) => { ok: boolean; message: string };
+  /** 1.14: `req review-fix <需求>` after the code review page asked for changes; tests replace it. */
+  codeFix?: (repo: string, featureDir: string) => { ok: boolean; message: string };
   /** 1.14: `req try <需求> --json [--stop]` for the checklist page's "试用" button; tests replace it. */
   tryRun?: (repo: string, featureDir: string, stop: boolean) => { ok: boolean; message: string; services?: unknown[]; howTo?: string[] };
   onRequest?: () => void;
@@ -329,6 +332,7 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
   const env = opts.env ?? process.env;
   const run = opts.run ?? defaultRun;
   const tryRun = opts.tryRun ?? defaultTry;
+  const codeFixRun = opts.codeFix ?? startReviewFix;
   return http.createServer((req, res) => {
     opts.onRequest?.();
     handle(req, res).catch((error: Error) => json(res, 500, { ok: false, message: error.message }));
@@ -359,6 +363,11 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
       return res.end();
     }
     if (rest.startsWith("check/")) return handleChecklist(req, res, rest.slice("check/".length), entry, featureAbs, full);
+    if (rest === "code") {
+      res.writeHead(301, { location: `${url.pathname}/` });
+      return res.end();
+    }
+    if (rest.startsWith("code/")) return handleCodeReview(req, res, rest.slice("code/".length), entry, featureAbs, full);
     if (rest === "") return sendFile(res, path.join(ASSETS, "app.html"));
     if (rest === "app.js" || rest === "app.css") return sendFile(res, path.join(ASSETS, rest));
     if (rest.startsWith("proto/cur/")) return sendFile(res, inside(prototypeDir, rest.slice("proto/cur/".length)), PROTOTYPE_CSP);
@@ -424,6 +433,63 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
       fs.writeFileSync(path.join(reviewDir, "submitted", `${stamp}-${action}.json`), JSON.stringify({ action, comments, general: body?.general ?? "", result, versions: dirHash(prototypeDir) }, null, 2));
       if (result.ok) fs.rmSync(path.join(reviewDir, "draft.json"), { force: true });
       return json(res, result.ok ? 200 : 409, result);
+    }
+    return send(res, 404, "没有这个页面");
+  }
+
+  // 1.14: the code review page, /r/<token>/f/<key>/code/…
+  async function handleCodeReview(req: http.IncomingMessage, res: http.ServerResponse, rest: string, entry: { repo: string; featureDir: string }, featureAbs: string, full: boolean) {
+    const draftFile = path.join(featureAbs, ".pipeline", "code-review", "draft.json");
+    if (rest === "") return sendFile(res, path.join(ASSETS, "code.html"));
+    if (rest === "code.js" || rest === "code.css") return sendFile(res, path.join(ASSETS, rest));
+    if (rest === "api/info" && req.method === "GET") {
+      let draft: unknown = null;
+      try {
+        draft = JSON.parse(fs.readFileSync(draftFile, "utf8"));
+      } catch {
+        draft = null;
+      }
+      return json(res, 200, { ...buildCodeReview(entry.repo, entry.featureDir), readOnly: !full, draft });
+    }
+    if (rest === "api/draft" && req.method === "PUT") {
+      if (!full) return json(res, 403, { ok: false, message: "这是只读链接" });
+      const body = await readBody(req);
+      if (!body || typeof body !== "object") return json(res, 400, { ok: false, message: "格式不对" });
+      fs.mkdirSync(path.dirname(draftFile), { recursive: true });
+      fs.writeFileSync(draftFile, JSON.stringify({ ...(body as object), savedAt: new Date().toISOString() }, null, 2));
+      return json(res, 200, { ok: true });
+    }
+    if (rest === "api/submit" && req.method === "POST") {
+      if (!full) return json(res, 403, { ok: false, message: "这是只读链接，不能提交" });
+      const body = (await readBody(req)) as Partial<Submission> | null;
+      const verdict = body?.verdict === "approve" ? "approve" : body?.verdict === "changes" ? "changes" : null;
+      if (!verdict) return json(res, 400, { ok: false, message: "请选择评审通过或退回修改" });
+      const data = buildCodeReview(entry.repo, entry.featureDir);
+      if (data.running) return json(res, 409, { ok: false, message: "流水线正在运行，等它结束后再提交评审。" });
+      const sub: Submission = {
+        verdict,
+        reviewer: typeof body?.reviewer === "string" ? body.reviewer : "",
+        reviewers: Array.isArray(body?.reviewers) ? body.reviewers.filter((r): r is string => typeof r === "string") : [],
+        comments: (Array.isArray(body?.comments) ? body.comments : []).filter((c) => c && typeof c.text === "string").map((c) => ({ file: typeof c.file === "string" ? c.file : null, line: typeof c.line === "number" ? c.line : null, text: c.text })),
+        fix: (Array.isArray(body?.fix) ? body.fix : []).filter((f) => f && typeof f.id === "string").map((f) => ({ id: f.id, note: typeof f.note === "string" ? f.note : undefined })),
+        note: typeof body?.note === "string" ? body.note : "",
+      };
+      if (verdict === "changes" && sub.comments.length === 0 && sub.fix.length === 0 && !sub.note.trim()) {
+        return json(res, 400, { ok: false, message: "退回修改需要至少一条意见：在代码行上写意见，或把 AI 的意见标为\"要改\"。" });
+      }
+      const { review, committed } = recordHumanReview(entry.repo, entry.featureDir, sub);
+      if (verdict === "approve") {
+        return json(res, 200, { ok: true, verdict, committed, message: `已记录：评审通过${committed ? "，已写入 code-review.md 并提交" : ""}。${review.reviewers.length ? `审核人：${review.reviewers.join("、")}。` : ""}合并请求接入后会用这些审核人。` });
+      }
+      const started = codeFixRun(entry.repo, entry.featureDir);
+      return json(res, 200, {
+        ok: true,
+        verdict,
+        committed,
+        message: started.ok
+          ? `已记录 ${review.items.length} 条修改意见，流水线开始按意见修改（需求说明不变，从方案设计开始只处理这些意见），进展会发回需求的对话。`
+          : `已记录 ${review.items.length} 条修改意见，但没能开始修改：${started.message.split("\n")[0]}。可以在需求的对话里说"按代码评审意见修改"，或执行 req review-fix ${path.basename(entry.featureDir)}。`,
+      });
     }
     return send(res, 404, "没有这个页面");
   }
@@ -641,7 +707,23 @@ async function main(argv: string[]): Promise<number> {
   }
   const open = !argv.includes("--no-open");
   const readOnly = argv.includes("--read-only");
-  const feature = argv.find((a) => !a.startsWith("--"));
+  // 1.14: --page code opens the code review page of the same server.
+  const pageAt = argv.indexOf("--page");
+  const page = pageAt >= 0 ? argv[pageAt + 1] : null;
+  const feature = argv.find((a, i) => !a.startsWith("--") && !(pageAt >= 0 && i === pageAt + 1));
+  if (page === "code" && feature && !argv.includes("--help")) {
+    const { locate } = await import("./api.js");
+    const { repo, featureDir } = locate(process.cwd(), feature);
+    const key = keyOf(repo, featureDir);
+    if (!key) {
+      console.error(`${featureDir} 不在本机的需求列表中，先运行一次 req index --rebuild`);
+      return 1;
+    }
+    const url = `${reviewUrl(await ensureReviewServer(), key, readOnly)}code/`;
+    console.log(`代码审查页：${url}`);
+    if (open) openBrowser(url);
+    return 0;
+  }
   if (!feature || argv.includes("--help") || argv.includes("-h")) {
     console.log("用法：req review <需求> [--no-open] [--read-only]\n\n在浏览器中打开这个需求的原型审查页：点选要改的地方、直接改文字，然后提交修改意见或确认方案。");
     return feature ? 0 : 2;

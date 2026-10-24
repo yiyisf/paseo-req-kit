@@ -27,6 +27,7 @@ import { defaultConfigPath, KIT_ROOT, kitVersion } from "./locations.js";
 import { configView } from "./config-view.js";
 import { pruneIndex, readIndex, registerRequirement, requirementKey } from "./records.js";
 import { listWorktreeRecords } from "./worktree.js";
+import { readHumanReview } from "./code-review.js";
 import { isAlive, type PipelineState, readState, statePath, type StepRecord } from "./state.js";
 import { parsePeriod, summarizeRuns } from "./stats.js";
 import { readRuns, runsFile } from "./records.js";
@@ -376,10 +377,19 @@ export function apiStatus(repoArg: string, feature: string) {
     steps: state ? state.history.map((h) => stepJson(h, state)) : [],
     // 1.13: what to expect, from this machine's completed requirements of the same profile.
     estimate: estimateOf(state),
+    // 1.14: the person's code review (plugin's code review page).
+    humanReview: humanReviewOf(repo, featureDir),
     gate: state?.gate ?? null,
     external: Object.entries(state?.external ?? {}).map(([name, r]) => ({ name, id: r.id, url: r.url, status: r.status, syncedAt: r.syncedAt, pending: r.pending.length, lastError: r.pending.at(-1)?.error ?? null })),
     joint: (state?.joint ?? []).map((j) => ({ name: j.name, slug: j.slug, repo: j.repo, sourceRepo: j.sourceRepo, branch: j.branch, workspaceId: j.workspaceId, gate: j.gate ?? null })),
   };
+}
+
+function humanReviewOf(repo: string, featureDir: string) {
+  const r = readHumanReview(path.join(repo, featureDir));
+  if (!r) return null;
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8", windowsHide: true }).stdout?.trim() || null;
+  return { status: r.status, reviewer: r.reviewer, at: r.at, reviewers: r.reviewers, items: r.items.length, stale: r.status === "approved" && !!head && r.head !== head, consumedAttempt: r.consumedAttempt };
 }
 
 function estimateOf(state: PipelineState | null) {
@@ -580,15 +590,17 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       const feature = need("需求");
       const readOnly = flag(argv, "--read-only");
       // 1.14 --page check: the acceptance checklist page of the same server.
-      const page = option(argv, "--page") === "check" ? "check" : "prototype";
+      const pageArg = option(argv, "--page");
+      const page = pageArg === "check" ? "check" : pageArg === "code" ? "code" : "prototype";
       const { repo: r, featureDir } = locate(repo, feature);
       return import("./review.js").then(async ({ ensureReviewServer, keyOf, reviewUrl }) => {
         const key = keyOf(r, featureDir);
         if (!key) throw new ApiError("not_found", `${featureDir} 不在本机的需求列表中`);
         if (page === "prototype" && !fs.existsSync(path.join(r, featureDir, "prototype"))) throw new ApiError("not_found", `${featureDir} 还没有界面原型`);
         if (page === "check" && !fs.existsSync(path.join(r, featureDir, "spec.md"))) throw new ApiError("not_found", `${featureDir} 中没有 spec.md`);
+        if (page === "code" && !["implementation.md", "code-review.md"].some((f) => fs.existsSync(path.join(r, featureDir, f)))) throw new ApiError("not_found", `${featureDir} 还没有写代码，没有可以审查的改动`);
         const url = reviewUrl(await ensureReviewServer(), key, readOnly);
-        return { url: page === "check" ? `${url}check/` : url, readOnly };
+        return { url: page === "check" ? `${url}check/` : page === "code" ? `${url}code/` : url, readOnly };
       });
     }
     default:

@@ -78,6 +78,8 @@ export interface GateRun {
 
 export interface RequirementDetail extends Requirement {
   files: string[];
+  /** req-kit 1.14+: the person's code review on the code review page; null before one. */
+  humanReview?: { status: "approved" | "changes_requested"; reviewer: string; at: string; reviewers: string[]; items: number; stale: boolean; consumedAttempt: number | null } | null;
   /** req-kit 1.13+: what to expect, from this machine's completed requirements of the same profile; null without enough history. */
   estimate?: {
     basis: number;
@@ -191,8 +193,8 @@ export const runRpc = defineRpc({
 /** req api review-url (1.13): the address of the requirement's prototype review page. */
 export const reviewUrlRpc = defineRpc({
   name: "req.review-url",
-  /** page (1.14): "check" for the acceptance checklist; the prototype review page otherwise. */
-  input: target.extend({ page: z.enum(["prototype", "check"]).optional() }),
+  /** page (1.14): "check" for the acceptance checklist, "code" for the code review page; the prototype review page otherwise. */
+  input: target.extend({ page: z.enum(["prototype", "check", "code"]).optional() }),
   output: z.object({ url: z.string(), readOnly: z.boolean() }),
 });
 

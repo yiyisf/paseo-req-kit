@@ -80,6 +80,7 @@ metadata:
 | 确认方案后继续 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --approve`（只在方案确认点、用户确认之后用） |
 | 从头重来 | `node "{{PIPELINE_LAUNCHER}}" --feature <功能目录> --restart` |
 | 列出需求 | `node "{{PIPELINE_LAUNCHER}}" --list` |
+| 代码审查（1.14） | `req code-review <功能目录> --no-open`：给出代码审查页地址；评审人在页面上退回修改时流水线会自动开始修改，也可以执行 `req review-fix <功能目录>` |
 | 试用（1.14） | `req try <功能目录>`：把做好的需求跑起来，给出访问地址和测试数据；`req try <功能目录> --stop` 停止 |
 | 验收清单（1.14） | `req checklist <功能目录> --no-open`：列出验收清单和验收页地址，需求方可以在页面上逐条勾选、提交 |
 

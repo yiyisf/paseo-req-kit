@@ -56,6 +56,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
       list: { type: "boolean", default: false },
       "card-fields": { type: "boolean", default: false },
       track: { type: "boolean", default: false },
+      "review-fix": { type: "boolean", default: false },
       "spec-review": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       "source-repo": { type: "string" },
@@ -118,7 +119,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     repo: path.resolve(values.repo ?? process.env.PASEO_AGENT_CWD ?? process.cwd()),
     featureDir: values.feature ?? "",
     originAgentId: origin ? origin : null,
-    resume: (values.resume ?? false) || phase === "verify" || (values.approve ?? false),
+    resume: (values.resume ?? false) || phase === "verify" || (values.approve ?? false) || (values["review-fix"] ?? false),
     restart: values.restart ?? false,
     configPath: values.config ? path.resolve(values.config) : null,
     profile: (profile as ProfileName | undefined) ?? null,
@@ -127,6 +128,7 @@ export function parseLaunchArgs(argv: string[]): LaunchArgs {
     list: values.list ?? false,
     cardFields: values["card-fields"] ?? false,
     track: values.track ?? false,
+    reviewFix: values["review-fix"] ?? false,
     specReview: values["spec-review"] ?? false,
     worktree: values.worktree ?? false,
     sourceRepo: values["source-repo"] ? path.resolve(values["source-repo"]) : null,
@@ -210,6 +212,7 @@ export function launchArgv(args: LaunchArgs): string[] {
   if (args.profile) out.push("--profile", args.profile);
   if (args.resume) out.push("--resume");
   if (args.restart) out.push("--restart");
+  if (args.reviewFix) out.push("--review-fix");
   if (args.sourceRepo) out.push("--source-repo", args.sourceRepo);
   if (args.workspaceId) out.push("--workspace-id", args.workspaceId);
   if (args.specReview) out.push("--spec-review");

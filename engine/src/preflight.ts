@@ -1,3 +1,4 @@
+import { pendingHumanReview } from "./code-review.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,7 +15,7 @@ import {
 } from "./config.js";
 import { gitInfo } from "./git.js";
 import { samePath } from "./paths.js";
-import { currentLockHolder, type PipelineState, readState, statePath } from "./state.js";
+import { currentLockHolder, isAlive, type PipelineState, readState, statePath } from "./state.js";
 
 export interface LaunchArgs {
   repo: string;
@@ -33,6 +34,8 @@ export interface LaunchArgs {
   cardFields?: boolean;
   /** 1.14 --track: register a requirement being aligned, before the pipeline runs (shown in the plugin). */
   track?: boolean;
+  /** 1.14 --review-fix: a person's code review asked for changes; a new attempt handles them. */
+  reviewFix?: boolean;
   /** --spec-review: independent review of the draft spec, before confirmation. */
   specReview: boolean;
   /** --worktree: create a Paseo worktree workspace for this requirement and develop there. */
@@ -254,6 +257,12 @@ export function preflight(
         ? "这个需求的流水线已经完成。如需重新完整运行，请加 --restart。"
         : `这个需求已有运行记录（状态：${previous.status}）。从中断处继续请加 --resume，从头开始请加 --restart。`;
     throw new PreflightError(hint);
+  } else if (args.reviewFix) {
+    // 1.14: the person's code review (plugin) asked for changes; the spec itself did not change.
+    if (previous.status === "running" && isAlive(previous.pid)) throw new PreflightError("流水线正在运行，等它结束后再处理人工评审意见。");
+    const pending = pendingHumanReview(path.join(repo, featureDir));
+    if (!pending) throw new PreflightError("没有待处理的人工代码评审意见（在插件的代码审查页上提交\"退回修改\"后才有）。");
+    mode = { kind: "resume-from-design", previous, reason: `人工代码评审提出了 ${pending.items.length} 条修改意见（见 code-review.md 的"人工评审"一节和 changes.md），需求说明不变，从方案设计开始只处理这些意见` };
   } else if (args.approve && previous.status !== "waiting_for_approval") {
     throw new PreflightError(`这个需求没有等待确认的方案（状态：${previous.status}），不需要 --approve。继续开发请用 --resume。`);
   } else if (previous.status === "waiting_for_approval" && currentSpecHash(specPath) !== previous.specHash) {

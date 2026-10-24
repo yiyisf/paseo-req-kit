@@ -32,7 +32,7 @@
 | `req api config [--repo <目录>] [--machine]` | 1.12 起。`{ sources, ignored, error, repo, groups }`：`sources` 是生效的配置文件（`layer` 为 `machine` / `team` / `project`，按叠加顺序）；`groups` 按主题分组，每项 `{ key, label, description, display, value, setBy, scope, changed }`：`display` 是用大白话写的值，`value` 中看起来像密钥的值和个人账号替换为 `••••`，`setBy` 是写了它的文件，`changed` 表示与默认值不同。配置有错误时 `error` 写明原因，值按各文件所写。`--machine` 不看项目配置 |
 | `req api set-agents --json <设置>` | 1.12 起。`{ ok, message }`。`<设置>` 是 `{ builder, reviewer, fallback }`（`fallback` 可以为 null），检查后写入本机配置的 `agents`，原文件备份 |
 | `req api watchdog [--by plugin\|factory] [--dry-run]` | 1.13 起。`{ checked, resumed, failed, skipped }`：把本机"运行中但后台进程已不在"的需求直接继续（`req resume`）。每个进程只继续一次，每个需求 24 小时内最多 3 次；`--by plugin` 同时记下插件在检查（流水线据此不再预约对话的定时检查） |
-| `req api review-url <需求> [--repo <目录>] [--read-only] [--page check]` | 1.13 起；`--page check`（1.14）给出同一服务上的验收清单页地址（需要 `spec.md`）。`{ url, readOnly }`：这个需求的原型审查页地址（需要时在后台启动审查页的服务）。`--read-only` 的地址只能看，不能提交意见或确认方案。需求不在本机的需求索引中或还没有 `prototype/` 时报 `not_found` |
+| `req api review-url <需求> [--repo <目录>] [--read-only] [--page check]` | 1.13 起；`--page check`（1.14）给出同一服务上的验收清单页地址（需要 `spec.md`），`--page code`（1.14）给出代码审查页地址（需要已经写过代码）。`{ url, readOnly }`：这个需求的原型审查页地址（需要时在后台启动审查页的服务）。`--read-only` 的地址只能看，不能提交意见或确认方案。需求不在本机的需求索引中或还没有 `prototype/` 时报 `not_found` |
 
 `<需求>` 的写法与 `req status` 相同：功能目录、目录名或名称中能唯一确定的一部分。需求在为它新建的工作区中开发时，`--repo` 写对话所在的目录或那个工作区都可以。
 
