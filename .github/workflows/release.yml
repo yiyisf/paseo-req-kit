@@ -78,7 +78,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci || npm install
+      - run: npm ci
         shell: bash
       - run: npm test
         shell: bash
@@ -102,7 +102,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       # Trusted publishing needs a recent npm.
       - run: npm install -g npm@latest
-      - run: npm ci || npm install
+      - run: npm ci
       - name: Tag and package.json agree
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -115,7 +115,7 @@ jobs:
       - name: Build the docs into the package
         run: |
           cd site
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           BASE_URL=/ npm run build
           cd ..
           rm -rf site-dist
