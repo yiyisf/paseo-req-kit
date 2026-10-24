@@ -145,6 +145,8 @@ export interface AgentRuntime {
   recentActivity(agentId: string, limit: number): Promise<ActivityItem[] | null>;
   /** 1.13: the tool call the agent is running now (the latest one still running), or null. */
   runningTool(agentId: string): Promise<import("./scan-guard.js").RunningTool | null>;
+  /** 1.14: the agent's latest tool calls, running or done (for the danger guard); null when they cannot be read. */
+  toolCalls?(agentId: string): Promise<import("./danger-guard.js").ToolCall[] | null>;
   /** Which Paseo tools step agents get (Settings → Agents); null when unknown. */
   capabilities(): Promise<{ paseoTools: boolean; browser: boolean } | null>;
   /** 1.12: whether each agent provider is installed and logged in ("ready"); null when the daemon does not say. */

@@ -52,6 +52,9 @@ const HELP = `req-kit ${version}（${kitRoot}）
   req stats --report [--out 目录]
                                生成汇报用的汇总（.md）和每个需求一行的表格（.csv）
   req stats --export [文件]    导出本机的运行记录；汇总多台机器：req stats --merge <文件…> --report
+  req outcome                  查找已合并进主干的需求和合并后发现的问题，记入使用记录（req stats 也会自动查）
+  req outcome <需求> --merged | --issue "<问题>"
+                               手动记一笔：已合并，或合并后发现的问题
   req index [--rebuild [目录…]] [--prune]
                                本机记录的需求（Paseo 插件据此找到所有需求）；1.9 之前运行过的用 --rebuild 补登
   req api <命令> …             给程序用的 JSON 输出（见 contracts/cli-json.md）
@@ -236,6 +239,9 @@ switch (command) {
     break;
   case "checklist":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "checklist-cmd.ts"), ...rest]) : 1;
+    break;
+  case "outcome":
+    code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "outcomes.ts"), ...rest]) : 1;
     break;
   case "ui-check":
     code = needTsx() ? node([tsxCli, path.join(kitRoot, "engine", "src", "ui-check.ts"), ...rest]) : 1;

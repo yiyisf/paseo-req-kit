@@ -1,6 +1,6 @@
 {
   "name": "paseo-req-kit",
-  "version": "1.14.0-beta.4",
+  "version": "1.14.0-beta.5",
   "description": "req-kit: a requirement-development workflow for Paseo. /req aligns a requirement in chat; the engine runs design, implementation, review and verification as Paseo agents.",
   "type": "module",
   "license": "MIT",

@@ -79,7 +79,7 @@ export default async function notify(event, options) { /* 发送 */ }
 | `completed` | 流水线结束，报告已生成 | `outcome`（`completed`、`completed_with_issues`、`not_completed`）、`summary`、`reportPath`。"只做研发"时另有 `mode`（`develop-only`）和 `handoffPath`，报告是研发报告，需要人工测试 |
 | `approval` | 1.8.0 起。方案确认点（`designApproval`）：方案已通过审核，等待需求方确认"做完后会看到什么"，还没有开始写代码 | `previewPath`（要确认的内容）、`approveCommand`（确认后继续的命令）、`resumeCommand`（修改需求后继续的命令），都在发起的对话中执行 |
 | `phase_done` | 1.7.0 起。分阶段执行时研发阶段已完成（代码已通过评审、提测说明已写好），流水线停在闸口等待测试验证。测试退回后再次修完也会发 | `handoffPath`（提测说明）、`mode`（`gated`）、`verifyCommand`（开始测试验证的命令，在发起的对话中执行）、`verifyAt`（预约的开始时间，ISO 格式，没有为 null）、`handbacks`（已退回的次数） |
-| `alert` | 1.12 起。接单器（`req factory`）自检没有通过（Paseo 连不上、agent 没有登录、额度用完、需求管理系统的命令不可用），暂停接新卡片；或者恢复正常。同样的问题只发一次。`feature.title` 为"接单器"，`feature.dir`、`repo` 为空 | `source`（`factory`）、`machine`、`problems`（字符串数组，恢复时为空）、`recovered` |
+| `alert` | 1.12 起。接单器（`req factory`）自检没有通过（Paseo 连不上、agent 没有登录、额度用完、需求管理系统的命令不可用），暂停接新卡片；或者恢复正常。同样的问题只发一次。`feature.title` 为"接单器"，`feature.dir`、`repo` 为空 | `source`（`factory`）、`machine`、`problems`（字符串数组，恢复时为空）、`recovered`。1.14 起，步骤 agent 运行或开始运行危险命令（`dangerGuard`）时也发：`details.kind` 为 `danger`，另有 `stepTitle`、`command`、`label`、`ran`；这时 `feature`、`repo` 是那个需求的 |
 | `digest` | `req digest --notify`（或由 `req digest --schedule` 创建的 Paseo 定时任务）发送项目的需求总览，1.6.0 起。`feature.title` 为"<项目> 需求总览"，`text` 是完整的多行总览 | `features`：每个需求的 `name`、`title`、`stage`、`branch`、`updatedAt`、`usage`；`recurringLessons`（1.8.0 起）：在两个以上需求的 `lessons.tsv` 中出现的问题类别，每项 `category`、`features`、`rules` |
 
 ## 兼容性

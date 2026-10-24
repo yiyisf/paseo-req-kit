@@ -54,6 +54,24 @@ export function permissionMessage(input: {
   ].join("\n");
 }
 
+/** 1.14: a step agent ran (or started) a dangerous command; the pipeline stopped it. */
+export function dangerNotice(input: { stepTitle: string; agentTitle: string; command: string; label: string; ran: boolean }): string {
+  const one = input.command.replace(/\s+/g, " ").trim();
+  return [
+    HEADER,
+    "",
+    `流水线的「${input.stepTitle}」步骤里，agent ${input.ran ? "运行了" : "开始运行"}一条不允许的命令（${input.label}），${input.ran ? "流水线发现时它已经运行完" : "流水线已经打断了它"}：`,
+    "",
+    "```text",
+    one.length > 300 ? `${one.slice(0, 299)}…` : one,
+    "```",
+    "",
+    input.ran
+      ? `请告诉用户这件事，并请用户检查它有没有改动仓库以外或远程的东西（例如远程分支、制品仓库、集群、其他机器、数据库）。需要撤销的由用户处理；不要自己去撤销。agent「${input.agentTitle}」已被告知不要再这样做，流水线继续。`
+      : `请告诉用户这件事。agent「${input.agentTitle}」已被告知不要再这样做，流水线继续；如果这条命令其实是允许的，可以在配置 dangerGuard.allow 里放行。`,
+  ].join("\n");
+}
+
 export function failedMessage(input: {
   stepTitle: string;
   reason: string;
@@ -425,5 +443,16 @@ export function pluginReplyMessage(input: { featureDir: string; waitingFor: "bus
     input.waitingFor === "approval"
       ? "请这样处理：回复是同意的，执行\"确认方案后继续\"命令；是修改意见的，按 /req 中\"方案要改\"的做法更新需求说明，再执行继续命令。拿不准时在对话里问用户。"
       : "请这样处理：按 /req 中\"需要需求方决定\"的做法，把回答记入 alignment.md 并更新 spec.md；回答已经覆盖全部问题时，向用户简要复述后执行继续命令；还缺的，在对话里接着问。",
+  ].join("\n");
+}
+
+/** 1.14: the requirement's chat is reminded once that a confirmed spec has not started development. */
+export function notStartedNotice(featureDir: string): string {
+  return [
+    "【需求开发流水线提示】这条消息来自 req-kit 的后台检查，不是用户发的。",
+    "",
+    `需求 ${featureDir} 的需求说明已经确认超过 30 分钟，但开发流水线还没有启动。`,
+    "如果用户确实要开发它：请按 /req 的手册启动开发（或者告诉用户可以在插件\"等你处理\"里点\"开始开发\"）。",
+    "如果是用户有意先不开发、还要再改需求，或者已经在别处开始了：用一句话确认即可，不需要其他操作。这个提醒只发一次。",
   ].join("\n");
 }

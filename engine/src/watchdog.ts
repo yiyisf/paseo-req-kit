@@ -7,6 +7,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { kitHome } from "./locations.js";
+import { developedIn } from "./features.js";
+import { isSpecConfirmed } from "./preflight.js";
 import { readIndex } from "./records.js";
 import { isAlive, readState, statePath, writeState } from "./state.js";
 
@@ -25,6 +27,8 @@ interface Memory {
   by?: string;
   /** Per requirement: the dead process already handled, and when continuations happened. */
   handled?: Record<string, { pid: number; times: string[] }>;
+  /** 1.14: requirements whose chat was reminded that a confirmed spec has not started (once each). */
+  reminded?: Record<string, string>;
 }
 
 function readMemory(env: NodeJS.ProcessEnv): Memory {
@@ -57,21 +61,51 @@ export interface WatchdogResult {
   resumed: Array<{ featureDir: string; repo: string; message: string }>;
   failed: Array<{ featureDir: string; repo: string; message: string }>;
   skipped: Array<{ featureDir: string; reason: string }>;
+  /** 1.14: chats reminded that their confirmed requirement has not started. */
+  reminded: Array<{ featureDir: string; repo: string; ok: boolean; message: string }>;
+}
+
+/** 1.14: a confirmed spec with no run gets a reminder in its chat after this long, once. */
+export const REMIND_NOT_STARTED_MS = 30 * 60_000;
+/** Older confirmations are not reminded (e.g. right after an upgrade). */
+const REMIND_WITHIN_MS = 3 * 24 * 3600_000;
+
+/** A requirement confirmed a while ago with no run and nothing developed: since when (the spec's last change). */
+function confirmedNotStarted(repo: string, featureDir: string): number | null {
+  const dir = path.join(repo, featureDir);
+  const spec = path.join(dir, "spec.md");
+  try {
+    if (!isSpecConfirmed(fs.readFileSync(spec, "utf8")) || developedIn(dir)) return null;
+    return fs.statSync(spec).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 export type Resume = (repo: string, featureDir: string) => { ok: boolean; message: string };
 
-export function watchdogPass(input: { env?: NodeJS.ProcessEnv; by: "plugin" | "factory" | "manual"; resume: Resume; now?: Date; dryRun?: boolean }): WatchdogResult {
+export function watchdogPass(input: { env?: NodeJS.ProcessEnv; by: "plugin" | "factory" | "manual"; resume: Resume; remind?: Resume; now?: Date; dryRun?: boolean }): WatchdogResult {
   const env = input.env ?? process.env;
   const now = input.now ?? new Date();
   const memory = readMemory(env);
   const handled = memory.handled ?? {};
-  const result: WatchdogResult = { checked: 0, resumed: [], failed: [], skipped: [] };
+  const reminded = memory.reminded ?? {};
+  const result: WatchdogResult = { checked: 0, resumed: [], failed: [], skipped: [], reminded: [] };
   for (const entry of readIndex(env)) {
     if (!entry.present) continue;
     const file = statePath(entry.repo, entry.featureDir);
     const state = readState(file);
-    if (!state) continue;
+    if (!state) {
+      // 1.14: confirmed, never started: remind the chat it was aligned in, once.
+      const since = input.remind && entry.chatAgentId && !reminded[entry.key] ? confirmedNotStarted(entry.repo, entry.featureDir) : null;
+      const age = since === null ? -1 : now.getTime() - since;
+      if (since !== null && age >= REMIND_NOT_STARTED_MS && age < REMIND_WITHIN_MS && !input.dryRun) {
+        const r = input.remind!(entry.repo, entry.featureDir);
+        reminded[entry.key] = now.toISOString();
+        result.reminded.push({ featureDir: entry.featureDir, repo: entry.repo, ok: r.ok, message: r.message.split("\n").find((l) => l.trim()) ?? "" });
+      }
+      continue;
+    }
     result.checked++;
     if (state.status !== "running" || isAlive(state.pid)) continue;
     if (now.getTime() - new Date(state.updatedAt).getTime() < SETTLE_MS) continue;
@@ -100,6 +134,6 @@ export function watchdogPass(input: { env?: NodeJS.ProcessEnv; by: "plugin" | "f
     handled[entry.key] = { pid: state.pid, times: [...recent, now.toISOString()] };
     (r.ok ? result.resumed : result.failed).push({ featureDir: entry.featureDir, repo: entry.repo, message: r.message.split("\n").find((l) => l.trim()) ?? "" });
   }
-  writeMemory(env, { at: now.toISOString(), by: input.by === "manual" ? (memory.by ?? "manual") : input.by, handled });
+  writeMemory(env, { at: now.toISOString(), by: input.by === "manual" ? (memory.by ?? "manual") : input.by, handled, reminded });
   return result;
 }

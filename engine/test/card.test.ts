@@ -285,7 +285,7 @@ test("从卡片开始的需求跑完流水线：不建卡，状态改为开发�
   const summary = summarizeRuns(runs, { from: null, to: null, label: "全部" });
   assert.deepEqual(summary.byRequester.map((r) => [r.requester, r.requirements]), [["张广祥", 1]]);
   assert.match(describeStats(summary), /## 从卡片开始的需求（按需求方）\n\n\| 需求方 \| 需求数 \| 已完成 \| 周期中位数 \|[\s\S]*\| 张广祥 \| 1 \|/);
-  assert.match(statsCsv(summary), /,张广祥,ALM:CMASTER-BUSINESS#9902\n$/);
+  assert.match(statsCsv(summary), /,张广祥,ALM:CMASTER-BUSINESS#9902,0,0,,,0,,0\n$/);
   assert.match(card.description, /新增 test 接口。/);
   assert.match(r.stdout, /卡片 CMASTER-BUSINESS#9902 的 AI 区已更新（需求方已确认，开发中/);
 });

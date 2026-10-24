@@ -22,6 +22,8 @@
 | `budget` | object | 可选，1.13 起，配置了 `budget.tokens` 时。`{ allowance, warnedAt }`：停下前允许用到的 tokens（预算，每次用完后继续再加一份）；已经提醒过的那一档 |
 | `waitingPermission` | object \| null | 可选，1.13 起。步骤 agent 在等权限批准时：`{ agentId, stepTitle, requests, since }`；没有在等时为 null |
 | `recoveries` | array | 可选，1.12 起。流水线自己处理掉的问题（最多保留 200 条）：`at`、`key`（步骤键）、`kind`（`retry` 重试 / `reattach` 接着等上一次的 agent / `reuse_result` 沿用上一次 agent 的结果 / `extend_timeout` 超时后多等一轮 / `redo` 新开 agent 重做 / `fallback` 换备用模型 / `auto_resume` 预约自动继续 / `quota_wait` 预约在额度恢复后继续 / `self_answer` 方案审核的问题由 builder 自答 / `stop_scan` 打断了搜索大目录的命令，1.13 起）、`detail` |
+| `dangers` | array | 可选，1.14 起。步骤 agent 运行（或开始运行）的危险命令（`dangerGuard`，最多保留 50 条）：`at`、`key`（步骤键）、`stepTitle`、`command`、`label`（如"推送到远程仓库"）、`ran`（发现时已经运行完为 true，正在运行、已打断为 false）、`agentId`、`callId`（同一个调用只处理一次） |
+| `secretScans` | array | 可选，1.14 起。改代码的步骤之后的密钥扫描（`secretScan`），每个步骤、每次尝试保留最新一次：`key`、`attempt`、`at`、`findings`（`{ file, line, commit, kind, preview }`，`preview` 里的值已遮住）、`fixRounds`、`passed` |
 | `profile` | `quick` \| `standard` | 档位 |
 | `branch` | string \| null | 工作分支，启动时确定 |
 | `milestones` | string[] | 已发送的进展通知，续跑时不重复发送 |
@@ -39,7 +41,7 @@
 | `joint` | array \| null | 可选，1.8.0 起。联合需求（spec 的 `- 联合开发：`）中其他仓库的工作区：`name`（`relatedRepos` 中的名称）、`slug`（步骤键的后缀，如 `implement@backend`）、`sourceRepo`（切出工作区的那份检出）、`repo`（工作区目录）、`workspaceId`、`branch`、`specHash`（最近一次同步过去的 spec），以及这个仓库自己的 `codeBase` 和 `gate`（格式同顶层）。见 ADR 0025 |
 | `approval` | object \| null | 可选，1.8.0 起。方案确认点：`attempt`（哪一次尝试的方案）、`status`（`waiting` / `approved`）、`at`。需求变更后的新尝试需要重新确认 |
 | `external` | object \| null | 可选，1.9.0 起。外部系统中的卡片，按集成名称：`id`（卡片编号）、`url`、`status`（最近设置的状态）、`syncedAt`、`pending`（没有成功、等待补发的调用：`action` 为 `create` / `status`、`event`、`status`、`at`、`attempts`、`error`）。见 ADR 0028 |
-| `pushed` | array \| null | 可选，1.10 起。从卡片开始、配置了 `push` 的需求推送过的分支，每个仓库一条（主仓库在前）：`repo`、`remote`、`branch`、`at`、`error`（成功时为 null）。见 ADR 0029 |
+| `pushed` | array \| null | 可选，1.10 起。从卡片开始、配置了 `push` 的需求推送过的分支，每个仓库一条（主仓库在前）：`repo`、`remote`、`branch`、`at`、`error`（成功时为 null；1.14 起，发现疑似密钥时不推送，`error` 写明原因）。见 ADR 0029 |
 | `gate` | object \| null | 可选，1.8.0 起。质量门：`baseline`（`attempt`、`commit`、`at`、`results`：每项检查改动前 `pass` / `fail`），`runs`（每次运行：`key` 步骤键、`attempt`、`at`、`checks`（`name`、`result`：`pass` / `fail` / `skipped`、`failedBefore`）、`newFailures`、`fixRounds`、`passed`）。各次运行的完整输出在 `.pipeline/checks/<步骤键>/` |
 
 `schedules[].kind` 在 1.7.0 起还可能是 `verify-start`（`--verify-at` 预约的测试验证开始），1.8.0 起还可能是 `approval-continue`（方案确认超时后按方案继续，`designApproval.autoContinueHours`）。`history` 中每条步骤记录在 1.7.0 起有可选的 `phase`（`develop` / `verify`），用于按阶段统计用时与用量；没有时按研发阶段统计。

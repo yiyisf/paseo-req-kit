@@ -1,4 +1,6 @@
 import { judge as judgeScan } from "./scan-guard.js";
+import { dangerMessage, dangerOf } from "./danger-guard.js";
+import { describeFinding, scanChange, secretFollowUp } from "./secret-scan.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +31,7 @@ import {
   verifyStartPrompt,
   milestoneMessage,
   permissionMessage,
+  dangerNotice,
   resultFollowUp,
 } from "./messages.js";
 import { KIT_ROOT, kitVersion } from "./locations.js";
@@ -38,7 +41,7 @@ import { describeExternal, type IntegrationEvent, renderArgs, resolveCommand, ty
 import { cardSlug, planAppendix, publishCard, readSource } from "./card.js";
 import { principlesSection, projectAdditions, type PromptLocations, readToolPrompt } from "./prompts.js";
 import type { AgentRuntime, ManagedService, ServiceTarget, StepAgent, WaitOutcome } from "./runtime.js";
-import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type Recovery, type RunPhases, type StepRecord, type StopKind, writeState } from "./state.js";
+import { type CheckOutcome, type GateRun, type JointRepo, type PhaseName, type PipelineState, type Recovery, type SecretScanRun, type RunPhases, type StepRecord, type StopKind, writeState } from "./state.js";
 import { type PanelStep, STEPS, type StepDef, type StepId, stepKey, validateResult, VERIFY_PHASE_STEPS } from "./steps.js";
 
 export interface PipelineContext {
@@ -518,6 +521,15 @@ function pushBranch(ctx: PipelineContext): void {
   const at = new Date().toISOString();
   for (const repo of repos) {
     let error: string | null = null;
+    // 1.14: nothing with a secret in it leaves the machine.
+    const target = (ctx.state.joint ?? []).map((j) => ({ joint: j, repo: j.repo })).find((t) => t.repo === repo);
+    const secrets = ctx.config.secretScan.enabled ? scanChange(repo, secretBase(ctx, target as StepTarget | undefined), ctx.config.secretScan) : [];
+    if (secrets && secrets.length > 0) {
+      error = `发现 ${secrets.length} 处疑似密钥，没有推送（例如 ${describeFinding(secrets[0])}）；去掉后继续开发会再推送`;
+      ctx.log(`推送 ${repo} 的分支：${error}`);
+      ctx.state.pushed = [...(ctx.state.pushed ?? []).filter((p) => p.repo !== repo), { repo, remote: push.remote, branch, at, error, mergeRequest: ctx.state.pushed?.find((p) => p.repo === repo)?.mergeRequest ?? null }];
+      continue;
+    }
     try {
       execFileSync("git", ["push", push.remote, `HEAD:refs/heads/${branch}`], { cwd: repo, stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, windowsHide: true });
     } catch (e) {
@@ -661,9 +673,57 @@ async function guardScan(ctx: PipelineContext, agent: StepAgent, def: StepDef, k
   recover(ctx, key, "stop_scan", `「${def.title}」的命令${verdict.reason}，已打断并告诉 agent 改用别的办法：${tool.text.replace(/\s+/g, " ").slice(0, 120)}`);
 }
 
+/** How often the danger guard looks at the agent's commands (it waits in chunks this long). */
+const DANGER_CHECK_SECONDS = 15;
+/** At most this many danger interruptions per turn. */
+const DANGER_MAX_INTERRUPTS = 5;
+
+/**
+ * 1.14: looks at the commands the step agent ran or is running; a dangerous one is recorded, the
+ * person is told, and the agent is interrupted (while its turn runs) with what to do instead.
+ * Each tool call is handled once, also across turns and pipeline restarts.
+ */
+async function guardDanger(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, key: string, turnRunning: boolean, memory: { count: number }): Promise<void> {
+  const settings = ctx.config.dangerGuard;
+  if (!settings.enabled || !ctx.runtime.toolCalls) return;
+  const calls = await ctx.runtime.toolCalls(agent.id).catch(() => null);
+  if (!calls) return;
+  const seen = new Set((ctx.state.dangers ?? []).filter((d) => d.agentId === agent.id).map((d) => d.callId));
+  for (const call of calls) {
+    if (seen.has(call.callId) || !["shell", "fetch", "unknown"].includes(call.kind)) continue;
+    const danger = dangerOf(call.text, settings, { repo: agentRepo(ctx, agent) });
+    if (!danger) continue;
+    const ran = call.status !== "running";
+    seen.add(call.callId);
+    ctx.state.dangers = [...(ctx.state.dangers ?? []), { at: new Date().toISOString(), key, stepTitle: def.title, command: call.text.slice(0, 500), label: danger.label, ran, agentId: agent.id, callId: call.callId }].slice(-50);
+    save(ctx);
+    ctx.log(`危险命令（${key}）：${danger.label}，${ran ? "已运行完" : "正在运行，打断"}：${call.text.replace(/\s+/g, " ").slice(0, 160)}`);
+    if (turnRunning && memory.count < DANGER_MAX_INTERRUPTS) {
+      memory.count += 1;
+      await ctx.runtime.interruptAgent(agent.id, dangerMessage(call.text, danger, ran)).catch((error: Error) => ctx.log(`打断「${def.title}」失败：${error.message}`));
+    }
+    await notifyOrigin(ctx, dangerNotice({ stepTitle: def.title, agentTitle, command: call.text, label: danger.label, ran }));
+    await notifyExternal(ctx, "alert", `「${def.title}」步骤的 agent ${ran ? "运行了" : "开始运行"}不允许的命令（${danger.label}）${ran ? "，请检查有没有造成影响" : "，已打断"}。`, {
+      kind: "danger",
+      stepTitle: def.title,
+      command: call.text.slice(0, 500),
+      label: danger.label,
+      ran,
+    });
+  }
+}
+
+/** The directory the agent works in: the joint repository's worktree when it is one of theirs. */
+function agentRepo(ctx: PipelineContext, agent: StepAgent): string {
+  const record = ctx.state.history.find((h) => h.agentId === agent.id);
+  const slug = record?.key.includes("@") ? record.key.split("@").pop() : null;
+  return (slug && ctx.state.joint?.find((j) => j.slug === slug)?.repo) || ctx.repo;
+}
+
 async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef, agentTitle: string, deadline: Deadline): Promise<AgentUsage | null> {
   const notifiedPermissions = new Set<string>();
   const guard: ScanGuardMemory = { interrupted: new Set(), count: 0 };
+  const danger = { count: 0 };
   let consecutiveErrors = 0;
   for (;;) {
     let remaining = deadline.at - Date.now();
@@ -686,7 +746,9 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
     let outcome;
     try {
       // 1.13: with the scan guard on, look at the running tool call about once a minute.
-      const chunk = ctx.config.scanGuard.enabled ? Math.min(ctx.config.waitChunkSeconds, SCAN_CHECK_SECONDS) : ctx.config.waitChunkSeconds;
+      // 1.14: with the danger guard on, look at its commands every 15 seconds.
+      const guardSeconds = ctx.config.dangerGuard.enabled ? DANGER_CHECK_SECONDS : ctx.config.scanGuard.enabled ? SCAN_CHECK_SECONDS : Infinity;
+      const chunk = Math.min(ctx.config.waitChunkSeconds, guardSeconds);
       outcome = await agent.wait(Math.min(chunk * 1000, remaining));
       consecutiveErrors = 0;
     } catch (error) {
@@ -706,8 +768,10 @@ async function waitForTurn(ctx: PipelineContext, agent: StepAgent, def: StepDef,
     }
     switch (outcome.status) {
       case "idle":
+        await guardDanger(ctx, agent, def, agentTitle, deadline.key, false, danger);
         return outcome.usage ?? null;
       case "timeout":
+        await guardDanger(ctx, agent, def, agentTitle, deadline.key, true, danger);
         await guardScan(ctx, agent, def, deadline.key, guard);
         continue;
       case "error":
@@ -924,12 +988,14 @@ async function runStepOnce(
 
     if (extras.gate) {
       // The same agent fixes what its own change broke: it still has the context.
-      await qualityGate(ctx, key, target, async (text) => {
+      const fix = async (text: string) => {
         await agent.followUp(text);
         record.usage = (await waitForTurn(ctx, agent, def, agentTitle, deadline)) ?? record.usage ?? null;
         const again = readResultFile(resultAbs, def);
         if (again.ok) validation = again;
-      });
+      };
+      await qualityGate(ctx, key, target, fix);
+      await secretGate(ctx, key, target, fix);
     }
 
     record.outcome = "completed";
@@ -1703,6 +1769,69 @@ async function qualityGate(ctx: PipelineContext, key: string, target: StepTarget
   }
 }
 
+/** The commit the secret scan starts from: the attempt's code base, else where the branch left the main line. */
+function secretBase(ctx: PipelineContext, target?: StepTarget): string | null {
+  const repo = target?.repo ?? ctx.repo;
+  const recorded = codeBaseCommit(ctx, target);
+  if (recorded) return recorded;
+  for (const ref of ["origin/HEAD", "origin/main", "origin/master", "main", "master"]) {
+    try {
+      const mb = execFileSync("git", ["merge-base", "HEAD", ref], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
+      if (mb && mb !== headCommit(repo)) return mb;
+    } catch {
+      /* try the next */
+    }
+  }
+  return null;
+}
+
+/**
+ * 1.14: after a step that changed code, looks for secrets the requirement added (secret-scan.ts);
+ * what it finds goes back to the step's agent, like a failing check, up to qualityGate.fixAttempts
+ * times. The outcome is kept for the review, the report and the push.
+ */
+async function secretGate(ctx: PipelineContext, key: string, target: StepTarget | undefined, fix: (text: string) => Promise<void>): Promise<void> {
+  if (!ctx.config.secretScan.enabled) return;
+  const repo = target?.repo ?? ctx.repo;
+  const base = secretBase(ctx, target);
+  const max = ctx.config.qualityGate.fixAttempts;
+  for (let fixRounds = 0; ; fixRounds += 1) {
+    const findings = scanChange(repo, base, ctx.config.secretScan);
+    if (findings === null) {
+      ctx.log(`密钥扫描（${key} 之后）：找不到改动的起点，没有扫描`);
+      return;
+    }
+    if (findings.length === 0 || fixRounds >= max) {
+      const run: SecretScanRun = { key, attempt: ctx.state.attempt, at: new Date().toISOString(), findings, fixRounds, passed: findings.length === 0 };
+      ctx.state.secretScans = [...(ctx.state.secretScans ?? []).filter((r) => !(r.key === key && r.attempt === run.attempt)), run].slice(-30);
+      save(ctx);
+      ctx.log(`密钥扫描（${key} 之后）：${run.passed ? (fixRounds > 0 ? `要求处理 ${fixRounds} 次后没有发现` : "没有发现") : `要求处理 ${fixRounds} 次后仍有 ${findings.length} 处`}`);
+      if (!run.passed) {
+        await notifyOrigin(ctx, milestoneMessage(`「${key}」之后的密钥扫描仍发现 ${findings.length} 处疑似密钥（例如 ${describeFinding(findings[0])}）。这些提交不会被推送；请用户看一下是不是真实的密钥。`));
+      }
+      return;
+    }
+    ctx.log(`密钥扫描（${key} 之后）：发现 ${findings.length} 处疑似密钥，第 ${fixRounds + 1} 次要求处理`);
+    await fix(secretFollowUp({ findings, base: base!, round: fixRounds + 1, max }));
+  }
+}
+
+/** What the secret scan found in this attempt, for the code review and the report. */
+function secretLines(ctx: PipelineContext): string[] {
+  const runs = (ctx.state.secretScans ?? []).filter((r) => r.attempt === ctx.state.attempt);
+  const last = runs.at(-1);
+  if (!last) return [];
+  if (last.passed) return [`密钥扫描（${last.key} 之后，流水线运行）：没有发现疑似密钥${last.fixRounds > 0 ? `（要求处理 ${last.fixRounds} 次后）` : ""}`];
+  return [`密钥扫描（${last.key} 之后，流水线运行）：仍有 ${last.findings.length} 处疑似密钥，分支不会被推送：`, ...last.findings.slice(0, 10).map((f) => `- ${describeFinding(f)}`)];
+}
+
+/** Dangerous commands step agents ran in this run, for the report. */
+function dangerLines(ctx: PipelineContext): string[] {
+  const list = ctx.state.dangers ?? [];
+  if (list.length === 0) return [];
+  return [`流水线拦下的危险命令（${list.length} 次，已通知用户）：`, ...list.slice(-10).map((d) => `- 「${d.stepTitle}」${d.ran ? "运行了" : "开始运行（已打断）"}：${d.label}`)];
+}
+
 function describeGateRun(run: GateRun): string {
   const ran = run.checks.filter((c) => c.result !== "skipped");
   const skipped = run.checks.length - ran.length;
@@ -1963,7 +2092,7 @@ async function developPhase(ctx: PipelineContext): Promise<Record<string, unknow
 
   const reviewLoop = async (target?: StepTarget) => {
     for (let r = 1; r <= rounds.codeReview; r++) {
-      const lines = [...gateLines(ctx, target), ...(target ? [] : scopeLines(ctx)), ...acceptanceLines(ctx, target)];
+      const lines = [...gateLines(ctx, target), ...(target ? [] : [...secretLines(ctx), ...scopeLines(ctx)]), ...acceptanceLines(ctx, target)];
       const review = await runReview(ctx, "code_review", r, rounds.codeReview, lines, target);
       if (review.verdict === "pass") break;
       await runStep(ctx, "review_fix", r, rounds.codeReview, { gate: true, target });
@@ -2142,7 +2271,7 @@ function externalLines(ctx: PipelineContext): string[] {
 }
 
 function reportLines(ctx: PipelineContext): string[] {
-  const lines = [...usageLines(ctx), ...gateLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx), ...jointLines(ctx), ...externalLines(ctx)];
+  const lines = [...usageLines(ctx), ...gateLines(ctx), ...secretLines(ctx), ...dangerLines(ctx), ...scopeLines(ctx), ...acceptanceLines(ctx), ...jointLines(ctx), ...externalLines(ctx)];
   if (ctx.config.checks.length === 0 && ctx.state.type !== "assessment") {
     lines.push("质量门：项目没有配置检查（checks），流水线没有自己运行检查，以各步骤记录的检查结果为准");
   }

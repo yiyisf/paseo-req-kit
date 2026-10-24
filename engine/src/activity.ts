@@ -108,3 +108,24 @@ export function runningToolOf(entries: TimelineEntry[]): import("./scan-guard.js
   const text = Array.isArray(raw) ? raw.join(" ") : String(raw ?? "");
   return { kind, text, startedAt: call.first, callId };
 }
+
+/**
+ * 1.14: the tool calls at the end of the timeline (for the danger guard), oldest first: each
+ * call's latest status, its command (shell), pattern (search) or address (fetch), and when it started.
+ */
+export function toolCallsOf(entries: TimelineEntry[]): import("./danger-guard.js").ToolCall[] {
+  const calls = new Map<string, { first: string; last: Record<string, unknown> }>();
+  for (const entry of entries) {
+    const it = entry.item as Record<string, unknown> | null;
+    if (!it || typeof it !== "object" || it.type !== "tool_call" || typeof it.callId !== "string") continue;
+    const seen = calls.get(it.callId);
+    if (seen) seen.last = it;
+    else calls.set(it.callId, { first: entry.timestamp, last: it });
+  }
+  return [...calls.entries()].map(([callId, call]) => {
+    const detail = (call.last.detail ?? {}) as Record<string, unknown>;
+    const kind = String(detail.type ?? "unknown");
+    const raw = kind === "shell" ? detail.command : kind === "search" ? detail.query : kind === "fetch" ? detail.url : (detail.command ?? "");
+    return { callId, kind, text: Array.isArray(raw) ? raw.join(" ") : String(raw ?? ""), status: String(call.last.status ?? ""), startedAt: call.first };
+  });
+}

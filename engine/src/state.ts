@@ -46,6 +46,32 @@ export type StopKind =
   | "budget"
   | "other";
 
+/** 1.14: a dangerous command a step agent ran or started (contracts/state.md). */
+export interface DangerEvent {
+  at: string;
+  /** The step's key, e.g. "implement". */
+  key: string;
+  stepTitle: string;
+  command: string;
+  label: string;
+  /** Whether it had already finished when it was seen (false: interrupted while running). */
+  ran: boolean;
+  /** The agent and its tool call, so the same call is reported once. */
+  agentId?: string;
+  callId?: string;
+}
+
+/** 1.14: a secret scan after a step that changed code. */
+export interface SecretScanRun {
+  key: string;
+  attempt: number;
+  at: string;
+  findings: import("./secret-scan.js").SecretFinding[];
+  /** How many times the agent was asked to remove them. */
+  fixRounds: number;
+  passed: boolean;
+}
+
 /** Something the pipeline handled by itself (1.12). */
 export interface Recovery {
   at: string;
@@ -118,6 +144,10 @@ export interface PipelineState {
   stopKind?: StopKind | null;
   /** 1.12: what the pipeline handled by itself instead of stopping (retries, waiting longer, a fallback model…). */
   recoveries?: Recovery[];
+  /** 1.14: dangerous commands step agents ran or started (dangerGuard), newest last; at most 50. */
+  dangers?: DangerEvent[];
+  /** 1.14: the latest secret scan of each step that changed code (secretScan), for the review and the report. */
+  secretScans?: SecretScanRun[];
   /** 1.12: the questions a run waiting for the requester (waiting_for_business) asks; cleared when it runs again. */
   pendingQuestions?: string[] | null;
   outcome: string | null;

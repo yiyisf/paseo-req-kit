@@ -9,6 +9,7 @@ import path from "node:path";
 import { section } from "./checklist.js";
 import { ownersFor, readCodeowners } from "./codeowners.js";
 import { KIT_ROOT } from "./locations.js";
+import { appendEvent, requirementRef } from "./records.js";
 import { isAlive, readState, statePath } from "./state.js";
 import { readWorktreeRecord } from "./worktree.js";
 
@@ -398,6 +399,8 @@ export function recordHumanReview(repo: string, featureDir: string, sub: Submiss
   const committed = commitDocs(repo, touched, `docs(${path.basename(featureDir)}): 人工代码评审${sub.verdict === "approve" ? "通过" : "意见"}`);
   // A new review replaces the draft.
   fs.rmSync(path.join(humanDir(featureAbs), "draft.json"), { force: true });
+  // 1.14: the review also goes into the usage records, for req stats.
+  appendEvent({ kind: "review", at: review.at, requirement: requirementRef(repo, featureDir), review: { verdict: review.status, reviewer, items: items.length, head: review.head } });
   return { review, committed };
 }
 

@@ -130,6 +130,13 @@ export interface StatsSummary {
     rework: { tokens: number; share: number } | null;
     perRequirement: { median: number | null; byProfile: Array<{ profile: string; requirements: number; median: number | null }> };
   };
+  /** req-kit 1.14+: people's code reviews, acceptance, merges and problems after them. */
+  oversight?: {
+    reviews: { total: number; requirements: number; sentBack: number; passedFirstTime: number; items: number };
+    acceptance: { total: number; requirements: number; failed: number; passedFirstTime: number };
+    merged: { requirements: number; medianHoursAfterCompletion: number | null };
+    issues: { total: number; requirements: number };
+  };
 }
 
 export interface KitInfo {

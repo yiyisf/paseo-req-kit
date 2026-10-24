@@ -91,6 +91,21 @@ export function StatsScreen({ theme, layout }: PluginScreenProps) {
               {card("agent 合计用时", minutes(d.usage.agentMinutes), `输入 ${tokens(d.usage.inputTokens)}，输出 ${tokens(d.usage.outputTokens)} tokens`)}
               {d.usage.costUsd !== null ? card("费用", `$${d.usage.costUsd.toFixed(2)}`) : null}
             </View>
+            {d.oversight && d.oversight.reviews.total + d.oversight.acceptance.total + d.oversight.merged.requirements + d.oversight.issues.total > 0 ? (
+              <View style={s.card}>
+                <Text style={s.heading}>人工把关和合并后</Text>
+                <Text style={s.text}>
+                  人工代码评审 {d.oversight.reviews.total} 次（{d.oversight.reviews.requirements} 个需求），退回修改 {d.oversight.reviews.sentBack} 次；第一次就通过 {d.oversight.reviews.passedFirstTime} 个
+                </Text>
+                <Text style={s.text}>
+                  需求方验收 {d.oversight.acceptance.total} 次，不通过 {d.oversight.acceptance.failed} 次；第一次就通过 {d.oversight.acceptance.passedFirstTime} 个
+                </Text>
+                <Text style={s.text}>
+                  合并进主干 {d.oversight.merged.requirements} 个需求
+                  {d.oversight.merged.medianHoursAfterCompletion === null ? "" : `，完成到合并中位数 ${d.oversight.merged.medianHoursAfterCompletion} 小时`}；合并后发现问题 {d.oversight.issues.total} 个
+                </Text>
+              </View>
+            ) : null}
             {d.tokens?.total ? <TokenShare theme={theme} compact={layout.compact} t={d.tokens} /> : null}
             {d.waits.length > 0 ? (
               <View style={s.card}>

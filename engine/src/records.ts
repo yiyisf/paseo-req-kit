@@ -6,6 +6,8 @@
 //                         on the machine. The overview itself is still read live (ADR 0010).
 //   usage/runs.jsonl      one line per pipeline run (a process from start to stop): steps,
 //                         time, usage, gate and review rounds. What `req stats` reports on.
+//                         1.14: also one line per event after the run: a person's code review,
+//                         the acceptance, the merge into the main line, a problem found after it.
 //
 // Recording never affects a run: every write is best effort. REQ_KIT_NO_RECORD=1 turns both
 // off (evaluation runs are not real requirements).
@@ -317,6 +319,75 @@ export function readRuns(file: string): RunRecord[] {
       if (r && r.kind === "run" && r.schema === RECORD_SCHEMA && r.requirement && r.run) out.push(r);
     } catch {
       // A torn last line (power loss mid-write) or a foreign line.
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Events after the run (1.14)
+
+export type EventKind = "review" | "acceptance" | "merge" | "issue";
+
+/** Something that happened to a requirement outside its runs (contracts/usage-record.md). */
+export interface EventRecord {
+  schema: 1;
+  kind: EventKind;
+  machine: string;
+  kitVersion: string;
+  at: string;
+  requirement: { key: string; project: string; name: string; title: string };
+  /** A person's code review in the plugin. */
+  review?: { verdict: "approved" | "changes_requested"; reviewer: string; items: number; head: string | null };
+  /** The requester's acceptance on the checklist page. */
+  acceptance?: { verdict: "通过" | "不通过"; reviewer: string; total: number; passed: number; failed: number; unchecked: number };
+  /** The requirement's change reached the main line. how: found its files there ("files"), or a person said so ("manual"). */
+  merge?: { into: string; commit: string | null; mergedAt: string | null; how: "files" | "manual" };
+  /** A problem found after the merge: from a defect requirement that names this one, or a person's note. */
+  issue?: { text: string; by: string | null; id: string };
+}
+
+/** The requirement as events name it: the index entry when there is one (same key as its runs). */
+export function requirementRef(repo: string, featureDir: string, env: NodeJS.ProcessEnv = process.env): EventRecord["requirement"] {
+  const fd = featureDir.split(path.sep).join("/");
+  const r = real(repo);
+  const entry = readIndex(env).find((e) => e.featureDir === fd && (real(e.repo) === r || (e.sourceRepo && real(e.sourceRepo) === r)));
+  const source = entry?.sourceRepo ?? entry?.repo ?? repo;
+  let title = path.basename(fd);
+  try {
+    const m = /^#\s+(.+)$/m.exec(fs.readFileSync(path.join(entry?.repo ?? repo, fd, "spec.md"), "utf8"));
+    if (m) title = m[1].trim();
+  } catch {
+    /* no spec: the directory name */
+  }
+  return { key: entry?.key ?? requirementKey(source, fd), project: entry?.project ?? path.basename(real(source)), name: path.basename(fd), title };
+}
+
+/** Appends an event to the usage records. Never throws. */
+export function appendEvent(input: Omit<EventRecord, "schema" | "machine" | "kitVersion" | "at"> & { at?: string }, env: NodeJS.ProcessEnv = process.env): void {
+  if (recordingOff(env)) return;
+  const record: EventRecord = { schema: 1, machine: os.hostname(), kitVersion: kitVersion(), at: input.at ?? new Date().toISOString(), ...input } as EventRecord;
+  try {
+    fs.mkdirSync(usageDir(env), { recursive: true });
+    fs.appendFileSync(runsFile(env), `${JSON.stringify(record)}\n`);
+  } catch {
+    // Usage records are a convenience.
+  }
+}
+
+const EVENT_KINDS = new Set<string>(["review", "acceptance", "merge", "issue"]);
+
+/** Event records from a JSONL file (this machine's, or an export). */
+export function readEvents(file: string): EventRecord[] {
+  if (!fs.existsSync(file)) return [];
+  const out: EventRecord[] = [];
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const r = JSON.parse(line) as EventRecord;
+      if (r && EVENT_KINDS.has(r.kind) && r.schema === RECORD_SCHEMA && r.requirement && typeof r.at === "string") out.push(r);
+    } catch {
+      // A torn line.
     }
   }
   return out;

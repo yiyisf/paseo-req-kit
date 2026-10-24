@@ -60,6 +60,8 @@ export interface FakeScenario {
   noUsage?: boolean;
   /** The tool call every agent is running (the scan guard looks at it); started this many minutes ago. */
   runningTool?: { kind: string; text: string; minutesAgo: number; callId?: string } | null;
+  /** Tool calls every agent's timeline shows (the danger guard looks at them). */
+  toolCalls?: Array<{ kind: string; text: string; status: "running" | "completed"; callId?: string }>;
   capabilities?: { paseoTools: boolean; browser: boolean } | null;
   setup?: { status: "completed" | "failed" | "none" | "timeout"; error: string | null };
   /** Paseo cannot schedule (older daemon). */
@@ -368,6 +370,10 @@ export const createRuntime: RuntimeFactory = async () => {
       record({ type: "runningTool", agentId });
       const t = scenario.runningTool;
       return t ? { kind: t.kind, text: t.text, callId: t.callId ?? "call-1", startedAt: new Date(Date.now() - t.minutesAgo * 60_000).toISOString() } : null;
+    },
+    async toolCalls(agentId) {
+      record({ type: "toolCalls", agentId });
+      return (scenario.toolCalls ?? []).map((t, i) => ({ callId: t.callId ?? `tc-${i}`, kind: t.kind, text: t.text, status: t.status, startedAt: new Date().toISOString() }));
     },
     async capabilities() {
       return scenario.capabilities ?? null;

@@ -127,6 +127,16 @@ const CATALOG: Array<{ id: string; title: string; description: string; keys: Rec
         description: "步骤 agent 搜索整个磁盘、用户目录、Maven 仓库（.m2）、全局 node_modules 等很大的目录时，一分钟后打断它并告诉它该怎么查；任何搜索运行太久也打断。",
         display: (v) => { const g = v as PipelineConfig["scanGuard"]; return g.enabled ? `开，搜索超过 ${g.minutes} 分钟也打断${g.paths.length ? `；另外不许整个搜索：${g.paths.join("、")}` : ""}` : "关"; },
       },
+      dangerGuard: {
+        label: "拦截危险命令",
+        description: "步骤 agent 推送代码、发布制品、改动集群、连接其他机器上的数据库或主机、删除仓库以外的目录、下载脚本直接执行，或命令里出现生产环境的地址时，打断它并通知你。",
+        display: (v) => { const g = v as PipelineConfig["dangerGuard"]; return g.enabled ? `开${g.production.length ? `；生产环境标记 ${g.production.length} 个` : ""}${g.allow.length ? `；放行 ${g.allow.length} 条` : ""}` : "关"; },
+      },
+      secretScan: {
+        label: "密钥扫描",
+        description: "每次改代码的步骤之后、推送分支之前，检查本需求新增的内容里有没有密钥、令牌、口令；发现了让 agent 去掉，去不掉就不推送。",
+        display: (v) => { const g = v as PipelineConfig["secretScan"]; return g.enabled ? `开${g.allow.length ? `；不扫描：${g.allow.join("、")}` : ""}` : "关"; },
+      },
     },
   },
   {

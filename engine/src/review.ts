@@ -17,7 +17,7 @@ import path from "node:path";
 import { ENGINE_DIR, KIT_ROOT, kitHome, kitVersion } from "./locations.js";
 import { buildCodeReview, recordHumanReview, startReviewFix, type Submission } from "./code-review.js";
 import { type Answer, acceptanceFailMessage, acceptanceText, buildChecklist, recordAcceptance, verdictOf } from "./checklist.js";
-import { readIndex } from "./records.js";
+import { appendEvent, readIndex, requirementRef } from "./records.js";
 import { readState, statePath } from "./state.js";
 
 const ASSETS = path.join(ENGINE_DIR, "src", "review-assets");
@@ -546,6 +546,20 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
       const text = acceptanceText(list, answers, { verdict: v.verdict, reviewer: reviewer.slice(0, 60), date: new Date().toISOString().slice(0, 10), previous });
       const { committed } = recordAcceptance(entry.repo, entry.featureDir, text);
       fs.rmSync(path.join(checkDir, "draft.json"), { force: true });
+      // 1.14: the acceptance also goes into the usage records, for req stats.
+      const marks = new Map(answers.map((a) => [a.id, a.mark]));
+      appendEvent({
+        kind: "acceptance",
+        requirement: requirementRef(entry.repo, entry.featureDir),
+        acceptance: {
+          verdict: v.verdict,
+          reviewer: reviewer.slice(0, 60),
+          total: list.items.length,
+          passed: list.items.filter((i) => marks.get(i.id) === "pass").length,
+          failed: list.items.filter((i) => marks.get(i.id) === "fail").length,
+          unchecked: list.items.filter((i) => !marks.get(i.id) || marks.get(i.id) === "skip").length,
+        },
+      });
       if (v.verdict === "通过") {
         return json(res, 200, { ok: true, verdict: v.verdict, committed, message: `已记录：验收通过${committed ? "，验收记录已提交" : ""}。下一步请开发同事审阅代码并合并。` });
       }

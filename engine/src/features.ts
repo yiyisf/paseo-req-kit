@@ -83,7 +83,7 @@ interface RawState {
  * Files only the pipeline writes: their presence means it ran, even where its state is not (a
  * copy merged into the main branch: the state file under .pipeline/ is never committed).
  */
-const PIPELINE_OUTPUTS = ["design.md", "assessment.md", "diagnosis.md", "implementation.md", "handoff.md", "verification.md", "report.md"];
+export const PIPELINE_OUTPUTS = ["design.md", "assessment.md", "diagnosis.md", "implementation.md", "handoff.md", "verification.md", "report.md"];
 
 export function developedIn(dir: string): boolean {
   return PIPELINE_OUTPUTS.some((f) => fs.existsSync(path.join(dir, f)));

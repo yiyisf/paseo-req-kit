@@ -1,5 +1,5 @@
 import type { PaseoAgentHandle, PaseoClient } from "@getpaseo/client";
-import { runningToolOf, summarizeActivity } from "./activity.js";
+import { runningToolOf, toolCallsOf, summarizeActivity } from "./activity.js";
 import { type AgentProfile, isResolved, type PipelineConfig } from "./config.js";
 import { profilesFromDaemonConfig } from "./paseo-profiles.js";
 import { cronAt, localTimeZone } from "./schedule-time.js";
@@ -292,6 +292,14 @@ export function createRuntimeWithClient(
       try {
         const page = await client.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 40 });
         return runningToolOf(page.entries);
+      } catch {
+        return null;
+      }
+    },
+    async toolCalls(agentId) {
+      try {
+        const page = await client.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 200 });
+        return toolCallsOf(page.entries);
       } catch {
         return null;
       }

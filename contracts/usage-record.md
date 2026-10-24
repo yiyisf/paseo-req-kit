@@ -42,6 +42,19 @@
 
 不记录需求内容、代码和对话。
 
+### 运行之后的事（1.14 起）
+
+同一个文件里还有几种记录，都有 `schema`（1）、`kind`、`machine`、`kitVersion`、`at` 和 `requirement`（`{ key, project, name, title }`，`key` 与运行记录相同）。读运行记录的旧版本会跳过它们。
+
+| `kind` | 何时写 | 字段 |
+| --- | --- | --- |
+| `review` | 插件代码审查页提交"退回修改"或"评审通过" | `review: { verdict: "approved" \| "changes_requested", reviewer, items, head }`：评审人、意见条数、评审的提交 |
+| `acceptance` | 验收清单页提交 | `acceptance: { verdict: "通过" \| "不通过", reviewer, total, passed, failed, unchecked }` |
+| `merge` | `req stats`、`req api stats`、`req outcome` 发现需求的流水线文件（`implementation.md`、`report.md` 等）已经在主干（`origin/HEAD`，没有时 `origin/main`、`main` 等）里；或者 `req outcome <需求> --merged` | `merge: { into, commit, mergedAt, how: "files" \| "manual" }`：`commit`、`mergedAt` 是把它带进主干的那次提交（合并提交或压缩合并的提交）；只看本机已有的分支，不 fetch |
+| `issue` | 缺陷需求的 spec 写了 `- 引入问题的需求：<目录名>`（扫描时发现），或者 `req outcome <需求> --issue "<问题>"` | `issue: { text, by, id }`：`by` 是那个缺陷需求的目录名，手动记的为 null；同一个 `id` 只算一次 |
+
+每个需求的 `merge` 只记一次。评审和验收的全文在需求目录的 `code-review.md`、`acceptance.md` 里，随需求分支提交；这里只记结论和数量，用于统计。
+
 ## 统计口径（`req stats`）
 
 - 一段时间的用量、步骤用时：结束时间在这段时间内的运行。
@@ -52,6 +65,7 @@
 - 停下等人的原因（1.12 起）：这段时间结束的运行按 `stopKind` 计数；更早的记录按结束时的状态推断。确认方案、研发完成等待测试是必要的决定。
 - 无人工到提测的比例（1.12 起）：这段时间有进展、已经研发完成或完成的需求中，所有运行都只停在必要决定处的比例。
 - 自动处理的比例（1.12 起）：自动处理的次数 ÷（自动处理的次数 + 以中断结束的运行数）；需求方决定、缺陷复现不了不算中断。
-- 合并多台机器的导出时，同一机器、同一需求、同一开始时间的运行只算一次。
+- 人工把关和合并后（1.14 起，`oversight`）：这段时间里的人工代码评审次数、退回修改次数、意见条数，验收次数和不通过次数；"第一次就通过"看每个需求最早的那次评审（验收），它在这段时间里并且是通过；合并进主干的需求数和"完成到合并"的小时数中位数；合并后发现的问题数和涉及的需求数。每个需求一项里的 `afterRun` 汇总它全部的这类记录（`humanReviews`、`sentBack`、`lastReview`、`acceptance`、`acceptanceFailed`、`mergedAt`、`issues`）。
+- 合并多台机器的导出时，同一机器、同一需求、同一开始时间的运行只算一次；同一个需求、同一种、同一时间的事件（问题按 `id`）只算一次。`req stats --export` 同时导出这些需求的事件。
 
-`req stats --json` 和 `req api stats` 输出同样的对象（`schema: 1`）：`period`、`machines`、`active`、`completed`、`byType`、`cycleHours`、`steps`、`rework`、`waits`、`usage`、`byBuilder`、`requirements`（每个需求一项，字段与 `req stats --csv` 的列对应）。
+`req stats --json` 和 `req api stats` 输出同样的对象（`schema: 1`）：`period`、`machines`、`active`、`completed`、`byType`、`cycleHours`、`steps`、`rework`、`waits`、`usage`、`tokens`、`oversight`、`byBuilder`、`requirements`（每个需求一项，字段与 `req stats --csv` 的列对应）。

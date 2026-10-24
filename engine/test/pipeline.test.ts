@@ -2501,3 +2501,44 @@ test("人工代码评审退回（1.14）：--review-fix 开始新的一次增量
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "human.json"), "utf8")).consumedAttempt, 2);
   assert.ok(starts(env).filter((k) => k === "design").length >= 2, "从方案设计开始");
 });
+
+test("危险命令（1.14）：推送时打断 agent 并通知用户，同一个调用只处理一次；关掉时不看", () => {
+  const env = setup();
+  const run = runMain(env, { steps: { implement: { finishAfterWaits: 3 } }, toolCalls: [{ kind: "shell", text: "git push origin HEAD:main", status: "running" }, { kind: "shell", text: "npm test", status: "completed" }] });
+  assert.equal(run.code, 0, run.out);
+  const dangers = state(env).dangers as Array<{ agentId: string; label: string; ran: boolean; key: string }>;
+  assert.ok(dangers.length >= 1);
+  assert.ok(dangers.every((d) => d.label === "推送到远程仓库" && d.ran === false));
+  assert.equal(new Set(dangers.map((d) => d.agentId)).size, dangers.length, "每个 agent 的同一个调用只记一次");
+  const interrupts = events(env).filter((e) => e.type === "interrupt" && /推送到远程仓库/.test(String(e.text)));
+  assert.ok(interrupts.some((e) => /已停止你正在运行的命令「git push origin HEAD:main」/.test(String(e.text))));
+  assert.ok(events(env).some((e) => e.type === "notify" && /开始运行一条不允许的命令（推送到远程仓库）/.test(String(e.text))));
+
+  const off = setup({ dangerGuard: { enabled: false, production: [], allow: [] } });
+  assert.equal(runMain(off, { toolCalls: [{ kind: "shell", text: "git push", status: "running" }] }).code, 0);
+  assert.equal(events(off).filter((e) => e.type === "toolCalls").length, 0);
+});
+
+/** The test repositories start without commits; the secret scan needs one to start from. */
+function initialCommit(env: Env): void {
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: env.repo });
+}
+
+test("密钥扫描（1.14）：实现写进的密钥发回给 agent 去掉；去不掉的记进报告", () => {
+  const env = setup();
+  initialCommit(env);
+  const run = runMain(env, { steps: { implement: { writeFiles: { "src/config.ts": 'export const apiKey = "Zx9kQ2mP7vR4tY8w";\n' }, fixOnFollowUp: ["src/config.ts"] } } });
+  assert.equal(run.code, 0, run.out);
+  const follow = events(env).filter((e) => e.type === "followUp" && /疑似密钥/.test(String(e.text)));
+  assert.equal(follow.length, 1);
+  assert.match(String(follow[0].text), /src\/config\.ts:1（口令或密钥，还没提交）：export const apiKey = "Zx9k…"/);
+  const scans = state(env).secretScans as Array<{ key: string; passed: boolean; fixRounds: number }>;
+  assert.deepEqual(scans.find((s) => s.key === "implement"), { ...scans.find((s) => s.key === "implement"), passed: true, fixRounds: 1 });
+
+  const stuck = setup();
+  initialCommit(stuck);
+  assert.equal(runMain(stuck, { steps: { implement: { writeFiles: { "src/config.ts": 'const token = "glpat-AbCdEfGhIjKlMnOpQrSt12";\n' } } } }).code, 0);
+  const s = (state(stuck).secretScans as Array<{ key: string; passed: boolean }>).find((r) => r.key === "implement")!;
+  assert.equal(s.passed, false);
+  assert.ok(events(stuck).some((e) => e.type === "notify" && /密钥扫描仍发现 1 处疑似密钥/.test(String(e.text))));
+});

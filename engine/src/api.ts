@@ -29,8 +29,10 @@ import { pruneIndex, readIndex, registerRequirement, requirementKey } from "./re
 import { listWorktreeRecords } from "./worktree.js";
 import { readHumanReview } from "./code-review.js";
 import { isAlive, type PipelineState, readState, statePath, type StepRecord } from "./state.js";
+import { notStartedNotice } from "./messages.js";
+import { scanOutcomes } from "./outcomes.js";
 import { parsePeriod, summarizeRuns } from "./stats.js";
-import { readRuns, runsFile } from "./records.js";
+import { readEvents, readRuns, runsFile } from "./records.js";
 import { totals } from "./usage.js";
 
 export const API_SCHEMA = 1;
@@ -242,13 +244,14 @@ function waitingOf(repo: string, featureDir: string, state: PipelineState | null
 export function apiList(input: { repo: string; all: boolean }): ListItem[] {
   if (!input.all) {
     const repo = fs.realpathSync(input.repo);
-    return listFeatures(repo)
+    const items = listFeatures(repo)
       .map((f) => {
         const state = readStateSafe(f.worktree, f.featureDir);
         const source = state?.worktree?.sourceRepo ?? null;
         return item(f.worktree, f.branch, f.featureDir, { sourceRepo: source, workspaceId: state?.worktree?.workspaceId ?? null, project: path.basename(source ?? repo) });
       })
       .filter((x): x is ListItem => x !== null);
+    return onePerRequirement(items);
   }
   const out: ListItem[] = [];
   const index = readIndex();
@@ -301,7 +304,21 @@ export function apiList(input: { repo: string; all: boolean }): ListItem[] {
       }
     }
   }
-  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return onePerRequirement(out).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/**
+ * 1.14: a requirement found in two places (the main checkout still has its spec, its own worktree
+ * has the run) is listed once: the copy that runs, else the one with a run state, else the latest.
+ */
+export function onePerRequirement(items: ListItem[]): ListItem[] {
+  const rank = (x: ListItem) => (x.running ? 3 : 0) + (x.status ? 2 : 0) + (x.present === false ? -4 : 0);
+  const best = new Map<string, ListItem>();
+  for (const x of items) {
+    const b = best.get(x.key);
+    if (!b || rank(x) > rank(b) || (rank(x) === rank(b) && x.updatedAt > b.updatedAt)) best.set(x.key, x);
+  }
+  return items.filter((x) => best.get(x.key) === x);
 }
 
 function samePathSafe(a: string, b: string): boolean {
@@ -547,7 +564,9 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
     case "stats": {
       const since = option(argv, "--since");
       const month = option(argv, "--month");
-      return summarizeRuns(readRuns(runsFile()), parsePeriod({ since, month }));
+      // 1.14: merges and post-merge problems this machine can see, then runs and events.
+      scanOutcomes();
+      return summarizeRuns(readRuns(runsFile()), parsePeriod({ since, month }), readEvents(runsFile()));
     }
     case "index": {
       const prune = flag(argv, "--prune");
@@ -582,7 +601,13 @@ export function apiMain(argvIn: string[], cwd = process.cwd()): unknown {
       const by = (option(argv, "--by") ?? "manual") as "plugin" | "factory" | "manual";
       const dryRun = flag(argv, "--dry-run");
       return import("./watchdog.js").then(({ watchdogPass }) =>
-        watchdogPass({ by: ["plugin", "factory"].includes(by) ? by : "manual", dryRun, resume: (r, f) => apiRun("resume", r, f, []) }),
+        watchdogPass({
+          by: ["plugin", "factory"].includes(by) ? by : "manual",
+          dryRun,
+          resume: (r, f) => apiRun("resume", r, f, []),
+          // 1.14: a confirmed requirement nobody started: one reminder in its chat.
+          remind: (r, f) => apiRun("reply", r, f, ["--notice", notStartedNotice(f)]),
+        }),
       );
     }
     case "review-url": {

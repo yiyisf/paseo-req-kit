@@ -251,6 +251,15 @@ export interface PipelineConfig {
    * and tell it how to find what it needs instead. `paths`: more directories never to search whole.
    */
   scanGuard: import("./scan-guard.js").ScanGuardSettings;
+  /**
+   * 1.14: stop a step agent's dangerous commands (push, publish, cluster changes, remote databases
+   * and hosts, deleting outside the repository, downloaded scripts) and tell the person.
+   * `production`: text that marks production systems (host names, addresses); `allow`: regular
+   * expressions of commands that are allowed after all.
+   */
+  dangerGuard: import("./danger-guard.js").DangerGuardSettings;
+  /** 1.14: look for keys, tokens and passwords in what the requirement added (quality gate, before push). `allow`: files never scanned. */
+  secretScan: import("./secret-scan.js").SecretScanSettings;
   /** Automatic retries of a step after a transient error (rate limit, dropped connection). */
   retry: { attempts: number; backoffSeconds: number[] };
   /**
@@ -362,6 +371,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   autoConfirm: { hours: 0 },
   budget: { tokens: null, warnPercent: 80 },
   scanGuard: { enabled: true, minutes: 5, paths: [] },
+  dangerGuard: { enabled: true, production: [], allow: [] },
+  secretScan: { enabled: true, allow: [] },
   retry: { attempts: 2, backoffSeconds: [60, 300] },
   paseoServices: "auto",
   serviceReadySeconds: 120,
@@ -432,6 +443,8 @@ function merge(base: PipelineConfig, raw: Record<string, unknown>): PipelineConf
   merged.autoConfirm = { ...base.autoConfirm, ...(isRecord(raw.autoConfirm) ? raw.autoConfirm : {}) } as PipelineConfig["autoConfirm"];
   merged.budget = { ...base.budget, ...(isRecord(raw.budget) ? raw.budget : {}) } as PipelineConfig["budget"];
   merged.scanGuard = { ...base.scanGuard, ...(isRecord(raw.scanGuard) ? raw.scanGuard : {}) } as PipelineConfig["scanGuard"];
+  merged.dangerGuard = { ...base.dangerGuard, ...(isRecord(raw.dangerGuard) ? raw.dangerGuard : {}) } as PipelineConfig["dangerGuard"];
+  merged.secretScan = { ...base.secretScan, ...(isRecord(raw.secretScan) ? raw.secretScan : {}) } as PipelineConfig["secretScan"];
   if (isRecord(raw.cardSource)) {
     const c = raw.cardSource;
     merged.cardSource = {
@@ -657,6 +670,20 @@ function validate(config: PipelineConfig): void {
   if (typeof sg.enabled !== "boolean") throw new ConfigError("scanGuard.enabled 必须是 true 或 false");
   if (typeof sg.minutes !== "number" || !(sg.minutes >= 1)) throw new ConfigError("scanGuard.minutes 必须是至少 1 的分钟数（搜索运行多久后打断）");
   if (!Array.isArray(sg.paths) || !sg.paths.every((p) => typeof p === "string" && p.trim())) throw new ConfigError('scanGuard.paths 必须是目录路径的数组，例如 ["D:/share"]');
+  const dg = config.dangerGuard;
+  if (typeof dg.enabled !== "boolean") throw new ConfigError("dangerGuard.enabled 必须是 true 或 false");
+  if (!Array.isArray(dg.production) || !dg.production.every((p) => typeof p === "string" && p.trim())) throw new ConfigError('dangerGuard.production 必须是字符串数组（生产环境的主机名、地址等），例如 ["prod.example.com"]');
+  if (!Array.isArray(dg.allow) || !dg.allow.every((p) => typeof p === "string" && p.trim())) throw new ConfigError('dangerGuard.allow 必须是正则表达式字符串的数组，例如 ["^ssh test-box"]');
+  for (const a of dg.allow) {
+    try {
+      new RegExp(a);
+    } catch (error) {
+      throw new ConfigError(`dangerGuard.allow 里的「${a}」不是合法的正则表达式：${(error as Error).message}`);
+    }
+  }
+  const ss = config.secretScan;
+  if (typeof ss.enabled !== "boolean") throw new ConfigError("secretScan.enabled 必须是 true 或 false");
+  if (!Array.isArray(ss.allow) || !ss.allow.every((p) => typeof p === "string" && p.trim())) throw new ConfigError('secretScan.allow 必须是文件路径或通配符的数组，例如 ["test/fixtures/**"]');
   const f = config.factory;
   if (typeof f.pollMinutes !== "number" || !(f.pollMinutes >= 1)) throw new ConfigError("factory.pollMinutes 必须是至少 1 的分钟数");
   if (!Number.isInteger(f.maxNewPerPoll) || f.maxNewPerPoll < 1) throw new ConfigError("factory.maxNewPerPoll 必须是正整数");
