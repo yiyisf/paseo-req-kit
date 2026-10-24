@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -19,7 +23,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci || npm install
+      # Lockfiles must be generated against the public registry; a company mirror's
+      # address written into them would break installs here on GitHub.
+      - name: Lockfiles use the public npm registry
+        shell: bash
+        run: |
+          bad=$(grep -h '"resolved"' package-lock.json site/package-lock.json | grep -v '"https://registry.npmjs.org/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::package-lock.json 里有非 registry.npmjs.org 的地址，请用公网 npm 源重新生成"
+            echo "$bad" | head -5
+            exit 1
+          fi
+      - run: npm ci
       - name: Tests
         shell: bash
         run: |
@@ -69,7 +84,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci || npm install
+      - run: npm ci
         shell: bash
       - name: Tests
         shell: bash
