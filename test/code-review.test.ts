@@ -37,6 +37,9 @@ function repoWithChange() {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "req-kit-cr-")));
   const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: repo, encoding: "utf8" });
   git("init", "-q", "-b", "main");
+  // The page commits code-review.md in the repository itself (CI has no global git identity).
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
   fs.mkdirSync(path.join(repo, "src", "order"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src", "order", "export.ts"), "export function exportOrders() {\n  return [];\n}\n");
   fs.writeFileSync(path.join(repo, "CODEOWNERS"), "* @lead\n/src/order/ @zhang\n");
