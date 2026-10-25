@@ -9,18 +9,18 @@ import type { Attention, Requirement } from "../shared/contracts";
 import { useAction, usePreferences } from "./data";
 import { facts } from "./format";
 import { ReviewButton } from "./review";
-import { Badge, Button, useStyles } from "./ui";
+import { AttentionIcon, Badge, Button, Eyebrow, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
 type Layout = PluginHostProps["layout"];
 
-const KIND: Record<Exclude<Attention, null>, { label: string; tone: "warning" | "danger" | "muted"; todo: string }> = {
-  approval: { label: "确认方案", tone: "warning", todo: "方案已通过审核。看一下“做完后会看到什么”，没问题就确认，开始写代码；要改就写下来。" },
-  business: { label: "回答问题", tone: "warning", todo: "方案审核有问题只有你能决定，回答后开发会接着进行。" },
-  permission: { label: "批准权限", tone: "warning", todo: "有一个步骤在等你允许它做一项操作，批准前会一直停在这里。打开这个 agent，在它的对话里选择允许或拒绝；拿不准时请开发同事看一下。" },
-  interrupted: { label: "已中断", tone: "danger", todo: "开发中断了，自动处理没能解决。看一下原因，能继续就继续。" },
-  not_completed: { label: "没有完成", tone: "muted", todo: "流水线结束了，但有部分没有做完。完成报告里写了原因和建议。" },
-  not_started: { label: "还没开始开发", tone: "warning", todo: "需求说明已经确认，但开发没有开始。确认无误就点“开始开发”，进展会发回谈需求的那个对话。" },
+const KIND: Record<Exclude<Attention, null>, { label: string; tone: "needs" | "danger" | "muted"; icon: string; todo: string }> = {
+  approval: { icon: "PenTool", label: "确认方案", tone: "needs", todo: "方案已通过审核。看一下“做完后会看到什么”，没问题就确认，开始写代码；要改就写下来。" },
+  business: { icon: "MessagesSquare", label: "回答问题", tone: "needs", todo: "方案审核有问题只有你能决定，回答后开发会接着进行。" },
+  permission: { icon: "ShieldCheck", label: "批准权限", tone: "needs", todo: "有一个步骤在等你允许它做一项操作，批准前会一直停在这里。打开这个 agent，在它的对话里选择允许或拒绝；拿不准时请开发同事看一下。" },
+  interrupted: { icon: "OctagonAlert", label: "已中断", tone: "danger", todo: "开发中断了，自动处理没能解决。看一下原因，能继续就继续。" },
+  not_completed: { icon: "CircleDashed", label: "没有完成", tone: "muted", todo: "流水线结束了，但有部分没有做完。完成报告里写了原因和建议。" },
+  not_started: { icon: "Play", label: "还没开始开发", tone: "needs", todo: "需求说明已经确认，但开发没有开始。确认无误就点“开始开发”，进展会发回谈需求的那个对话。" },
 };
 
 /** Plain waiting time: "等了 3 小时". */
@@ -63,15 +63,20 @@ function InboxCard({ theme, layout, item, open, readOnly, openAgent }: { theme: 
   };
 
   return (
-    <View style={[s.card, { gap: 10, borderLeftWidth: 3, borderLeftColor: kind.tone === "danger" ? theme.colors.statusDanger : kind.tone === "warning" ? theme.colors.statusWarning : theme.colors.border }]}>
-      <View style={[s.row, { justifyContent: "space-between" }]}>
-        <View style={[s.row, { flexShrink: 1 }]}>
-          <Badge theme={theme} tone={kind.tone}>
-            {kind.label}
-          </Badge>
-          <Text style={[s.text, { fontWeight: "600", flexShrink: 1 }]}>{item.title}</Text>
+    <View style={[s.card, { gap: 10 }]}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+        <AttentionIcon theme={theme} icon={kind.icon} tone={kind.tone} />
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <View style={[s.row, { justifyContent: "space-between" }]}>
+            <Text style={[s.text, { fontWeight: "600", fontSize: 15, flexShrink: 1 }]}>{item.title}</Text>
+            <Text style={s.mono}>{waited(w?.since ?? item.updatedAt)}</Text>
+          </View>
+          <View style={s.row}>
+            <Badge theme={theme} tone={kind.tone}>
+              {kind.label}
+            </Badge>
+          </View>
         </View>
-        <Text style={s.muted}>{waited(w?.since ?? item.updatedAt)}</Text>
       </View>
       <Text style={s.muted}>
         {facts(item)}
@@ -165,13 +170,14 @@ export function Inbox({ theme, layout, items, open, openAgent }: { theme: Theme;
   const waiting = inboxItems(items);
   return (
     <View style={{ gap: 10 }}>
-      <View style={[s.row, { justifyContent: "space-between" }]}>
-        <Text style={[s.title, { fontSize: 16 }]}>等你处理{waiting.length > 0 ? `（${waiting.length}）` : ""}</Text>
-        {waiting.length > 0 ? <Text style={s.muted}>等得最久的在前</Text> : null}
+      <View>
+        <Eyebrow theme={theme} accent right={<Text style={s.muted}>{waiting.length > 0 ? "等你处理 · 等得最久的在前" : "等你处理"}</Text>}>
+          NEEDS YOU · {waiting.length}
+        </Eyebrow>
       </View>
       {waiting.length === 0 ? (
         <View style={[s.card, { flexDirection: "row", alignItems: "center", gap: 8 }]}>
-          <Badge theme={theme} tone="success">
+          <Badge theme={theme} tone="success" icon="CircleCheck">
             没有
           </Badge>
           <Text style={s.muted}>现在没有需要你处理的事。需要你确认或回答时，会出现在这里。</Text>

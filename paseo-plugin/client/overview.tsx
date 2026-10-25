@@ -8,9 +8,12 @@ import { useRequirements } from "./data";
 import { type Group, GROUP_LABELS, groupOf } from "./format";
 import { Inbox } from "./inbox";
 import { RequirementRow } from "./row";
-import { Button, Chip, Status, useStyles } from "./ui";
+import { BrandHeader, Button, Chip, Eyebrow, Status, useStyles } from "./ui";
 
 export const ORDER: Group[] = ["attention", "running", "verify", "done", "other"];
+
+/** Uppercase mono group names (design/guidelines/plugin.md); the Chinese label follows. */
+const EYEBROW: Record<Group, string> = { attention: "NEEDS YOU", running: "IN PROGRESS", verify: "READY TO TEST", done: "DONE", other: "OTHERS" };
 
 /** Opens a requirement's detail screen. */
 export type OpenRequirement = (item: Pick<Requirement, "repo" | "featureDir" | "title">) => void;
@@ -33,12 +36,13 @@ export function RequirementGroups({
     <View style={{ gap: 20 }}>
       {ORDER.filter((g) => groups.has(g) && !skip.includes(g)).map((g) => (
         <View key={g} style={{ gap: 8 }}>
-          <View style={s.row}>
-            <Text style={s.heading}>
-              {GROUP_LABELS[g]}（{groups.get(g)!.length}）
-            </Text>
-            {g === "other" ? <Button theme={theme} label={showOther ? "收起" : "展开"} onPress={() => setShowOther((v) => !v)} /> : null}
-          </View>
+          <Eyebrow
+            theme={theme}
+            accent={g === "attention"}
+            right={g === "other" ? <Button theme={theme} label={showOther ? "收起" : "展开"} onPress={() => setShowOther((v) => !v)} /> : <Text style={s.muted}>{GROUP_LABELS[g]}</Text>}
+          >
+            {EYEBROW[g]} · {groups.get(g)!.length}
+          </Eyebrow>
           {g === "other" && !showOther
             ? null
             : groups.get(g)!.map((item) => <RequirementRow key={item.key} theme={theme} layout={layout} item={item} onPress={() => open(item)} />)}
@@ -67,10 +71,16 @@ export function OverviewScreen(props: PluginScreenProps & { openScreen: ScreenOp
   return (
     <View style={s.screen}>
       <ScrollView contentContainerStyle={s.body}>
-        <View style={s.row}>
-          <Button theme={theme} label="使用统计" onPress={() => props.openScreen({ screenId: "stats" })} />
-          <Button theme={theme} label="配置" onPress={() => props.openScreen({ screenId: "config" })} />
-        </View>
+        <BrandHeader
+          theme={theme}
+          page="需求"
+          right={
+            <View style={s.row}>
+              <Button theme={theme} icon="ChartColumn" label="使用统计" onPress={() => props.openScreen({ screenId: "stats" })} />
+              <Button theme={theme} icon="Settings2" label="配置" onPress={() => props.openScreen({ screenId: "config" })} />
+            </View>
+          }
+        />
         {projects.length > 1 ? (
           <View style={s.row}>
             <Chip theme={theme} label="全部项目" active={project === null} onPress={() => setProject(null)} />

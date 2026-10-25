@@ -12,17 +12,17 @@ type Theme = PluginHostProps["theme"];
 
 /** 1.14: the acceptance checklist, primary while the requirement waits for acceptance. */
 export function ChecklistButton({ theme, repo, featureDir, title, primary }: { theme: Theme; repo: string; featureDir: string; title: string; primary: boolean }) {
-  return <Button theme={theme} primary={primary} label="验收清单（可一键试用）" onPress={() => openChecklist({ repo, featureDir, title })} />;
+  return <Button theme={theme} primary={primary} icon="ClipboardCheck" label="验收清单（可一键试用）" onPress={() => openChecklist({ repo, featureDir, title })} />;
 }
 
 /** 1.14: the code review page: AI findings next to the code, the person's comments, pass or send back. */
 export function CodeReviewButton({ theme, repo, featureDir, title, primary, label }: { theme: Theme; repo: string; featureDir: string; title: string; primary: boolean; label: string }) {
-  return <Button theme={theme} primary={primary} label={label} onPress={() => openCodeReview({ repo, featureDir, title })} />;
+  return <Button theme={theme} primary={primary} icon="GitPullRequest" label={label} onPress={() => openCodeReview({ repo, featureDir, title })} />;
 }
 
 /** The button on a requirement with a prototype: primary while the design waits for confirmation. */
 export function ReviewButton({ theme, repo, featureDir, title, waiting }: { theme: Theme; repo: string; featureDir: string; title: string; waiting: boolean }) {
-  return <Button theme={theme} primary={waiting} label={waiting ? "审查原型并确认方案" : "审查原型"} onPress={() => openReview({ repo, featureDir, title })} />;
+  return <Button theme={theme} primary={waiting} icon="PenTool" label={waiting ? "审查原型并确认方案" : "审查原型"} onPress={() => openReview({ repo, featureDir, title })} />;
 }
 
 export function ReviewScreen({ theme, layout, params }: PluginScreenProps) {

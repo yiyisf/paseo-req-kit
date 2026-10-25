@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Text, View } from "react-native";
 import { useStats } from "./data";
 import { minutes, tokens, TYPE_LABELS } from "./format";
-import { Chip, Status, useStyles } from "./ui";
+import { BrandHeader, Chip, Eyebrow, rk, Status, useStyles } from "./ui";
 
 type Tokens = NonNullable<import("../shared/contracts").StatsSummary["tokens"]>;
 
@@ -24,13 +24,13 @@ function TokenShare({ theme, compact, t }: { theme: import("@getpaseo/plugin/cli
         </Text>
       </View>
       <View style={{ height: 6, borderRadius: 3, backgroundColor: theme.colors.surface2, overflow: "hidden" }}>
-        <View style={{ width: `${Math.max(1, Math.round(share * 100))}%`, height: 6, backgroundColor: theme.colors.accent }} />
+        <View style={{ width: `${Math.max(1, Math.round(share * 100))}%`, height: 6, backgroundColor: rk(theme).data }} />
       </View>
     </View>
   );
   return (
     <View style={[s.card, { gap: 10 }]}>
-      <Text style={s.heading}>token 花在哪</Text>
+      <Eyebrow theme={theme} right={<Text style={s.muted}>token 花在哪</Text>}>TOKENS</Eyebrow>
       <Text style={s.text}>
         合计 {tokens(t.total)} tokens
         {t.rework ? `，其中返工（修订、修复、复验和第 2 轮起的评审）占 ${pct(t.rework.share)}` : ""}
@@ -75,6 +75,7 @@ export function StatsScreen({ theme, layout }: PluginScreenProps) {
   return (
     <View style={s.screen}>
       <ScrollView contentContainerStyle={s.body}>
+        <BrandHeader theme={theme} page="使用统计" />
         <View style={s.row}>
           {periods.map((p, i) => (
             <Chip key={p.label} theme={theme} label={p.label} active={i === pick} onPress={() => setPick(i)} />
@@ -93,7 +94,7 @@ export function StatsScreen({ theme, layout }: PluginScreenProps) {
             </View>
             {d.oversight && d.oversight.reviews.total + d.oversight.acceptance.total + d.oversight.merged.requirements + d.oversight.issues.total > 0 ? (
               <View style={s.card}>
-                <Text style={s.heading}>人工把关和合并后</Text>
+                <Eyebrow theme={theme} right={<Text style={s.muted}>人工把关和合并后</Text>}>OVERSIGHT</Eyebrow>
                 <Text style={s.text}>
                   人工代码评审 {d.oversight.reviews.total} 次（{d.oversight.reviews.requirements} 个需求），退回修改 {d.oversight.reviews.sentBack} 次；第一次就通过 {d.oversight.reviews.passedFirstTime} 个
                 </Text>

@@ -68,6 +68,16 @@ const outputs = [
   [path.join(assets, "rk-icons.js"), banner("design/examples/icons.js") + fs.readFileSync(path.join(root, "design", "examples", "icons.js"), "utf8")],
 ];
 
+// The Paseo plugin draws with React Native in Paseo's own theme; it takes only req-kit's accent
+// colors (lime, AI, data and the status tints), for both themes.
+const PLUGIN_COLORS = ["brand-500", "brand-400", "brand-edge", "brand-text", "brand-tint", "on-brand", "ai", "ai-tint", "data", "data-tint", "success-tint", "warning-tint", "failed-tint"];
+const camel = (n) => n.replace(/-(\w)/g, (_, c) => c.toUpperCase());
+const pluginSet = (theme) => Object.fromEntries(PLUGIN_COLORS.map((n) => [camel(n), resolve(byName.get(n).value, theme)]));
+outputs.push([
+  path.join(root, "paseo-plugin", "shared", "rk-colors.ts"),
+  `// req-kit accent colors for the Paseo plugin, generated from design/tokens.json by scripts/tokens-build.mjs. Do not edit.\nexport const RK_COLORS = ${JSON.stringify({ dark: pluginSet("dark"), light: pluginSet("light") }, null, 2)} as const;\n\nexport type RkColors = (typeof RK_COLORS)["dark"];\n`,
+]);
+
 if (process.argv.includes("--check")) {
   const stale = outputs.filter(([file, text]) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "") !== text).map(([file]) => path.relative(root, file));
   if (stale.length) {

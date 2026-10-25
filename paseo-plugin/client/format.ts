@@ -115,3 +115,59 @@ export const ACTION_TEXT = {
   sync: { label: "同步到外部系统", confirm: "把这个需求同步到对接的外部系统：补发没有成功的调用、补建卡片、更新状态。" },
   reply: { label: "发送回复", confirm: "把回复转给这个需求的对话，由它更新需求说明并继续开发。" },
 } as const;
+
+/** The six stops of the step track, and who does each (design/components/StepTrack.md). */
+export const TRACK = [
+  { label: "对齐", who: "你" },
+  { label: "方案", who: "AI · 你确认" },
+  { label: "实现", who: "AI" },
+  { label: "评审", who: "AI · 开发同事" },
+  { label: "验证", who: "AI" },
+  { label: "验收", who: "需求方" },
+] as const;
+
+const STEP_STOP: Array<[RegExp, number]> = [
+  [/^(design|design_review|design_revise|design_proposal|assessment|diagnosis|reproduce)/, 1],
+  [/^(implement|acceptance_tests)/, 2],
+  [/^(code_review|review_fix)/, 3],
+  [/^(verify|defect_fix|reverify|service|handoff|report)/, 4],
+];
+
+/**
+ * Where the requirement is on the track, and whether that stop waits for a person.
+ * `humanReview` (detail only) tells whether the code review is done.
+ */
+export function trackOf(
+  r: Pick<Requirement, "stage" | "status" | "attention" | "running" | "current">,
+  humanReview?: { status: string; stale: boolean } | null,
+): Array<{ label: string; who: string; state: "done" | "now" | "needs" | "todo" }> {
+  let at = 0;
+  let needs = false;
+  const running = r.current[0]?.key;
+  if (r.stage.startsWith("对齐")) at = 0;
+  else if (r.attention === "approval" || r.attention === "business" || r.attention === "not_started") [at, needs] = [1, true];
+  else if (running) at = STEP_STOP.find(([re]) => re.test(running))?.[1] ?? 2;
+  else if (r.status === "phase_done") [at, needs] = [4, true];
+  else if (r.status === "completed" || /待验收|已验收|验收/.test(r.stage)) {
+    const reviewed = humanReview && humanReview.status === "approved" && !humanReview.stale;
+    if (/已验收|验收通过/.test(r.stage)) at = TRACK.length;
+    else if (humanReview !== undefined && !reviewed) [at, needs] = [3, true];
+    else [at, needs] = [5, true];
+  } else if (r.status) at = 2;
+  return TRACK.map((t, i) => ({ ...t, state: i < at ? "done" : i === at ? (needs ? "needs" : "now") : "todo" }));
+}
+
+/** The icon of a requirement in a list, by what it needs (Lucide names). */
+export function iconOf(r: Pick<Requirement, "attention" | "running" | "status" | "stage">): { name: string; tone: "needs" | "running" | "success" | "warning" | "danger" | "muted" } {
+  if (r.attention === "interrupted") return { name: "OctagonAlert", tone: "danger" };
+  if (r.attention === "permission") return { name: "ShieldCheck", tone: "needs" };
+  if (r.attention === "approval") return { name: "PenTool", tone: "needs" };
+  if (r.attention === "business") return { name: "MessagesSquare", tone: "needs" };
+  if (r.attention === "not_started") return { name: "Play", tone: "needs" };
+  if (r.attention === "not_completed") return { name: "CircleDashed", tone: "warning" };
+  if (r.running) return { name: "LoaderCircle", tone: "running" };
+  if (r.stage.startsWith("对齐")) return { name: "MessagesSquare", tone: "muted" };
+  if (r.status === "phase_done" || /待验收/.test(r.stage)) return { name: "ClipboardCheck", tone: "warning" };
+  if (r.status === "completed") return { name: "CircleCheck", tone: "success" };
+  return { name: "Circle", tone: "muted" };
+}

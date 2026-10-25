@@ -5,6 +5,7 @@ import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { ExternalLink } from "@getpaseo/plugin/client/ui";
 import { type ReactNode, useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
+import { rk } from "./ui";
 
 type Theme = PluginHostProps["theme"];
 
@@ -133,7 +134,7 @@ export function inline(text: string, theme: Theme, key = "i"): ReactNode[] {
     } else {
       // A link to another file in the repository: show its text and where it points.
       out.push(
-        <Text key={`${key}-${n++}`} style={{ color: theme.colors.accent }}>
+        <Text key={`${key}-${n++}`} style={{ color: rk(theme).brandText }}>
           {m[4]}
         </Text>,
       );

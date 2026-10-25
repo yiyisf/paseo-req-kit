@@ -7,10 +7,10 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Action, RequirementDetail, Step } from "../shared/contracts";
 import { useAction, useDocument, usePreferences, useRequirement, useRequirements } from "./data";
-import { ACTION_TEXT, actionsFor, ago, ATTENTION_LABELS, facts, FILE_LABELS, minutes, tokens } from "./format";
+import { ACTION_TEXT, actionsFor, ago, ATTENTION_LABELS, facts, FILE_LABELS, minutes, tokens, trackOf } from "./format";
 import { Markdown, tsvToMarkdown } from "./markdown";
 import { ChecklistButton, CodeReviewButton, ReviewButton } from "./review";
-import { Badge, Button, Chip, Status, useStyles } from "./ui";
+import { Badge, Button, Chip, Eyebrow, rk, Status, StepTrack, useStyles } from "./ui";
 
 type Theme = PluginHostProps["theme"];
 type Layout = PluginHostProps["layout"];
@@ -20,7 +20,7 @@ const OUTCOME_LABELS: Record<Step["outcome"], string> = { running: "运行中", 
 
 function StepRow({ theme, layout, step, navigation }: { theme: Theme; layout: Layout; step: Step; navigation: Navigation }) {
   const s = useStyles(theme, layout.compact);
-  const tone = step.outcome === "failed" ? "danger" : step.outcome === "running" ? "accent" : "muted";
+  const tone = step.outcome === "failed" ? "danger" : step.outcome === "running" ? "running" : "muted";
   const body = (
     <View style={{ gap: 2, paddingVertical: 6 }}>
       <View style={s.row}>
@@ -174,19 +174,39 @@ export function RequirementView({
   const canReviewCode = (d.files.includes("code-review.md") || d.files.includes("implementation.md")) && !d.running;
   const hr = d.humanReview ?? null;
   const reviewLabel = !hr ? "代码审查" : hr.status === "approved" ? (hr.stale ? "代码审查（有新改动，需重新评审）" : "代码审查（已通过）") : "代码审查（已退回修改）";
+  // 1.15: one lime button, the decision this requirement waits for now.
+  const waitingAcceptance = d.stage.startsWith("待验收") || d.stage === "验收未通过";
+  const codeNeedsReview = canReviewCode && (!hr || hr.stale) && (d.status === "completed" || d.status === "phase_done");
+  const primary: "review" | "code" | "check" | Action | null =
+    d.attention === "approval" && d.hasPrototype
+      ? "review"
+      : codeNeedsReview
+        ? "code"
+        : canAccept && waitingAcceptance
+          ? "check"
+          : (actions.find((a) => a !== "stop" && !(a === "approve" && d.hasPrototype)) ?? null);
+  const c = rk(theme);
   return (
     <View style={{ gap: 16 }}>
-      <View style={{ gap: 4 }}>
+      <View style={[s.card, { gap: 12 }]}>
+        <Eyebrow theme={theme} accent right={<Text style={s.mono} numberOfLines={1}>{d.branch ?? d.name}</Text>}>
+          REQUIREMENT
+        </Eyebrow>
         <View style={s.row}>
           <Text style={s.title}>{d.title}</Text>
           {d.attention ? (
-            <Badge theme={theme} tone={d.attention === "approval" || d.attention === "business" || d.attention === "permission" ? "warning" : "danger"}>
+            <Badge theme={theme} tone={d.attention === "interrupted" ? "danger" : d.attention === "not_completed" ? "warning" : "needs"}>
               {ATTENTION_LABELS[d.attention]}
+            </Badge>
+          ) : d.running ? (
+            <Badge theme={theme} tone="running" icon="LoaderCircle">
+              进行中
             </Badge>
           ) : null}
         </View>
+        <StepTrack theme={theme} steps={trackOf(d, hr)} />
         <Text style={s.muted}>{facts(d)}</Text>
-        <Text style={s.text}>{d.stage}</Text>
+        <Text style={[s.text, { color: d.attention ? c.brandText : theme.colors.foreground }]}>{d.stage}</Text>
         {d.estimate && d.attention !== "approval" ? (
           <Text style={s.muted}>
             {d.estimate.over
@@ -202,11 +222,11 @@ export function RequirementView({
 
       {actions.length > 0 || d.hasPrototype || canAccept || canReviewCode ? (
         <View style={s.row}>
-          {canReviewCode ? <CodeReviewButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} label={reviewLabel} primary={!!hr && hr.stale} /> : null}
-          {canAccept ? <ChecklistButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} primary={d.stage.startsWith("待验收") || d.stage === "验收未通过"} /> : null}
-          {d.hasPrototype ? <ReviewButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} waiting={d.attention === "approval"} /> : null}
+          {canReviewCode ? <CodeReviewButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} label={reviewLabel} primary={primary === "code"} /> : null}
+          {canAccept ? <ChecklistButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} primary={primary === "check"} /> : null}
+          {d.hasPrototype ? <ReviewButton theme={theme} repo={d.sourceRepo ?? d.repo} featureDir={d.featureDir} title={d.title} waiting={primary === "review"} /> : null}
           {actions.map((a) => (
-            <Button key={a} theme={theme} primary={a !== "stop" && !(a === "approve" && d.hasPrototype)} label={ACTION_TEXT[a].label} onPress={() => setAction(a)} />
+            <Button key={a} theme={theme} primary={primary === a} label={ACTION_TEXT[a].label} onPress={() => setAction(a)} />
           ))}
         </View>
       ) : null}
@@ -230,7 +250,7 @@ export function RequirementView({
         {d.branch ? <Text style={s.muted}>分支 {d.branch}</Text> : null}
         {d.workspaceId && navigation ? (
           <Pressable accessibilityRole="button" onPress={() => navigation.openWorkspace({ workspaceId: d.workspaceId! })}>
-            <Text style={{ color: theme.colors.accent, fontSize: 13 }}>打开这个需求的工作区</Text>
+            <Text style={{ color: rk(theme).brandText, fontSize: 13, fontWeight: "600" }}>打开这个需求的工作区</Text>
           </Pressable>
         ) : null}
         {d.joint.map((j) => (

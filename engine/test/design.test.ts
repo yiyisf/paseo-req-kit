@@ -25,3 +25,12 @@ test("三个审查网页都加载设计系统，页面自己的样式不写死�
     assert.deepEqual(raw, [], `${page}.css 里有写死的颜色：${raw.join(" ")}`);
   }
 });
+
+test("Paseo 插件的颜色只来自 Paseo 主题和生成的 rk-colors.ts", () => {
+  const dir = path.join(ROOT, "paseo-plugin", "client");
+  for (const f of fs.readdirSync(dir).filter((x) => /\.tsx?$/.test(x))) {
+    const src = fs.readFileSync(path.join(dir, f), "utf8");
+    const raw = src.match(/["'`]#[0-9a-fA-F]{3,8}\b/g) ?? [];
+    assert.deepEqual(raw, [], `paseo-plugin/client/${f} 里有写死的颜色：${raw.join(" ")}`);
+  }
+});
