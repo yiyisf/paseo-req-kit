@@ -45,6 +45,14 @@ jobs:
         run: |
           msg=$(tail -n 40 build.log 2>/dev/null | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=site build failed::$msg"
+      # Builds that are not published (pull requests, other branches) keep the result for a look.
+      - name: Keep the built site
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-dist
+          path: site/.vitepress/dist
+          retention-days: 7
       - name: Publish to gh-pages
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash

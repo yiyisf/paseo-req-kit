@@ -34,4 +34,5 @@
 
 - 1.15.0-beta.1 起，三个审查网页（`engine/src/review-assets/`）按这里的规范实现。它们随 npm 包发布，包里不带 `design/`，所以用的是 `scripts/tokens-build.mjs` 复制过去的 `rk-tokens.css`、`rk.css`、`rk-icons.js`；改了这里的 `tokens.json`、`reference/components.css` 或 `examples/icons.js`，要运行一次这个脚本，`engine/test/design.test.ts` 会检查。
 - 1.15.0-beta.2 起，Paseo 插件（`paseo-plugin/client/`）按 `guidelines/plugin.md` 实现，颜色来自 Paseo 主题和生成的 `paseo-plugin/shared/rk-colors.ts`。
-- 文档站还是旧样式，在后面的 beta 里改。
+- 1.15.0-beta.3 起，文档站（`site/`）按 `guidelines/docs-site.md` 实现：变量映射在 `site/.vitepress/theme/custom.css`，首页是 `components/RkHome.vue`；`rk-tokens.css`、`rk.css`、`rk-icons.ts` 和 `site/public/` 里的标志由 `scripts/tokens-build.mjs` 生成。
+- 正文页的 Terminal 组件（`req` 命令带提示符和复制按钮）还没有做，命令仍是普通代码块。

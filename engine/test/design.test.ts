@@ -34,3 +34,12 @@ test("Paseo 插件的颜色只来自 Paseo 主题和生成的 rk-colors.ts", () 
     assert.deepEqual(raw, [], `paseo-plugin/client/${f} 里有写死的颜色：${raw.join(" ")}`);
   }
 });
+
+test("文档站的主题样式只用设计系统的变量", () => {
+  const theme = path.join(ROOT, "site", ".vitepress", "theme");
+  for (const f of ["custom.css", "components/RkHome.vue", "components/RkIcon.vue"]) {
+    const src = fs.readFileSync(path.join(theme, f), "utf8").replace(/url\("data:[^"]*"\)/g, "");
+    const raw = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+    assert.deepEqual(raw, [], `site/.vitepress/theme/${f} 里有写死的颜色：${raw.join(" ")}`);
+  }
+});

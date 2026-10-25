@@ -113,8 +113,8 @@ a:not(.rk-btn){color:var(--rk-brand-text)}
 /* Terminal */
 .rk-term{box-sizing:border-box;width:100%;max-width:600px;border-radius:var(--rk-radius-lg);background:var(--rk-surface-2);border:1px solid var(--rk-border-default);box-shadow:var(--rk-shadow-card);overflow:hidden;text-align:left}
 .rk-term__tabs{display:flex;gap:2px;padding:6px 6px 0;border-bottom:1px solid var(--rk-border-subtle)}
-.rk-term__tabs span{padding:6px 12px 8px;font:500 12px/1 var(--rk-font-mono);color:var(--rk-text-muted);border-bottom:2px solid transparent}
-.rk-term__tabs span.is-on{color:var(--rk-text-primary);border-color:var(--rk-brand-500)}
+.rk-term__tabs span,.rk-term__tabs button{padding:6px 12px 8px;background:none;border:0;border-bottom:2px solid transparent;cursor:pointer;font:500 12px/1 var(--rk-font-mono);color:var(--rk-text-muted)}
+.rk-term__tabs span.is-on,.rk-term__tabs button.is-on{color:var(--rk-text-primary);border-color:var(--rk-brand-500)}
 .rk-term__body{display:flex;align-items:center;gap:var(--rk-space-3);padding:14px var(--rk-space-4);font:13px/22px var(--rk-font-mono)}
 .rk-term__body i{font-style:normal;color:var(--rk-brand-text)}
 .rk-term__body code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit}

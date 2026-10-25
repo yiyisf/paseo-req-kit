@@ -21,6 +21,18 @@ function adrItems() {
 
 const base = process.env.BASE_URL ?? "/";
 
+/** Numbers for the home page, read from the repository so they stay true. */
+function homeNumbers() {
+  const versions = [...fs.readFileSync(path.join(REPO, "CHANGELOG.md"), "utf8").matchAll(/^## (\d+\.\d+\.\d+\S*)/gm)].map((m) => m[1]);
+  return {
+    version,
+    beta: version.includes("-"),
+    releases: versions.length,
+    stable: versions.filter((v) => !v.includes("-")).length,
+    adrs: adrItems().length,
+  };
+}
+
 export default defineConfig({
   lang: "zh-CN",
   title: "req-kit",
@@ -30,8 +42,8 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: `${base.replace(/\/$/, "")}/logo.svg` }],
-    ["meta", { name: "theme-color", content: "#3f6fd8" }],
+    ["link", { rel: "icon", type: "image/svg+xml", href: `${base.replace(/\/$/, "")}/favicon.svg` }],
+    ["meta", { name: "theme-color", content: "#a8e01f" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:title", content: "req-kit：从一句需求，到可验收的功能" }],
     ["meta", { property: "og:description", content: "在 Paseo 中用对话对齐需求，由一组 AI agent 在后台完成设计、实现、评审和验证。" }],
@@ -40,7 +52,8 @@ export default defineConfig({
     lineNumbers: false,
   },
   themeConfig: {
-    logo: "/logo.svg",
+    rk: homeNumbers(),
+    logo: { light: "/logo-light.svg", dark: "/logo.svg", alt: "req-kit" },
     siteTitle: "req-kit",
     nav: [
       { text: "指南", link: "/guide/", activeMatch: "^/guide/" },
