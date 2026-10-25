@@ -32,6 +32,8 @@
 
 ## 当前状态
 
+- 1.15.0 起，审查网页、Paseo 插件、文档站和每个正式版的海报幻灯片都按这里的规范实现（下面是各部分从哪个 beta 开始）。
+
 - 1.15.0-beta.1 起，三个审查网页（`engine/src/review-assets/`）按这里的规范实现。它们随 npm 包发布，包里不带 `design/`，所以用的是 `scripts/tokens-build.mjs` 复制过去的 `rk-tokens.css`、`rk.css`、`rk-icons.js`；改了这里的 `tokens.json`、`reference/components.css` 或 `examples/icons.js`，要运行一次这个脚本，`engine/test/design.test.ts` 会检查。
 - 1.15.0-beta.2 起，Paseo 插件（`paseo-plugin/client/`）按 `guidelines/plugin.md` 实现，颜色来自 Paseo 主题和生成的 `paseo-plugin/shared/rk-colors.ts`。
 - 1.15.0-beta.3 起，文档站（`site/`）按 `guidelines/docs-site.md` 实现：变量映射在 `site/.vitepress/theme/custom.css`，首页是 `components/RkHome.vue`；`rk-tokens.css`、`rk.css`、`rk-icons.ts` 和 `site/public/` 里的标志由 `scripts/tokens-build.mjs` 生成。
