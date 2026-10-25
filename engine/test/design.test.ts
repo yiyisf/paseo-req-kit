@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -42,4 +43,24 @@ test("文档站的主题样式只用设计系统的变量", () => {
     const raw = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     assert.deepEqual(raw, [], `site/.vitepress/theme/${f} 里有写死的颜色：${raw.join(" ")}`);
   }
+});
+
+test("正式版的海报、群聊卡片和幻灯片从更新记录生成，不依赖外网", () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "rk-media-"));
+  const script = path.join(ROOT, "scripts", "release-media.mjs");
+  const r = spawnSync(process.execPath, [script, "1.14.0", "--out", out, "--tests", "241", "--date", "2026-10-25"], { encoding: "utf8" });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  const slides = fs.readFileSync(path.join(out, "slides.html"), "utf8");
+  const poster = fs.readFileSync(path.join(out, "poster.html"), "utf8");
+  assert.match(poster, /插件里/);
+  assert.match(poster, />241</);
+  assert.match(slides, /这一版带来 7 项变化/);
+  assert.match(slides, /升级须知/);
+  assert.match(slides, /代码审查/);
+  for (const html of [slides, poster, fs.readFileSync(path.join(out, "card.html"), "utf8")]) {
+    assert.ok(!/(src|href)="https?:/.test(html), "生成的页面不能引用外网资源");
+    assert.ok(!/rk-icons|tokens\.css"/.test(html), "样式和图标要内联");
+  }
+  const beta = spawnSync(process.execPath, [script, "1.14.0-beta.5", "--out", out], { encoding: "utf8" });
+  assert.equal(beta.status, 2, "beta 默认不生成");
 });

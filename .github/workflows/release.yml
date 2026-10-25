@@ -107,7 +107,8 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           test "$VERSION" = "$TAG" || { echo "package.json is $VERSION, tag is $TAG"; exit 1; }
-      - run: npm test
+      - name: npm test
+        run: npm test 2>&1 | tee "$RUNNER_TEMP/test.log"
       - run: npm run typecheck
       - run: npm run eval:self-check
       # 1.13: the docs site goes into the package, so `req docs` works without the internet
@@ -166,10 +167,30 @@ jobs:
           node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8');const h='## '+process.env.TAG+'\n';const i=s.indexOf(h);const rest=i<0?'':s.slice(i+h.length);const j=rest.search(/^## /m);require('fs').writeFileSync(process.env.RUNNER_TEMP+'/notes.md',(j<0?rest:rest.slice(0,j)).trim()+'\n')"
       - name: Package for offline and internal registries
         run: npm pack
+      # 1.15: a poster, a chat card and a slide deck for each stable release, from its CHANGELOG
+      # entry (scripts/release-media.mjs, design/guidelines/marketing.md). Betas make them too, so
+      # the step is exercised before a stable release, but only stable releases attach them.
+      - name: Poster and slides
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -qq fonts-noto-cjk >/dev/null
+          mkdir -p "$RUNNER_TEMP/pw"
+          (cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null && npm i --no-audit --no-fund playwright@1.56.0 >/dev/null && npx playwright install --with-deps chromium >/dev/null)
+          TESTS=$(grep -m1 -oE '^(#|ℹ) tests [0-9]+' "$RUNNER_TEMP/test.log" | grep -oE '[0-9]+' || true)
+          PLAYWRIGHT_DIR="$RUNNER_TEMP/pw/node_modules/playwright" node scripts/release-media.mjs "$TAG" --force --out "$RUNNER_TEMP/media" ${TESTS:+--tests "$TESTS"} --render
+          case "$TAG" in
+            *-*) echo "::notice::Poster and slides made for the beta (not attached): $(ls "$RUNNER_TEMP/media" | tr '\n' ' ')" ;;
+            *) for f in poster.png card.png slides.pdf slides.html; do cp "$RUNNER_TEMP/media/$f" "req-kit-$TAG-$f"; done ;;
+          esac
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          files: paseo-req-kit-*.tgz
+          files: |
+            paseo-req-kit-*.tgz
+            req-kit-*-poster.png
+            req-kit-*-card.png
+            req-kit-*-slides.pdf
+            req-kit-*-slides.html
           prerelease: ${{ contains(env.TAG, '-') }}
           body_path: ${{ runner.temp }}/notes.md
       - name: Publish to npm failed

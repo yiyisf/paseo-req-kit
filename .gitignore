@@ -8,3 +8,4 @@ evals/results/
 .vercel
 # 发布时构建、随 npm 包发布的文档站点（req docs）
 site-dist/
+release-media/

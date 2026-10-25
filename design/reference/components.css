@@ -155,12 +155,14 @@ a:not(.rk-btn){color:var(--rk-brand-text)}
 .rk-decide__sum b{font-size:14px}
 .rk-decide__acts{display:flex;gap:var(--rk-space-2);flex-wrap:wrap}
 .rk-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--rk-text-secondary);font-weight:600}
+/* In the decision bar the label sits beside its input, so inputs, buttons and the summary share one line. */
+.rk-decide .rk-field{flex-direction:row;align-items:center;gap:8px;white-space:nowrap}
 .rk-input{box-sizing:border-box;height:36px;padding:0 var(--rk-space-3);border-radius:var(--rk-radius-md);border:1px solid var(--rk-border-default);background:var(--rk-surface-3);color:var(--rk-text-primary);font:14px var(--rk-font-sans);min-width:0}
 .rk-input:hover{border-color:var(--rk-border-strong)}
 .rk-input:focus{outline:none;border-color:var(--rk-brand-edge);box-shadow:0 0 0 3px var(--rk-brand-tint)}
 textarea.rk-input{height:auto;padding:8px var(--rk-space-3);line-height:22px;resize:vertical}
 @media (max-width:960px){.rk-layout{grid-template-columns:minmax(0,1fr);padding-bottom:200px}.rk-side{position:static;max-height:none;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;padding:6px}.rk-side__group{display:none}.rk-side a{flex:none;max-width:240px}.rk-side a span{flex:none}}
-@media (max-width:640px){.rk-top__hide-sm{display:none}.rk-top .rk-code{order:5;flex-basis:100%;max-width:100%;justify-content:flex-start}.rk-top__title{flex:1}.rk-decide__in{gap:var(--rk-space-3)}.rk-decide .rk-field{flex:1 1 40%}.rk-decide .rk-field .rk-input{width:100%!important}.rk-decide__acts{flex:1 1 100%}.rk-decide__acts .rk-btn{flex:1}}
+@media (max-width:640px){.rk-top__hide-sm{display:none}.rk-top .rk-code{order:5;flex-basis:100%;max-width:100%;justify-content:flex-start}.rk-top__title{flex:1}.rk-decide__in{gap:var(--rk-space-3)}.rk-decide .rk-field{flex:1 1 40%}.rk-decide .rk-field .rk-input{flex:1;width:auto!important}.rk-decide__acts{flex:1 1 100%}.rk-decide__acts .rk-btn{flex:1}}
 
 /* Finding: AI review comment / a person's comment */
 .rk-finding{display:flex;flex-direction:column;gap:8px;padding:12px var(--rk-space-4);border-radius:var(--rk-radius-lg);border:1px solid var(--rk-border-default);background:var(--rk-surface-2);font-size:14px;line-height:22px}
