@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>代码审查 · 订单导出</title>
+<!--
+  req-kit golden example: 代码审查页
+  Demonstrates: review-pages.md 骨架（顶栏、状态横幅、侧栏、决定栏）；AI 意见与人的意见分开；差异块；级别与处理结果徽章
+  Renders with ../reference/tokens.css + ../reference/components.css. Copy the structure, not the content.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+</head>
+<body>
+<header class="rk-top">
+  <span class="rk-brand"><svg data-logo style="--ground:var(--rk-surface-0)"></svg><span>req<i>-</i>kit</span></span>
+  <span class="rk-top__sep rk-top__hide-sm"></span>
+  <span class="rk-top__title">订单导出</span>
+  <span class="rk-code">docs/features/20261024-export</span>
+  <span class="rk-top__spacer"></span>
+  <span class="rk-cap rk-top__hide-sm">已自动保存 14:32</span>
+  <button class="rk-btn rk-btn--ghost rk-btn--sm" type="button" id="theme" title="切换深浅色" aria-label="切换深浅色"><svg class="ic" data-i="sun"></svg></button>
+</header>
+
+<div class="rk-layout">
+  <nav class="rk-side" aria-label="改动的文件">
+    <div class="rk-side__group">概要</div>
+    <a href="#summary" class="is-on"><svg class="ic" data-i="list-checks"></svg><span>这次改了什么</span></a>
+    <a href="#ai"><svg class="ic" data-i="sparkles"></svg><span>AI 评审意见</span><span class="n">3</span></a>
+    <div class="rk-side__group">代码 · 4 个文件</div>
+    <a href="#f1"><svg class="ic" data-i="file-code"></svg><span>src/order/export.ts</span><span class="n">+38</span></a>
+    <a href="#f2"><svg class="ic" data-i="file-code"></svg><span>src/order/OrderList.vue</span><span class="n">+12</span></a>
+    <a href="#f3"><svg class="ic" data-i="file-code"></svg><span>test/order/export.test.ts</span><span class="n">+54</span></a>
+    <a href="#f4"><svg class="ic" data-i="file-code"></svg><span>db/migrate/031_export_log.sql</span><span class="n">+9</span></a>
+    <div class="rk-side__group">需求文档 · 6 个</div>
+    <a href="#docs"><svg class="ic" data-i="file-text"></svg><span>spec.md、design.md…</span></a>
+  </nav>
+
+  <main class="rk-main">
+    <div class="rk-banner rk-banner--run"><svg class="ic" data-i="git-branch"></svg><span>对比的是 <span class="rk-code">feature/20261024-export</span> 和它从 <span class="rk-code">main</span> 分出来的地方，共 7 个提交。AI 评审已做 2 轮，最后一轮结论：可以合并。</span></div>
+
+    <div class="rk-head">
+      <span class="rk-eyebrow">Code review</span>
+      <h1>看一下这次的改动，决定退回修改还是评审通过</h1>
+      <p>点任意一行写意见；AI 的意见可以标"要改"或"不用改"。退回后流水线会按意见修改，改完再评审、再验证。</p>
+    </div>
+
+    <section class="rk-card rk-card--sm" id="summary">
+      <span class="rk-card__label"><svg class="ic ic-sm" data-i="list-checks"></svg>提测说明</span>
+      <h3 style="font-size:17px;line-height:26px">这次改了什么</h3>
+      <ul class="rk-list">
+        <li><svg class="ic ic-sm" data-i="check"></svg>订单列表右上角新增"导出"，按当前筛选条件导出为 Excel，最多 5 万行</li>
+        <li><svg class="ic ic-sm" data-i="check"></svg>只有"订单管理员"能看到导出按钮；每次导出记一条日志（谁、何时、条件、行数）</li>
+        <li><svg class="ic ic-sm" data-i="check"></svg>超过 5 万行时提示缩小范围，不生成文件</li>
+      </ul>
+    </section>
+
+    <section class="rk-card rk-card--sm" id="ai">
+      <div class="rk-row" style="justify-content:space-between">
+        <span class="rk-card__label rk-card__label--ai"><svg class="ic ic-sm" data-i="sparkles"></svg>AI 评审 · 2 轮</span>
+        <span class="rk-row" style="gap:8px"><span class="rk-badge rk-badge--success"><svg class="ic" data-i="circle-check"></svg>已修复 2</span><span class="rk-badge rk-badge--outline">还开着 1</span></span>
+      </div>
+      <p>第 1 轮发现 2 条重要问题，修复步骤都已处理；第 2 轮只剩 1 条建议，没有阻塞问题。意见放在下面对应的代码行旁边。</p>
+    </section>
+
+    <section class="rk-diff" id="f1">
+      <div class="rk-diff__head">
+        <svg class="ic" data-i="chevron-down"></svg>
+        <span class="rk-diff__path">src/order/export.ts</span>
+        <span class="rk-diff__n"><span class="a">+38</span> <span class="r">−4</span></span>
+        <span class="rk-top__spacer"></span>
+        <span class="rk-cap">审核人 <span class="rk-code">@zhang</span></span>
+      </div>
+      <div class="rk-diff__body">
+        <table>
+          <tr class="hunk"><td class="n"></td><td class="n"></td><td>@@ -12,9 +12,31 @@ export async function exportOrders(user: User, filter: OrderFilter)</td></tr>
+          <tr class="ctx"><td class="n">12</td><td class="n">12</td><td class="s">export async function exportOrders(user: User, filter: OrderFilter) {</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">13</td><td class="s">  checkPermission(user, "order:export");</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">14</td><td class="s">  const total = await countOrders(filter);</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">15</td><td class="s">  if (total &gt; EXPORT_LIMIT) throw new TooManyRows(total, EXPORT_LIMIT);</td></tr>
+          <tr class="note"><td colspan="3">
+            <div class="rk-finding rk-finding--ai">
+              <div class="rk-finding__head">
+                <span class="rk-finding__who"><svg class="ic ic-sm" data-i="sparkles"></svg>AI 评审</span>
+                <span class="rk-finding__id">CR-1 · 第 1 轮</span>
+                <span class="rk-badge rk-badge--warning"><svg class="ic" data-i="triangle-alert"></svg>重要</span>
+                <span class="rk-badge rk-badge--success"><svg class="ic" data-i="circle-check"></svg>已修复</span>
+              </div>
+              <div class="rk-finding__body">导出接口没有校验权限，普通员工也能调用并拿到全部订单。</div>
+              <div class="rk-finding__fix">修复：第 13 行加了 <span class="rk-code">checkPermission</span>，并补了"无权限返回 403"的测试。</div>
+            </div>
+          </td></tr>
+          <tr class="ctx"><td class="n">13</td><td class="n">16</td><td class="s">  const rows = await queryOrders(filter);</td></tr>
+          <tr class="del"><td class="n">14</td><td class="n"></td><td class="s">  return toCsv(rows);</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">17</td><td class="s">  const file = await toXlsx(rows, { sheet: "订单" });</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">18</td><td class="s">  await logExport({ user: user.id, filter, rows: rows.length });</td></tr>
+          <tr class="note"><td colspan="3">
+            <div class="rk-finding rk-finding--ai">
+              <div class="rk-finding__head">
+                <span class="rk-finding__who"><svg class="ic ic-sm" data-i="sparkles"></svg>AI 评审</span>
+                <span class="rk-finding__id">CR-3 · 第 2 轮</span>
+                <span class="rk-badge rk-badge--muted">建议</span>
+                <span class="rk-badge rk-badge--outline">还开着</span>
+              </div>
+              <div class="rk-finding__body">日志里记录了完整的筛选条件，其中可能包含客户手机号。建议只记录条件的字段名，不记录值。</div>
+              <div class="rk-finding__acts">
+                <div class="rk-seg" role="group" aria-label="这条意见要不要改">
+                  <button type="button" class="is-fix" aria-pressed="true">要改</button>
+                  <button type="button" class="is-ok" aria-pressed="false">不用改</button>
+                </div>
+                <input class="rk-input" style="flex:1 1 200px;height:32px" value="手机号不能进日志，按建议改" aria-label="补充说明">
+              </div>
+            </div>
+          </td></tr>
+          <tr class="add"><td class="n"></td><td class="n">19</td><td class="s">  return file;</td></tr>
+          <tr class="note"><td colspan="3">
+            <div class="rk-finding rk-finding--you">
+              <div class="rk-finding__head">
+                <span class="rk-finding__who"><svg class="ic ic-sm" data-i="message-square-plus"></svg>你的意见</span>
+                <span class="rk-finding__where">export.ts:19</span>
+              </div>
+              <textarea class="rk-input" rows="2" aria-label="你的意见">文件名请带上导出时间，例如 订单_20261025_1432.xlsx，财务那边要按时间归档。</textarea>
+            </div>
+          </td></tr>
+          <tr class="ctx"><td class="n">15</td><td class="n">20</td><td class="s">}</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section class="rk-diff" id="f2">
+      <div class="rk-diff__head"><svg class="ic" data-i="chevron-right"></svg><span class="rk-diff__path">src/order/OrderList.vue</span><span class="rk-diff__n"><span class="a">+12</span> <span class="r">−1</span></span><span class="rk-top__spacer"></span><span class="rk-cap">点开查看</span></div>
+    </section>
+    <section class="rk-diff" id="docs">
+      <div class="rk-diff__head"><svg class="ic" data-i="chevron-right"></svg><span class="rk-diff__path">需求文档 6 个（spec.md、design.md、code-review.md…）</span><span class="rk-top__spacer"></span><span class="rk-cap">默认折叠</span></div>
+    </section>
+  </main>
+</div>
+
+<footer class="rk-decide">
+  <div class="rk-decide__in">
+    <div class="rk-decide__sum"><b>已看 2 / 4 个文件 · 2 条修改意见</b><span class="rk-cap">1 条 AI 意见标了要改，1 条你自己的意见</span></div>
+    <label class="rk-field">审核人<input class="rk-input" style="width:180px" value="@zhang、@lead"></label>
+    <label class="rk-field">评审人<input class="rk-input" style="width:120px" value="王工"></label>
+    <div class="rk-decide__acts">
+      <button class="rk-btn rk-btn--danger-outline" type="button"><svg class="ic" data-i="undo-2"></svg>退回修改</button>
+      <button class="rk-btn rk-btn--primary" type="button"><svg class="ic" data-i="check"></svg>评审通过</button>
+    </div>
+  </div>
+</footer>
+<script>
+document.getElementById("theme").addEventListener("click", () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+  r.dataset.theme = dark ? "light" : "dark";
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>req-kit 效果图</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="reference/tokens.css">
+<link rel="stylesheet" href="reference/components.css">
+<script src="examples/icons.js"></script>
+<style>
+html,body{height:100%}
+body{display:flex;flex-direction:column;background:var(--rk-surface-0)}
+.g-top{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px));border-bottom:1px solid var(--rk-border-default)}
+.g-top h1{margin:0;font-size:15px;font-weight:600}
+.g-tabs{display:flex;gap:4px;flex-wrap:wrap;padding:10px max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px))}
+.g-tabs button{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--rk-radius-md) var(--rk-radius-md) 0 0;border:1px solid transparent;border-bottom:0;background:transparent;color:var(--rk-text-secondary);font:600 13px/1 var(--rk-font-sans);cursor:pointer}
+.g-tabs button:hover{color:var(--rk-text-primary)}
+.g-tabs button:focus-visible{outline:2px solid var(--rk-focus-ring);outline-offset:2px}
+.g-tabs button[aria-selected="true"]{background:var(--rk-canvas);border-color:var(--rk-border-default);color:var(--rk-text-primary)}
+.g-tabs button[aria-selected="true"] .ic{color:var(--rk-brand-text)}
+.g-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));background:var(--rk-canvas);border-top:1px solid var(--rk-border-default);font-size:13px;color:var(--rk-text-secondary)}
+.g-bar p{margin:0;flex:1 1 320px;min-width:0}
+.g-frame{flex:1;min-height:520px;background:var(--rk-canvas);display:flex;justify-content:center}
+.g-frame iframe{border:0;width:100%;height:100%;min-height:520px;background:var(--rk-canvas)}
+.g-frame.is-phone{padding:16px 0}
+.g-frame.is-phone iframe{width:400px;max-width:100%;border:1px solid var(--rk-border-default);border-radius:20px}
+</style>
+</head>
+<body>
+<header class="g-top">
+  <span class="rk-brand"><svg data-logo style="--ground:var(--rk-surface-0)"></svg><span>req<i>-</i>kit</span></span>
+  <h1>品味设计 · 效果图</h1>
+  <span class="rk-cap">Bento Launchpad 家族，主色青柠 · 1.15 改造前的确认稿</span>
+  <span class="rk-top__spacer"></span>
+  <div class="rk-seg" role="group" aria-label="主题">
+    <button type="button" data-theme-set="dark" aria-pressed="true">深色</button>
+    <button type="button" data-theme-set="light" aria-pressed="false">浅色</button>
+  </div>
+  <div class="rk-seg" role="group" aria-label="宽度">
+    <button type="button" data-w="full" aria-pressed="true">电脑</button>
+    <button type="button" data-w="phone" aria-pressed="false">手机</button>
+  </div>
+</header>
+<nav class="g-tabs" role="tablist" aria-label="效果图"></nav>
+<div class="g-bar"><p id="note"></p><a id="open" href="#" target="_blank" rel="noopener">单独打开这一页</a></div>
+<main class="g-frame" id="frame"><iframe id="view" title="效果图"></iframe></main>
+<script>
+const PAGES = [
+  { id: "code", file: "examples/code-review.html", icon: "git-pull-request", name: "代码审查", note: "AI 评审意见（靛色）和你的意见（青柠描边）分两种卡片插在代码行下面；底部决定栏只有一个青柠主按钮。" },
+  { id: "check", file: "examples/acceptance.html", icon: "clipboard-check", name: "验收清单", note: "流水线没验证、没通过的排在最前；每条写着前置条件、操作、预期结果；选\"不对\"后写下看到了什么。" },
+  { id: "proto", file: "examples/prototype-review.html", icon: "pen-tool", name: "审查原型", note: "原型保持它自己的样子，只有点选区域和编号图钉是青柠；有意见时主按钮是\"提交修改意见\"，确认方案暂时不可用。" },
+  { id: "plugin", file: "examples/plugin.html", icon: "inbox", name: "Paseo 插件", note: "底色、文字、描边跟随 Paseo（这里用相近的中性色代替）；\"等你处理\"每项一个青柠按钮；需求详情顶部是步骤轨。" },
+  { id: "home", file: "examples/home.html", icon: "file-text", name: "文档首页", note: "极光 + 渐变关键词 + 安装命令；步骤轨里只有人做决定的两步亮青柠；数字截至 1.14.0，能核实。" },
+  { id: "poster", file: "examples/poster.html", icon: "sparkles", name: "海报与群聊卡片", note: "竖版海报 1080×1920 和群聊卡片 1200×630，主题色 Lime；放行轨从标志衍生，从画面边缘出血。" },
+  { id: "slides", file: "examples/slides.html", icon: "chart-column", name: "汇报幻灯片", note: "封面用极光和品牌条；内容页标题写结论、卡片写依据，四周 128px 安全边距。" },
+];
+const tabs = document.querySelector(".g-tabs");
+const view = document.getElementById("view");
+const note = document.getElementById("note");
+const open = document.getElementById("open");
+let theme = "dark";
+let current = PAGES[0];
+for (const p of PAGES) {
+  const b = document.createElement("button");
+  b.type = "button"; b.role = "tab"; b.id = `tab-${p.id}`;
+  b.innerHTML = `<svg class="ic" data-i="${p.icon}"></svg>${p.name}`;
+  b.addEventListener("click", () => show(p));
+  tabs.append(b);
+}
+window.ReqKitFill?.();
+function applyTheme() {
+  document.documentElement.dataset.theme = theme;
+  try { view.contentDocument.documentElement.dataset.theme = theme; } catch { /* not loaded yet */ }
+}
+function show(p) {
+  current = p;
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(b.id === `tab-${p.id}`));
+  note.textContent = p.note;
+  open.href = p.file;
+  view.src = p.file;
+  if (location.hash.slice(1) !== p.id) history.replaceState(null, "", `#${p.id}`);
+}
+view.addEventListener("load", applyTheme);
+for (const b of document.querySelectorAll("[data-theme-set]")) b.addEventListener("click", () => {
+  theme = b.dataset.themeSet;
+  for (const x of document.querySelectorAll("[data-theme-set]")) x.setAttribute("aria-pressed", String(x === b));
+  applyTheme();
+});
+for (const b of document.querySelectorAll("[data-w]")) b.addEventListener("click", () => {
+  for (const x of document.querySelectorAll("[data-w]")) x.setAttribute("aria-pressed", String(x === b));
+  document.getElementById("frame").classList.toggle("is-phone", b.dataset.w === "phone");
+});
+show(PAGES.find((p) => p.id === location.hash.slice(1)) ?? PAGES[0]);
+applyTheme();
+</script>
+</body>
+</html>

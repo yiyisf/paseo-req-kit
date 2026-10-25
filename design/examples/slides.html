@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>req-kit 汇报幻灯片</title>
+<!--
+  req-kit golden example: 汇报幻灯片 1920×1080（封面、内容页）
+  Demonstrates: marketing.md 汇报幻灯片（封面极光 + 品牌条、内容页 eyebrow + 结论标题 + Bento、页码）
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700;800&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+<style>
+body{background:var(--rk-surface-0);padding:24px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:24px;align-items:center}
+.frame{flex:none;overflow:hidden;border-radius:12px;box-shadow:var(--rk-shadow-dialog)}
+.slide{position:relative;width:1920px;height:1080px;transform-origin:top left;overflow:hidden;color:var(--rk-text-primary);background:var(--rk-canvas);box-sizing:border-box;padding:112px 128px 150px}
+.bb{display:flex;align-items:center;gap:16px}
+.bb svg{width:48px;height:48px}
+.bb .w{font:800 38px/1 var(--rk-font-sans);letter-spacing:-.02em}
+.bb .w i{font-style:normal;color:var(--rk-brand-500)}
+.bb .s{height:40px;padding:0 16px;border-radius:999px;border:2px solid var(--rk-brand-edge);color:var(--rk-brand-text);font:500 20px/36px var(--rk-font-mono);box-sizing:border-box}
+.no{position:absolute;right:128px;bottom:64px;font:400 22px/1 var(--rk-font-mono);color:var(--rk-text-muted)}
+.eb{font:500 24px/32px var(--rk-font-mono);letter-spacing:.16em;text-transform:uppercase;color:var(--rk-brand-text)}
+.big .rk-card{padding:44px;gap:18px;border-radius:24px}
+.big .rk-card h3{font-size:36px;line-height:48px}
+.big .rk-card p{font-size:26px;line-height:42px}
+.big .rk-card__label{height:36px;font-size:18px;padding:0 14px}
+.big .rk-card__label .ic{width:20px;height:20px}
+</style>
+</head>
+<body>
+<div class="frame"><section class="slide rk-aurora" style="display:flex;flex-direction:column;justify-content:space-between">
+  <div class="bb"><svg data-logo></svg><span class="w">req<i>-</i>kit</span><span class="s">汇报</span></div>
+  <div style="display:flex;flex-direction:column;gap:40px;max-width:1500px">
+    <span class="eb">Requirement to acceptance, in Paseo</span>
+    <h1 style="margin:0;font:800 112px/124px var(--rk-font-sans);letter-spacing:-.03em">让非开发同事<br>按<span class="rk-grad">规范流程</span>用 AI 交付需求</h1>
+    <p style="margin:0;font:500 34px/52px var(--rk-font-sans);color:var(--rk-text-secondary)">每一步谁来做、做到什么算完、在哪里停下来等人，都由流程定好。</p>
+  </div>
+  <div style="font:400 24px/1 var(--rk-font-sans);color:var(--rk-text-muted)">[姓名] · AI 探索小组 · 2026 年 10 月</div>
+</section></div>
+
+<div class="frame"><section class="slide" style="display:flex;flex-direction:column;gap:48px">
+  <div style="display:flex;flex-direction:column;gap:20px">
+    <span class="eb">Quality</span>
+    <h2 style="margin:0;font:700 64px/80px var(--rk-font-sans);letter-spacing:-.01em;max-width:1500px">模型会犯错，所以每个关键结论都要有程序能检查的证据</h2>
+  </div>
+  <div class="rk-bento big" style="gap:24px">
+    <article class="rk-card rk-span-6"><span class="rk-card__label rk-card__label--data"><svg class="ic" data-i="shield-check"></svg>质量门</span><h3>检查由流水线自己跑</h3><p>lint、类型检查、测试、构建在改动前后各跑一次，只拦新出现的失败，发回给写代码的 agent 修。</p></article>
+    <article class="rk-card rk-span-6"><span class="rk-card__label"><svg class="ic" data-i="clipboard-check"></svg>验收测试先提交</span><h3>例子直接变成测试</h3><p>验收标准里的具体例子作为测试的期望值，先于功能代码提交，防止"改测试凑通过"。</p></article>
+    <article class="rk-card rk-span-6"><span class="rk-card__label rk-card__label--ai"><svg class="ic" data-i="sparkles"></svg>做的和查的分开</span><h3>不同厂商的模型互相检查</h3><p>builder 和 reviewer 用不同的模型；超出方案文件清单的改动要说明理由。</p></article>
+    <article class="rk-card rk-span-6"><span class="rk-card__label"><svg class="ic" data-i="users"></svg>人做最后决定</span><h3>代码审查和验收在插件里完成</h3><p>AI 意见放在代码行旁边；需求方按标准逐条核对，结论随分支提交、可以备查。</p></article>
+  </div>
+  <span class="no">8 / 17</span>
+</section></div>
+<script>
+const fit = () => {
+  const s = Math.min(960, window.innerWidth - 32) / 1920;
+  for (const f of document.querySelectorAll(".frame")) {
+    f.style.width = `${1920 * s}px`; f.style.height = `${1080 * s}px`;
+    f.firstElementChild.style.transform = `scale(${s})`;
+  }
+};
+addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>

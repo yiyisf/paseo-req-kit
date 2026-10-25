@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>审查原型 · 订单导出</title>
+<!--
+  req-kit golden example: 审查原型并确认方案
+  Demonstrates: review-pages.md 骨架（意见清单在右侧）；原型预览（点阵画布）；点选区域与编号图钉；意见卡；决定栏只有一个青柠按钮
+  The prototype inside the frame keeps its own neutral look: it is the product being designed, not req-kit.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+<style>
+.pr-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:var(--rk-space-6);max-width:1280px;margin:0 auto;padding:var(--rk-space-6) max(16px,env(safe-area-inset-right,0px)) 120px max(16px,env(safe-area-inset-left,0px));box-sizing:border-box}
+.pr-notes{display:flex;flex-direction:column;gap:var(--rk-space-3);min-width:0}
+/* the prototype being reviewed: a plain light business screen */
+.app{width:100%;max-width:640px;background:#ffffff;color:#1f2937;border-radius:10px;box-shadow:0 12px 32px #00000040;font:13px/20px var(--rk-font-sans);overflow:hidden}
+.app__bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #e5e7eb}
+.app__bar b{font-size:15px}
+.app__bar .sp{flex:1}
+.app__btn{position:relative;padding:6px 12px;border-radius:6px;background:#2563eb;color:#fff;font-weight:600}
+.app__filters{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
+.app__filters span{padding:3px 10px;border:1px solid #d1d5db;border-radius:6px;color:#4b5563}
+.app table{width:100%;border-collapse:collapse}
+.app th,.app td{text-align:left;padding:8px 16px;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+.app th{color:#6b7280;font-weight:600;background:#f9fafb;position:relative}
+.app__wrap{overflow-x:auto}
+.pin-a{top:-12px;right:-12px}.pin-b{top:6px;right:6px}
+@media (max-width:960px){.pr-layout{grid-template-columns:minmax(0,1fr);padding-bottom:200px}}
+</style>
+</head>
+<body>
+<header class="rk-top">
+  <span class="rk-brand"><svg data-logo style="--ground:var(--rk-surface-0)"></svg><span>req<i>-</i>kit</span></span>
+  <span class="rk-top__sep rk-top__hide-sm"></span>
+  <span class="rk-top__title">订单导出</span>
+  <span class="rk-code">docs/features/20261024-export</span>
+  <span class="rk-top__spacer"></span>
+  <span class="rk-cap rk-top__hide-sm">方案第 1 版 · 已自动保存</span>
+</header>
+
+<div class="pr-layout">
+  <main class="rk-main">
+    <div class="rk-head">
+      <span class="rk-eyebrow">Prototype review</span>
+      <h1>在原型上点要改的地方，没问题就确认方案</h1>
+      <p>点一下界面上的任何地方，选一种改法（大一点、换颜色、删掉、换位置），再用自己的话补一句。双击文字可以直接改字。</p>
+    </div>
+    <div class="rk-proto">
+      <div class="rk-proto__bar"><svg class="ic" data-i="mouse-pointer-click"></svg>点选模式 <span class="rk-top__spacer"></span><span>状态：</span><div class="rk-seg" role="group" aria-label="原型状态"><button type="button" aria-pressed="true">有数据</button><button type="button" aria-pressed="false">没有数据</button><button type="button" aria-pressed="false">超过 5 万行</button></div></div>
+      <div class="rk-proto__stage rk-dots">
+        <div class="app">
+          <div class="app__bar"><b>订单列表</b><span class="sp"></span><span style="color:#6b7280">共 1,284 条</span><span class="app__btn rk-pick">导出 Excel<span class="rk-pin pin-a">1</span></span></div>
+          <div class="app__filters"><span>10 月</span><span>已支付</span><span>华东区</span></div>
+          <div class="app__wrap"><table>
+            <tr><th>订单号</th><th class="rk-pick">客户手机号<span class="rk-pin pin-b">2</span></th><th>金额</th><th>下单时间</th></tr>
+            <tr><td>DD20261024001</td><td>138****5521</td><td>¥ 1,280.00</td><td>10-24 09:12</td></tr>
+            <tr><td>DD20261024002</td><td>139****0087</td><td>¥ 356.50</td><td>10-24 09:40</td></tr>
+            <tr><td>DD20261024003</td><td>136****7712</td><td>¥ 2,099.00</td><td>10-24 10:05</td></tr>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="pr-notes" aria-label="修改意见">
+    <div class="rk-row" style="justify-content:space-between"><span class="rk-eyebrow rk-eyebrow--muted">Your notes · 2</span><span class="rk-cap">按点选顺序</span></div>
+    <div class="rk-finding rk-finding--you">
+      <div class="rk-finding__head"><span class="rk-pin" style="position:static;box-shadow:none">1</span><b>"导出 Excel"按钮</b><span class="rk-badge rk-badge--outline">换位置</span></div>
+      <div class="rk-finding__body">放到筛选条件那一行的最右边，和"重置"挨着，现在离表格太远了。</div>
+      <div class="rk-finding__acts"><button class="rk-btn rk-btn--ghost rk-btn--sm" type="button">改一下</button><button class="rk-btn rk-btn--ghost rk-btn--sm" type="button">删掉这条</button></div>
+    </div>
+    <div class="rk-finding rk-finding--you">
+      <div class="rk-finding__head"><span class="rk-pin" style="position:static;box-shadow:none">2</span><b>"客户手机号"一列</b><span class="rk-badge rk-badge--outline">删掉</span></div>
+      <div class="rk-finding__body">导出的文件里不要这一列，财务用不到，也怕泄露。</div>
+      <div class="rk-finding__acts"><button class="rk-btn rk-btn--ghost rk-btn--sm" type="button">改一下</button><button class="rk-btn rk-btn--ghost rk-btn--sm" type="button">删掉这条</button></div>
+    </div>
+    <div class="rk-callout rk-callout--note"><svg class="ic" data-i="info"></svg><div><b>提交后会怎样</b>意见整理成清单交给需求的对话，方案改好后会再请你看一次。</div></div>
+  </aside>
+</div>
+
+<footer class="rk-decide">
+  <div class="rk-decide__in">
+    <div class="rk-decide__sum"><b>2 条修改意见</b><span class="rk-cap">有意见时先提交意见；全部满意再确认方案</span></div>
+    <div class="rk-decide__acts">
+      <button class="rk-btn" type="button" disabled title="还有 2 条修改意见没提交">确认方案</button>
+      <button class="rk-btn rk-btn--primary" type="button"><svg class="ic" data-i="message-square-plus"></svg>提交 2 条修改意见</button>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

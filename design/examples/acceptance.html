@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>验收清单 · 订单导出</title>
+<!--
+  req-kit golden example: 验收清单页
+  Demonstrates: review-pages.md 骨架；验收项（前置条件 / 操作 / 预期结果、流水线结论、三个选项）；试用卡；决定栏的禁用说明
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+</head>
+<body>
+<header class="rk-top">
+  <span class="rk-brand"><svg data-logo style="--ground:var(--rk-surface-0)"></svg><span>req<i>-</i>kit</span></span>
+  <span class="rk-top__sep rk-top__hide-sm"></span>
+  <span class="rk-top__title">订单导出</span>
+  <span class="rk-code">docs/features/20261024-export</span>
+  <span class="rk-top__spacer"></span>
+  <span class="rk-cap rk-top__hide-sm">已自动保存 14:40</span>
+</header>
+
+<div class="rk-layout">
+  <nav class="rk-side" aria-label="验收项">
+    <div class="rk-side__group">先看这些</div>
+    <a href="#ac21" class="is-on"><svg class="ic" data-i="circle-x" style="color:var(--rk-status-failed)"></svg><span>AC-2.1 超过 5 万行</span></a>
+    <a href="#d1"><svg class="ic" data-i="circle-dot" style="color:var(--rk-brand-text)"></svg><span>决定：日志不记手机号</span></a>
+    <div class="rk-side__group">流水线已验证</div>
+    <a href="#ac11"><svg class="ic" data-i="circle-check" style="color:var(--rk-status-success)"></svg><span>AC-1.1 管理员能导出</span></a>
+    <a href="#ac12"><svg class="ic" data-i="circle-check" style="color:var(--rk-status-success)"></svg><span>AC-1.2 普通员工看不到</span></a>
+    <a href="#ac22"><svg class="ic" data-i="circle-dashed" style="color:var(--rk-text-muted)"></svg><span>AC-2.2 文件和筛选一致</span></a>
+  </nav>
+
+  <main class="rk-main">
+    <div class="rk-head">
+      <span class="rk-eyebrow">Acceptance</span>
+      <h1>按验收标准逐条核对，再提交验收</h1>
+      <p>每条写着怎么操作、应该看到什么，以及流水线的验证结果。流水线没验证或没通过的排在最前面。</p>
+    </div>
+
+    <section class="rk-card rk-card--sm">
+      <div class="rk-row" style="justify-content:space-between">
+        <span class="rk-card__label rk-card__label--data"><svg class="ic ic-sm" data-i="play"></svg>试用</span>
+        <span class="rk-badge rk-badge--running"><span class="rk-spin"></span>正在运行</span>
+      </div>
+      <h3 style="font-size:17px;line-height:26px">已经在这个需求自己的工作区里跑起来了</h3>
+      <div class="rk-row" style="gap:8px 16px">
+        <span>访问地址 <a href="#">http://localhost:5173/orders</a></span>
+        <span class="rk-muted">测试账号 <span class="rk-code">admin_test</span>（订单管理员）、<span class="rk-code">staff_test</span>（普通员工）</span>
+      </div>
+      <div class="rk-row"><button class="rk-btn rk-btn--sm" type="button">停止试用</button><span class="rk-cap">账号和数据来自提测说明，只在测试环境有效</span></div>
+    </section>
+
+    <article class="rk-check is-fail" id="ac21">
+      <span class="rk-check__id">AC-2.1</span>
+      <div class="rk-check__main">
+        <div class="rk-check__title">筛选结果超过 5 万行时，提示缩小范围，不生成文件 <span class="rk-badge rk-badge--muted"><svg class="ic" data-i="circle-dashed"></svg>流水线没验证</span></div>
+        <dl>
+          <dt>前置条件</dt><dd>用 <span class="rk-code">admin_test</span> 登录；测试库里有 6 万条 10 月的订单</dd>
+          <dt>操作</dt><dd>筛选"10 月全部订单"，点"导出"</dd>
+          <dt>预期结果</dt><dd>提示"超过 5 万行，请缩小筛选范围"，不下载文件</dd>
+        </dl>
+        <div class="rk-check__evidence">流水线说明：测试环境没有 5 万行以上的数据，没能验证。</div>
+        <div class="rk-finding__acts">
+          <div class="rk-seg" role="group" aria-label="核对结果">
+            <button type="button" class="is-pass" aria-pressed="false">通过</button>
+            <button type="button" class="is-fix" aria-pressed="true">不对</button>
+            <button type="button" aria-pressed="false">先不验</button>
+          </div>
+        </div>
+        <textarea class="rk-input" rows="2" aria-label="看到了什么">下载了一个只有表头的空文件，没有提示。</textarea>
+      </div>
+    </article>
+
+    <article class="rk-check" id="d1">
+      <span class="rk-check__id">决定 1</span>
+      <div class="rk-check__main">
+        <div class="rk-check__title">导出日志只记筛选的字段名，不记具体的值（避免记下客户手机号）<span class="rk-badge rk-badge--needs"><svg class="ic" data-i="circle-dot"></svg>请你表态</span></div>
+        <div class="rk-check__evidence">开发过程中代码评审提出、评审人同意修改；需求说明里没写。</div>
+        <div class="rk-seg" role="group" aria-label="表态" style="align-self:flex-start">
+          <button type="button" class="is-pass" aria-pressed="true">同意</button>
+          <button type="button" class="is-fix" aria-pressed="false">不同意</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="rk-check is-pass" id="ac11">
+      <span class="rk-check__id">AC-1.1</span>
+      <div class="rk-check__main">
+        <div class="rk-check__title">订单管理员在订单列表右上角能看到"导出"，导出的 Excel 和当前筛选一致 <span class="rk-badge rk-badge--success"><svg class="ic" data-i="circle-check"></svg>流水线已验证</span></div>
+        <div class="rk-check__evidence">验证：运行 <span class="rk-code">npm test -- export</span>，12 项通过；界面检查在 1280 和 390 宽度下按钮完整可见。</div>
+        <div class="rk-seg" role="group" aria-label="核对结果" style="align-self:flex-start">
+          <button type="button" class="is-pass" aria-pressed="true">通过</button>
+          <button type="button" class="is-fix" aria-pressed="false">不对</button>
+          <button type="button" aria-pressed="false">先不验</button>
+        </div>
+      </div>
+    </article>
+  </main>
+</div>
+
+<footer class="rk-decide">
+  <div class="rk-decide__in">
+    <div class="rk-decide__sum"><b>已核对 3 / 5 · 1 项不对</b><span class="rk-cap">提交后结论是"不通过"，不对的地方会转给需求的对话处理</span></div>
+    <label class="rk-field">验收人<input class="rk-input" style="width:140px" value="运营部 李敏"></label>
+    <div class="rk-decide__acts">
+      <button class="rk-btn rk-btn--primary" type="button"><svg class="ic" data-i="clipboard-check"></svg>提交验收</button>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

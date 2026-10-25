@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>req-kit 海报</title>
+<!--
+  req-kit golden example: 竖版海报 1080×1920 与群聊卡片 1200×630，主题色 Lime
+  Demonstrates: marketing.md 不变的东西（品牌条、地色、结构）、放行轨图形、海报字号、行动区
+  Fixed-size artboards on a night ground; scaled down to fit the window for viewing.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700;800&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+<style>
+body{background:var(--rk-surface-0);padding:24px max(16px,env(safe-area-inset-left,0px));display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;justify-content:center}
+.frame{flex:none;overflow:hidden;border-radius:12px;box-shadow:var(--rk-shadow-dialog)}
+.art{position:relative;overflow:hidden;transform-origin:top left;color:var(--rk-text-primary);font-family:var(--rk-font-sans)}
+.poster{width:1080px;height:1920px}
+.card{width:1200px;height:630px}
+.brandbar{position:absolute;display:flex;align-items:center;gap:18px}
+.brandbar svg{width:56px;height:56px}
+.brandbar .w{font:800 44px/1 var(--rk-font-sans);letter-spacing:-.02em}
+.brandbar .w i{font-style:normal;color:var(--rk-campaign-lime)}
+.series{height:44px;padding:0 18px;border-radius:999px;border:2px solid var(--rk-campaign-lime);color:var(--rk-campaign-lime);font:500 22px/40px var(--rk-font-mono);box-sizing:border-box}
+.eb{font:500 22px/28px var(--rk-font-mono);letter-spacing:.18em;color:var(--rk-campaign-lime);text-transform:uppercase}
+.hero{font:800 112px/116px var(--rk-font-sans);letter-spacing:-.03em;margin:0}
+.hero em{font-style:normal;background:linear-gradient(90deg,var(--rk-campaign-lime-hi),var(--rk-campaign-lime));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{font:500 32px/48px var(--rk-font-sans);color:var(--rk-text-secondary);margin:0}
+.track{position:absolute;pointer-events:none}
+.shot{position:absolute;border-radius:20px;background:var(--rk-surface-2);border:1px solid var(--rk-border-default);box-shadow:var(--rk-shadow-dialog);overflow:hidden}
+.shot::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--rk-campaign-lime),transparent)}
+.pill3{position:absolute;display:flex;gap:16px}
+.pill3 span{display:flex;align-items:center;gap:10px;height:56px;padding:0 24px;border-radius:999px;background:var(--rk-surface-2);border:1px solid var(--rk-border-default);font:600 24px/1 var(--rk-font-sans);color:var(--rk-text-secondary)}
+.pill3 .ic{width:24px;height:24px;color:var(--rk-campaign-lime)}
+.act{position:absolute;display:flex;flex-direction:column;gap:22px}
+.act b{display:inline-flex;align-items:center;gap:14px;align-self:flex-start;height:76px;padding:0 32px;border-radius:12px;background:var(--rk-campaign-lime);color:var(--rk-on-campaign-lime);font:700 30px/1 var(--rk-font-mono);box-shadow:var(--rk-glow-brand)}
+.cap{font:400 22px/32px var(--rk-font-sans);color:var(--rk-text-muted)}
+</style>
+</head>
+<body>
+<div class="frame" data-w="1080" data-h="1920">
+  <div class="art poster rk-aurora">
+    <svg class="track" width="1080" height="1920" viewBox="0 0 1080 1920" aria-hidden="true">
+      <polyline points="740,520 870,650 1300,180" fill="none" stroke="var(--rk-campaign-lime)" stroke-width="3" opacity=".4"/>
+      <circle cx="740" cy="520" r="14" fill="var(--rk-canvas)" stroke="var(--rk-campaign-lime)" stroke-width="3" opacity=".7"/>
+      <circle cx="870" cy="650" r="14" fill="var(--rk-canvas)" stroke="var(--rk-campaign-lime)" stroke-width="3" opacity=".7"/>
+      <circle cx="1010" cy="495" r="22" fill="var(--rk-campaign-lime)"/>
+    </svg>
+    <div class="brandbar" style="left:96px;top:96px"><svg data-logo></svg><span class="w">req<i>-</i>kit</span><span class="series">1.14.0</span></div>
+    <div style="position:absolute;left:96px;top:300px;right:96px;display:flex;flex-direction:column;gap:36px">
+      <span class="eb">From one sentence to accepted</span>
+      <h1 class="hero">一句需求，<br>到<em>可验收的</em><br><em>功能</em></h1>
+      <p class="lead">在 Paseo 里用对话谈清楚，AI 在后台写方案、写代码、做评审和验证；每个要拍板的地方都停下来等你。</p>
+    </div>
+    <div class="shot" style="left:96px;top:1030px;width:888px;height:330px;padding:32px;box-sizing:border-box;display:flex;flex-direction:column;gap:22px">
+      <span class="rk-eyebrow" style="font-size:18px">Needs you · 2</span>
+      <div class="rk-attn" style="padding:22px;gap:22px"><span class="rk-attn__ic" style="width:56px;height:56px"><svg class="ic" data-i="git-pull-request" style="width:28px;height:28px"></svg></span><div class="rk-attn__txt"><b style="font-size:26px;line-height:34px">订单导出：请做代码审查</b><span style="font-size:20px">AI 评审 2 轮，可以合并</span></div><span class="rk-btn rk-btn--primary" style="height:56px;font-size:22px;padding:0 24px">代码审查</span></div>
+      <div class="rk-attn" style="padding:22px;gap:22px"><span class="rk-attn__ic" style="width:56px;height:56px"><svg class="ic" data-i="clipboard-check" style="width:28px;height:28px"></svg></span><div class="rk-attn__txt"><b style="font-size:26px;line-height:34px">库存预警：等你验收</b><span style="font-size:20px">5 条验收标准，流水线已验证 4 条</span></div><span class="rk-btn rk-btn--primary" style="height:56px;font-size:22px;padding:0 24px">验收清单</span></div>
+    </div>
+    <div class="pill3" style="left:96px;top:1420px"><span><svg class="ic" data-i="shield-check"></svg>质量门</span><span><svg class="ic" data-i="sparkles"></svg>独立评审</span><span><svg class="ic" data-i="clipboard-check"></svg>逐条验收</span></div>
+    <div class="act" style="left:96px;bottom:96px">
+      <span style="font:600 32px/44px var(--rk-font-sans)">第一个需求，我们陪你走完</span>
+      <b>npx -y paseo-req-kit@latest install</b>
+      <span class="cap">只需要 npm 源 · 内网可用 · 文档：req docs</span>
+    </div>
+  </div>
+</div>
+
+<div class="frame" data-w="1200" data-h="630">
+  <div class="art card rk-aurora">
+    <svg class="track" width="1200" height="630" viewBox="0 0 1200 630" aria-hidden="true">
+      <polyline points="760,420 900,560 1260,170" fill="none" stroke="var(--rk-campaign-lime)" stroke-width="3" opacity=".45"/>
+      <circle cx="760" cy="420" r="12" fill="var(--rk-canvas)" stroke="var(--rk-campaign-lime)" stroke-width="3"/>
+      <circle cx="900" cy="560" r="12" fill="var(--rk-canvas)" stroke="var(--rk-campaign-lime)" stroke-width="3"/>
+      <circle cx="1080" cy="365" r="20" fill="var(--rk-campaign-lime)"/>
+    </svg>
+    <div class="brandbar" style="left:64px;top:64px"><svg data-logo></svg><span class="w">req<i>-</i>kit</span><span class="series">1.14.0</span></div>
+    <div style="position:absolute;left:64px;top:200px;width:660px;display:flex;flex-direction:column;gap:22px">
+      <h1 style="margin:0;font:800 64px/76px var(--rk-font-sans);letter-spacing:-.02em">插件里就能做<br><span class="rk-grad">代码审查和验收</span></h1>
+      <p class="lead" style="font-size:26px;line-height:40px">AI 意见放在代码行旁边；验收按标准逐条核对，一键试用。</p>
+    </div>
+  </div>
+</div>
+<script>
+// Fit each fixed-size artboard into the window.
+const fit = () => {
+  for (const f of document.querySelectorAll(".frame")) {
+    const w = +f.dataset.w, h = +f.dataset.h;
+    const max = Math.min(window.innerWidth - 32, f.dataset.w === "1080" ? 460 : 720);
+    const s = max / w;
+    f.style.width = `${w * s}px`; f.style.height = `${h * s}px`;
+    f.firstElementChild.style.transform = `scale(${s})`;
+  }
+};
+addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>

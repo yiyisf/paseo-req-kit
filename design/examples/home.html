@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>req-kit 首页</title>
+<!--
+  req-kit golden example: 文档站首页
+  Demonstrates: brand.md 标志性元素 1-6；docs-site.md 首页结构（Hero、步骤轨、Bento 能力区、数字条、更新）
+  Numbers are as of 1.14.0 and must be updated with each release.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700;800&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+<style>
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px))}
+.nav{display:flex;align-items:center;gap:20px;min-height:64px;flex-wrap:wrap}
+.nav a:not(.rk-btn){color:var(--rk-text-secondary);text-decoration:none;font-size:13px}
+.nav a:not(.rk-btn):hover{color:var(--rk-text-primary)}
+.hero{display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;padding-block:72px 64px}
+.hero h1{margin:0;font-size:56px;line-height:64px;font-weight:800;letter-spacing:-.02em;text-wrap:balance;max-width:880px}
+.hero p{margin:0;font-size:16px;line-height:28px;color:var(--rk-text-secondary);max-width:640px}
+.flow{padding-block:8px 24px}
+.flow .rk-track li{min-width:110px}
+.flow .rk-track li::before{background:var(--rk-border-default)!important}
+.blk{display:flex;flex-direction:column;gap:32px;padding-block:72px 0}
+.shot{border-radius:var(--rk-radius-lg);background:var(--rk-surface-1);border:1px solid var(--rk-border-default);padding:14px;display:flex;flex-direction:column;gap:10px;font-size:13px;line-height:21px}
+.bub{max-width:88%;padding:8px 12px;border-radius:12px;background:var(--rk-surface-3)}
+.bub--me{align-self:flex-end;background:var(--rk-brand-tint);color:var(--rk-text-primary)}
+.opt{display:flex;gap:6px;flex-wrap:wrap}
+.notice{font:12.5px/20px var(--rk-font-mono);color:var(--rk-text-secondary);background:var(--rk-surface-1);border:1px solid var(--rk-border-default);border-radius:var(--rk-radius-md);padding:12px 14px;white-space:pre-wrap}
+.foot{display:flex;gap:24px;flex-wrap:wrap;padding-block:56px 48px;color:var(--rk-text-muted);font-size:13px;border-top:1px solid var(--rk-border-subtle);margin-top:96px}
+.foot a:not(.rk-btn){color:var(--rk-text-secondary);text-decoration:none}
+@media (max-width:720px){.hero h1{font-size:36px;line-height:44px}.hero{padding-block:40px 40px}.nav .hide-sm{display:none}}
+</style>
+</head>
+<body>
+<div class="rk-aurora">
+  <div class="wrap">
+    <nav class="nav">
+      <span class="rk-brand"><svg data-logo></svg><span>req<i>-</i>kit</span></span>
+      <span class="rk-version"><b>1.14.0</b>最新</span>
+      <a class="hide-sm" href="#">快速开始</a><a class="hide-sm" href="#">使用者指南</a><a class="hide-sm" href="#">配置参考</a><a class="hide-sm" href="#">更新记录</a>
+      <span class="rk-top__spacer"></span>
+      <a href="#">GitHub</a>
+    </nav>
+    <header class="hero">
+      <span class="rk-chip"><svg class="ic ic-sm" data-i="workflow"></svg>在 Paseo 里，从对话到验收</span>
+      <h1>一句需求，到<span class="rk-grad">可验收的功能</span></h1>
+      <p>用对话把需求谈清楚；一组 AI agent 在后台完成方案、实现、评审和验证；每个要拍板的地方都停下来等你。</p>
+      <div class="rk-term">
+        <div class="rk-term__tabs"><span class="is-on">npm</span><span>公司镜像</span></div>
+        <div class="rk-term__body"><i>$</i><code>npx -y paseo-req-kit@latest install</code><button class="rk-btn rk-btn--ghost rk-btn--sm" type="button" title="复制命令" aria-label="复制命令"><svg class="ic" data-i="copy"></svg></button></div>
+      </div>
+      <div class="rk-row" style="justify-content:center"><a class="rk-btn rk-btn--primary rk-btn--lg rk-btn--cta" href="#">快速开始<svg class="ic" data-i="arrow-right"></svg></a><a class="rk-btn rk-btn--lg" href="#">req-kit 是什么</a></div>
+      <span class="rk-cap">1.14.0 · 2026-10-25 发布 · 只需要 npm 源，内网可用</span>
+    </header>
+  </div>
+</div>
+
+<div class="wrap">
+  <section class="flow" aria-label="一个需求怎么走">
+    <ol class="rk-track">
+      <li class="is-needs"><span class="rk-track__dot"><svg class="ic ic-sm" data-i="messages-square"></svg></span><b>对齐</b><span>你和 AI 对话</span></li>
+      <li><span class="rk-track__dot" style="color:var(--rk-ai)"><svg class="ic ic-sm" data-i="pen-tool"></svg></span><b>方案</b><span>AI 写，你确认</span></li>
+      <li><span class="rk-track__dot" style="color:var(--rk-ai)"><svg class="ic ic-sm" data-i="file-code"></svg></span><b>实现</b><span>AI，质量门把关</span></li>
+      <li><span class="rk-track__dot" style="color:var(--rk-ai)"><svg class="ic ic-sm" data-i="sparkles"></svg></span><b>评审</b><span>另一个模型</span></li>
+      <li><span class="rk-track__dot" style="color:var(--rk-ai)"><svg class="ic ic-sm" data-i="shield-check"></svg></span><b>验证</b><span>按验收标准</span></li>
+      <li class="is-needs"><span class="rk-track__dot"><svg class="ic ic-sm" data-i="clipboard-check"></svg></span><b>验收</b><span>你逐条核对</span></li>
+    </ol>
+  </section>
+
+  <section class="blk">
+    <div class="rk-section">
+      <span class="rk-eyebrow">Built for people who own the requirement</span>
+      <h2>每一步都有人把关</h2>
+      <p>测试、产品、项目经理不用写代码，也能把需求做到可验收：AI 做的事看得见，要你决定的事一目了然。</p>
+    </div>
+    <div class="rk-bento">
+      <article class="rk-card rk-span-8">
+        <span class="rk-card__label"><svg class="ic ic-sm" data-i="messages-square"></svg>对齐需求</span>
+        <h3>一次一个问题，带选项和推荐</h3>
+        <p>异常情况、权限、测试数据都会问到；确认前另一个模型独立审阅需求说明。</p>
+        <div class="shot">
+          <div class="bub">没有数据时，导出按钮怎么处理？<div class="opt" style="margin-top:6px"><span class="rk-chip">A 按钮置灰（推荐）</span><span class="rk-chip">B 导出空表</span><span class="rk-chip">C 隐藏按钮</span></div></div>
+          <div class="bub bub--me">A，置灰，鼠标放上去说明原因</div>
+        </div>
+      </article>
+      <article class="rk-card rk-span-4">
+        <span class="rk-card__label"><svg class="ic ic-sm" data-i="pen-tool"></svg>审查原型</span>
+        <h3>在原型上点一点就能提意见</h3>
+        <p>点要改的地方，选"大一点、换颜色、删掉"，用自己的话补一句，自动整理成修改清单。</p>
+        <div class="rk-dots" style="border-radius:var(--rk-radius-lg);border:1px solid var(--rk-border-default);padding:28px 20px;display:grid;place-items:center;margin-top:auto">
+          <span class="rk-pick" style="position:relative;padding:6px 14px;border-radius:6px;background:var(--rk-surface-3);font-size:13px;font-weight:600">导出 Excel<span class="rk-pin" style="top:-14px;right:-14px">1</span></span>
+        </div>
+      </article>
+      <article class="rk-card rk-span-4">
+        <span class="rk-card__label rk-card__label--data"><svg class="ic ic-sm" data-i="shield-check"></svg>质量门</span>
+        <h3>检查由程序来跑</h3>
+        <p>lint、测试、构建在改动前后各跑一次，只拦新出现的失败，发回给写代码的 agent 修。</p>
+      </article>
+      <article class="rk-card rk-span-4">
+        <span class="rk-card__label rk-card__label--ai"><svg class="ic ic-sm" data-i="git-pull-request"></svg>代码审查</span>
+        <h3>AI 意见放在对应的行旁边</h3>
+        <p>评审人标"要改 / 不用改"、写自己的意见；退回后流水线按意见修改，再评审、再验证。</p>
+      </article>
+      <article class="rk-card rk-span-4">
+        <span class="rk-card__label"><svg class="ic ic-sm" data-i="clipboard-check"></svg>验收清单</span>
+        <h3>逐条核对，一键试用</h3>
+        <p>每条写着怎么操作、应该看到什么；在需求自己的工作区里把它跑起来再验。</p>
+      </article>
+      <article class="rk-card rk-span-12">
+        <div class="rk-row" style="justify-content:space-between"><span class="rk-card__label" style="background:var(--rk-failed-tint);color:var(--rk-status-failed)"><svg class="ic ic-sm" data-i="octagon-alert"></svg>边界清楚</span><span class="rk-cap">1.14 起默认打开</span></div>
+        <h3>推送、发布、连生产，都会被拦下来告诉你</h3>
+        <p>流水线只做本地提交；agent 推送代码、发布制品、改集群、连其他机器的数据库时立即打断，并在对话里通知你。每个改代码的步骤之后扫描密钥，有疑似密钥的分支不会推送。</p>
+        <div class="notice">【需求开发流水线通知】「实现」步骤里，agent 开始运行一条不允许的命令（推送到远程仓库），流水线已经打断了它：
+git push origin HEAD:main</div>
+      </article>
+    </div>
+  </section>
+
+  <section class="blk">
+    <div class="rk-bento">
+      <div class="rk-stat rk-span-3"><b>39</b><strong>次发布</strong><span>8 个正式版，其余是 beta；每版有升级须知</span></div>
+      <div class="rk-stat rk-span-3"><b>239</b><strong>项自动化测试</strong><span>Linux 和 Windows 都通过才发布</span></div>
+      <div class="rk-stat rk-span-3"><b>33</b><strong>份设计决定记录</strong><span>每个关键取舍都写明原因</span></div>
+      <div class="rk-stat rk-span-3"><b>5</b><strong>种需求类型</strong><span>新需求、小改动、缺陷、重构、评估</span></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span class="rk-brand" style="font-size:14px"><svg data-logo style="width:18px;height:18px"></svg><span>req<i>-</i>kit</span></span>
+    <a href="#">更新记录</a><a href="#">配置参考</a><a href="#">GitHub</a><a href="#">设计系统</a>
+    <span class="rk-top__spacer"></span><span>和 CMASTER 同属 Bento Launchpad 设计家族</span>
+  </footer>
+</div>
+</body>
+</html>

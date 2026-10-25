@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paseo 插件 · 需求</title>
+<!--
+  req-kit golden example: Paseo 插件（需求总览 + 需求详情）
+  Demonstrates: plugin.md 取色（底色、文字、描边来自 Paseo 主题，这里用相近的中性色代替）；页头字标；等宽分组标题；
+  "等你处理"卡片一项一个青柠按钮；步骤轨；状态 = 颜色 + 图标 + 词
+  The outer frame (Paseo's sidebar) is a stand-in: Paseo draws it, not the plugin.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="../reference/tokens.css">
+<link rel="stylesheet" href="../reference/components.css">
+<script src="icons.js"></script>
+<style>
+/* Paseo's own colours stand in here as the shared neutrals */
+.paseo{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
+.paseo__nav{background:var(--rk-surface-0);border-right:1px solid var(--rk-border-default);padding:16px 12px;display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--rk-text-secondary)}
+.paseo__nav b{font-size:14px;color:var(--rk-text-primary);padding:4px 8px 12px}
+.paseo__nav span{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px}
+.paseo__nav span.on{background:var(--rk-surface-3);color:var(--rk-text-primary)}
+.paseo__note{margin-top:auto;font-size:11px;line-height:16px;color:var(--rk-text-muted);padding:8px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:24px;padding:20px 24px 40px;align-items:start}
+.pg__col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.ph{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.ph .rk-brand svg{width:20px;height:20px}
+.ph h2{margin:0;font-size:18px;line-height:26px;font-weight:600}
+.grp{display:flex;align-items:center;gap:8px}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--rk-radius-lg);background:var(--rk-surface-1);border:1px solid var(--rk-border-default);min-width:0}
+.row__txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.row__txt b{font-size:14px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row__txt span{font:12px/16px var(--rk-font-mono);color:var(--rk-text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row__time{font:12px/1 var(--rk-font-mono);color:var(--rk-text-muted);white-space:nowrap}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 16px;font-size:13px}
+.kv dt{color:var(--rk-text-muted)}.kv dd{margin:0;min-width:0}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.bar{height:6px;border-radius:3px;background:var(--rk-surface-3);overflow:hidden}
+.bar i{display:block;height:6px;background:var(--rk-data)}
+@media (max-width:1100px){.pg{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:720px){.paseo{grid-template-columns:minmax(0,1fr)}.paseo__nav{display:none}.pg{padding:16px 12px 32px}.rk-attn .rk-btn{flex:1 1 100%}}
+</style>
+</head>
+<body>
+<div class="paseo">
+  <nav class="paseo__nav" aria-label="Paseo">
+    <b>Paseo</b>
+    <span><svg class="ic" data-i="messages-square"></svg>对话</span>
+    <span class="on"><svg class="ic" data-i="list-checks"></svg>需求（req-kit）</span>
+    <span><svg class="ic" data-i="chart-column"></svg>使用统计</span>
+    <span><svg class="ic" data-i="folder"></svg>工作区</span>
+    <p class="paseo__note">左侧导航由 Paseo 绘制，这里只是示意；插件区域的底色、文字和描边跟随 Paseo 的主题。</p>
+  </nav>
+
+  <div class="pg">
+    <section class="pg__col" aria-label="需求总览">
+      <div class="ph"><span class="rk-brand"><svg data-logo></svg><span>req<i>-</i>kit</span></span><h2>需求</h2><span class="rk-top__spacer"></span><button class="rk-btn rk-btn--sm" type="button"><svg class="ic" data-i="search"></svg>搜索</button></div>
+
+      <div class="grp"><span class="rk-eyebrow">Needs you · 2</span></div>
+      <div class="rk-attn">
+        <span class="rk-attn__ic"><svg class="ic ic-lg" data-i="git-pull-request"></svg></span>
+        <div class="rk-attn__txt"><b>订单导出：请做代码审查</b><span>研发完成，AI 评审 2 轮、可以合并；审核人 @zhang</span></div>
+        <button class="rk-btn rk-btn--primary" type="button">代码审查</button>
+      </div>
+      <div class="rk-attn">
+        <span class="rk-attn__ic"><svg class="ic ic-lg" data-i="pen-tool"></svg></span>
+        <div class="rk-attn__txt"><b>短信验证码登录：方案等你确认</b><span>方案和原型已写好，审核通过；确认后开始写代码</span></div>
+        <button class="rk-btn rk-btn--primary" type="button">审查原型并确认方案</button>
+      </div>
+
+      <div class="grp"><span class="rk-eyebrow rk-eyebrow--muted">In progress · 3</span></div>
+      <div class="row"><svg class="ic" data-i="loader-circle" style="color:var(--rk-status-running)"></svg><div class="row__txt"><b>发票抬头可以修改</b><span>shop · 20261023-invoice-title</span></div><span class="rk-badge rk-badge--running"><span class="rk-spin"></span>实现中</span><span class="row__time">12 分钟前</span></div>
+      <div class="row"><svg class="ic" data-i="messages-square" style="color:var(--rk-text-muted)"></svg><div class="row__txt"><b>退款原因下拉补两项</b><span>shop · 20261025-refund-reason</span></div><span class="rk-badge rk-badge--muted">对齐中</span><span class="row__time">1 小时前</span></div>
+      <div class="row"><svg class="ic" data-i="clipboard-check" style="color:var(--rk-status-warning)"></svg><div class="row__txt"><b>库存预警阈值按仓库设置</b><span>wms · 20261020-stock-alert</span></div><span class="rk-badge rk-badge--warning">待验收</span><span class="row__time">昨天</span></div>
+
+      <div class="grp"><span class="rk-eyebrow rk-eyebrow--muted">Done · 12</span><span class="rk-cap">本月</span></div>
+      <div class="row"><svg class="ic" data-i="circle-check" style="color:var(--rk-status-success)"></svg><div class="row__txt"><b>会员等级名称可配置</b><span>crm · 20261018-member-level</span></div><span class="rk-badge rk-badge--success">已合并</span><span class="row__time">10-22</span></div>
+    </section>
+
+    <section class="pg__col" aria-label="需求详情">
+      <div class="rk-card">
+        <div class="rk-row" style="justify-content:space-between"><span class="rk-eyebrow">Requirement</span><span class="rk-code">feature/20261024-export</span></div>
+        <h3>订单导出</h3>
+        <ol class="rk-track" aria-label="进度">
+          <li class="is-done"><span class="rk-track__dot"><svg class="ic ic-sm" data-i="check"></svg></span><b>对齐</b><span>你</span></li>
+          <li class="is-done"><span class="rk-track__dot"><svg class="ic ic-sm" data-i="check"></svg></span><b>方案</b><span>AI · 你确认</span></li>
+          <li class="is-done"><span class="rk-track__dot"><svg class="ic ic-sm" data-i="check"></svg></span><b>实现</b><span>AI</span></li>
+          <li class="is-needs"><span class="rk-track__dot">4</span><b>代码审查</b><span>等你</span></li>
+          <li><span class="rk-track__dot">5</span><b>验证</b><span>AI</span></li>
+          <li><span class="rk-track__dot">6</span><b>验收</b><span>需求方</span></li>
+        </ol>
+        <dl class="kv">
+          <dt>现在</dt><dd>研发完成，等开发同事做代码审查</dd>
+          <dt>质量门</dt><dd><span class="rk-badge rk-badge--success"><svg class="ic" data-i="shield-check"></svg>通过</span> lint、类型检查、测试、构建，运行 4 项</dd>
+          <dt>AI 评审</dt><dd><span class="rk-badge rk-badge--ai"><svg class="ic" data-i="sparkles"></svg>可以合并</span> 2 轮，修复 2 条，还开着 1 条建议</dd>
+          <dt>用量</dt><dd>2.4 小时 · 186 万 tokens（其中返工 18%）</dd>
+        </dl>
+        <div class="acts"><button class="rk-btn rk-btn--primary" type="button"><svg class="ic" data-i="git-pull-request"></svg>代码审查</button><button class="rk-btn" type="button"><svg class="ic" data-i="clipboard-check"></svg>验收清单（可一键试用）</button><button class="rk-btn rk-btn--ghost" type="button"><svg class="ic" data-i="file-text"></svg>需求说明</button></div>
+      </div>
+      <div class="rk-card rk-card--sm">
+        <span class="rk-eyebrow rk-eyebrow--muted">Tokens by step</span>
+        <div class="rk-col" style="gap:10px">
+          <div><div class="rk-row" style="justify-content:space-between;font-size:13px"><span>实现</span><span class="rk-cap">82 万 · 44%</span></div><div class="bar"><i style="width:44%"></i></div></div>
+          <div><div class="rk-row" style="justify-content:space-between;font-size:13px"><span>代码评审</span><span class="rk-cap">39 万 · 21%</span></div><div class="bar"><i style="width:21%"></i></div></div>
+          <div><div class="rk-row" style="justify-content:space-between;font-size:13px"><span>方案设计</span><span class="rk-cap">28 万 · 15%</span></div><div class="bar"><i style="width:15%"></i></div></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>
