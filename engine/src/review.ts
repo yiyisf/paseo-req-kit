@@ -21,6 +21,8 @@ import { appendEvent, readIndex, requirementRef } from "./records.js";
 import { readState, statePath } from "./state.js";
 
 const ASSETS = path.join(ENGINE_DIR, "src", "review-assets");
+/** 1.15: the design system's tokens, component styles and icons, shared by the three pages (copies made by scripts/tokens-build.mjs). */
+const SHARED_ASSETS = new Set(["rk-tokens.css", "rk.css", "rk-icons.js"]);
 const DEFAULT_PORT = 6781;
 const IDLE_EXIT_MS = 4 * 60 * 60_000;
 const MAX_BODY = 2_000_000;
@@ -251,7 +253,7 @@ function appCsp(): string {
   const local = !host || host === "127.0.0.1" || host === "localhost" || host === "::1";
   const custom = process.env.REQ_KIT_REVIEW_FRAME_ANCESTORS?.trim();
   // 'self' always: the page shows the prototype in a frame of its own.
-  const ancestors = custom ? (custom.includes("'self'") || custom === "*" ? custom : `'self' ${custom}`) : local ? "'self' http://127.0.0.1:* http://localhost:* http://[::1]:*" : "*";
+  const ancestors = custom ? (custom.includes("'self'") || custom === "*" ? custom : `'self' ${custom}`) : local ? "'self' http://127.0.0.1:* http://localhost:*" : "*";
   return `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors ${ancestors}`;
 }
 const APP_CSP = appCsp();
@@ -369,7 +371,7 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
     }
     if (rest.startsWith("code/")) return handleCodeReview(req, res, rest.slice("code/".length), entry, featureAbs, full);
     if (rest === "") return sendFile(res, path.join(ASSETS, "app.html"));
-    if (rest === "app.js" || rest === "app.css") return sendFile(res, path.join(ASSETS, rest));
+    if (rest === "app.js" || rest === "app.css" || SHARED_ASSETS.has(rest)) return sendFile(res, path.join(ASSETS, rest));
     if (rest.startsWith("proto/cur/")) return sendFile(res, inside(prototypeDir, rest.slice("proto/cur/".length)), PROTOTYPE_CSP);
     if (rest.startsWith("proto/v/")) {
       const [hash, ...file] = rest.slice("proto/v/".length).split("/");
@@ -441,7 +443,7 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
   async function handleCodeReview(req: http.IncomingMessage, res: http.ServerResponse, rest: string, entry: { repo: string; featureDir: string }, featureAbs: string, full: boolean) {
     const draftFile = path.join(featureAbs, ".pipeline", "code-review", "draft.json");
     if (rest === "") return sendFile(res, path.join(ASSETS, "code.html"));
-    if (rest === "code.js" || rest === "code.css") return sendFile(res, path.join(ASSETS, rest));
+    if (rest === "code.js" || rest === "code.css" || SHARED_ASSETS.has(rest)) return sendFile(res, path.join(ASSETS, rest));
     if (rest === "api/info" && req.method === "GET") {
       let draft: unknown = null;
       try {
@@ -498,7 +500,7 @@ export function createReviewServer(opts: ReviewServerOptions): http.Server {
   async function handleChecklist(req: http.IncomingMessage, res: http.ServerResponse, rest: string, entry: { repo: string; featureDir: string; key: string; project: string }, featureAbs: string, full: boolean) {
     const checkDir = path.join(featureAbs, ".pipeline", "check");
     if (rest === "") return sendFile(res, path.join(ASSETS, "check.html"));
-    if (rest === "check.js" || rest === "check.css") return sendFile(res, path.join(ASSETS, rest));
+    if (rest === "check.js" || rest === "check.css" || SHARED_ASSETS.has(rest)) return sendFile(res, path.join(ASSETS, rest));
     if (rest === "api/info" && req.method === "GET") {
       const state = readState(statePath(entry.repo, entry.featureDir));
       let draft: unknown = { answers: [], reviewer: "" };

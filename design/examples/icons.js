@@ -1,5 +1,5 @@
 // Lucide icons (stroke 1.75 via the .ic class) used by the req-kit examples: <svg class="ic" data-i="sparkles"></svg>.
-// Inline so the examples open offline; product code uses the Lucide package itself.
+// Inline so the pages open offline (the review pages load a copy as rk-icons.js; see scripts/tokens-build.mjs).
 (() => {
   const I = {
     check: '<path d="M20 6 9 17l-5-5"/>',
@@ -41,6 +41,9 @@
     "list-checks": '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
     "mouse-pointer-click": '<path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/><path d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"/>',
     history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    "trash-2": '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+    moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+    "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   };
   // The req-kit mark: <svg data-logo></svg> (brand-edge: lime on dark grounds, the deeper lime on light ones; the hollow nodes take --rk-canvas or the element's --ground).
@@ -59,6 +62,36 @@
       el.innerHTML = p;
     }
   };
+  // For pages that build their DOM in script: RkIcon("sparkles", "ic ic-sm") returns an <svg>.
+  window.RkIcon = (name, cls) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", cls || "ic");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.innerHTML = I[name] || "";
+    return svg;
+  };
+  window.RkFill = fill;
+  // A button with data-rk-theme switches between dark and light and remembers the choice.
+  const KEY = "rk-theme";
+  try {
+    const saved = localStorage.getItem(KEY);
+    if (saved === "dark" || saved === "light") document.documentElement.dataset.theme = saved;
+  } catch {
+    /* no storage: follow the system */
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("[data-rk-theme]");
+    if (!b) return;
+    const r = document.documentElement;
+    const dark = r.dataset.theme ? r.dataset.theme === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+    r.dataset.theme = dark ? "light" : "dark";
+    try {
+      localStorage.setItem(KEY, r.dataset.theme);
+    } catch {
+      /* not remembered */
+    }
+  });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fill);
   else fill();
 })();

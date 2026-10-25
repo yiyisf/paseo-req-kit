@@ -2,6 +2,7 @@
    Every value is a --rk-* token from design/reference/tokens.css. This is the spec for the review pages,
    the docs theme and the examples in design/examples/. Load tokens.css first. Fonts: pages that may reach
    Google Fonts load Geist / Geist Mono / Noto Sans SC; otherwise the font stacks fall back to system faces. */
+[hidden]{display:none!important}
 body{margin:0;background:var(--rk-canvas);color:var(--rk-text-primary);font-family:var(--rk-font-sans);font-size:14px;line-height:22px;-webkit-font-smoothing:antialiased}
 .rk-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--rk-space-3)}
 .rk-col{display:flex;flex-direction:column;gap:var(--rk-space-3)}
@@ -227,6 +228,19 @@ textarea.rk-input{height:auto;padding:8px var(--rk-space-3);line-height:22px;res
 .rk-attn__txt{flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:2px}
 .rk-attn__txt b{font-size:15px;line-height:22px}
 .rk-attn__txt span{font-size:13px;color:var(--rk-text-secondary)}
+
+/* Diff behaviour (review page script) */
+.rk-diff.folded .rk-diff__body{display:none}
+.rk-diff.folded .rk-diff__head{border-bottom:0}
+.rk-diff__head>.ic:first-child{transition:transform .12s}
+.rk-diff.folded .rk-diff__head>.ic:first-child{transform:rotate(-90deg)}
+.rk-diff__head[role="button"]{cursor:pointer}
+.rk-diff tr.line{cursor:pointer}
+.rk-diff tr.line:hover td{box-shadow:inset 0 1px 0 var(--rk-border-strong),inset 0 -1px 0 var(--rk-border-strong)}
+.rk-flash,.rk-flash td{background:var(--rk-brand-tint)!important}
+
+/* Toast */
+.rk-toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:var(--rk-z-popover);max-width:min(640px,calc(100vw - 32px));box-sizing:border-box;display:flex;align-items:flex-start;gap:var(--rk-space-3);padding:12px var(--rk-space-4);border-radius:var(--rk-radius-lg);background:var(--rk-surface-2);border:1px solid var(--rk-border-default);box-shadow:var(--rk-shadow-float);font-size:14px;line-height:22px;white-space:pre-line}
 
 /* Empty state */
 .rk-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--rk-space-3);padding:var(--rk-space-12) var(--rk-space-6)}

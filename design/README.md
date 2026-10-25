@@ -32,4 +32,5 @@
 
 ## 当前状态
 
-1.15 之前，这里是规范和效果图；三个审查网页、插件、文档站还是旧样式。按规范改造在 1.15 的 beta 里分步做：先审查网页，再插件，再文档站。
+- 1.15.0-beta.1 起，三个审查网页（`engine/src/review-assets/`）按这里的规范实现。它们随 npm 包发布，包里不带 `design/`，所以用的是 `scripts/tokens-build.mjs` 复制过去的 `rk-tokens.css`、`rk.css`、`rk-icons.js`；改了这里的 `tokens.json`、`reference/components.css` 或 `examples/icons.js`，要运行一次这个脚本，`engine/test/design.test.ts` 会检查。
+- Paseo 插件和文档站还是旧样式，在后面的 beta 里改。

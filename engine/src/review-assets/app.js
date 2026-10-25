@@ -169,15 +169,15 @@
     const style = d.createElement("style");
     style.id = "rk-style";
     style.textContent = `
-      .rk-hover { outline: 2px solid #2457d6 !important; outline-offset: 2px !important; cursor: pointer !important; }
-      .rk-region { outline: 2px dashed #d97706 !important; outline-offset: 4px !important; }
+      .rk-hover { outline: 2px solid #65a30d !important; outline-offset: 2px !important; cursor: pointer !important; }
+      .rk-region { outline: 2px dashed #6366f1 !important; outline-offset: 4px !important; }
       .rk-changed { outline: 2px solid #10b981 !important; outline-offset: 2px !important; box-shadow: inset 0 0 0 9999px rgba(16,185,129,.10) !important; }
       .rk-edited { box-shadow: inset 0 0 0 9999px rgba(250,204,21,.35) !important; }
-      .rk-flash { outline: 3px solid #e11d48 !important; outline-offset: 3px !important; }
+      .rk-flash { outline: 3px solid #a8e01f !important; outline-offset: 3px !important; box-shadow: 0 0 0 9999px rgba(168,224,31,.12) !important; }
       #rk-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 2147483646; }
-      #rk-layer > * { position: absolute; font: 700 12px/22px system-ui, sans-serif; border-radius: 999px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
-      .rk-badge { background: #d97706; color: #111; padding: 0 7px; pointer-events: none; white-space: nowrap; }
-      .rk-pin { background: #e11d48; color: #fff; min-width: 22px; height: 22px; padding: 0 5px; cursor: pointer; }
+      #rk-layer > * { position: absolute; font: 700 12px/22px ui-monospace, Consolas, monospace; border-radius: 999px; text-align: center; box-shadow: 0 0 0 2px #05070d, 0 4px 12px rgba(0,0,0,.35); }
+      .rk-badge { background: #4f46e5; color: #fff; padding: 0 7px; pointer-events: none; white-space: nowrap; }
+      .rk-pin { background: #a8e01f; color: #0f1a02; min-width: 22px; height: 22px; padding: 0 5px; cursor: pointer; }
       [contenteditable="true"] { outline: 2px solid #f59e0b !important; background: #fffbe6 !important; color: #111 !important; }
     `;
     d.head.appendChild(style);
@@ -854,6 +854,10 @@
       approve.disabled = true;
     }
     approve.hidden = !info.waitingForApproval;
+    // 1.15: one lime button, the next step: send the notes when there are any, else confirm the design.
+    const notesFirst = hasAny || !info.waitingForApproval;
+    changes.className = notesFirst ? "rk-btn rk-btn--primary" : "rk-btn";
+    approve.className = notesFirst ? "rk-btn" : "rk-btn rk-btn--primary";
   }
 
   async function submit(action) {
@@ -906,7 +910,7 @@
     const pill = $("status");
     pill.hidden = false;
     pill.textContent = label;
-    pill.className = waiting ? "pill wait" : "pill";
+    pill.className = waiting ? "rk-badge rk-badge--needs" : "rk-badge rk-badge--muted";
     $("diffWrap").hidden = !view.info.versions.previous;
     renderActions();
   }

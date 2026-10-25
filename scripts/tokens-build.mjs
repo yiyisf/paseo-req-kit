@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Builds design/reference/tokens.css (the --rk-* variables) from design/tokens.json.
-// `node scripts/tokens-build.mjs --check` fails when the committed file is out of date.
+// Also copies tokens.css, components.css and icons.js into engine/src/review-assets for the review pages.
+// `node scripts/tokens-build.mjs --check` fails when any output is out of date.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -56,14 +57,25 @@ ${block("light")}
 }
 `;
 
+// The review pages ship inside the npm package (engine/src/review-assets), which does not carry
+// design/: they get copies of the tokens, the component styles and the icons.
+const assets = path.join(root, "engine", "src", "review-assets");
+const banner = (from) => `/* Copied from ${from} by scripts/tokens-build.mjs. Do not edit here. */\n`;
+const outputs = [
+  [out, css],
+  [path.join(assets, "rk-tokens.css"), css],
+  [path.join(assets, "rk.css"), banner("design/reference/components.css") + fs.readFileSync(path.join(root, "design", "reference", "components.css"), "utf8")],
+  [path.join(assets, "rk-icons.js"), banner("design/examples/icons.js") + fs.readFileSync(path.join(root, "design", "examples", "icons.js"), "utf8")],
+];
+
 if (process.argv.includes("--check")) {
-  const now = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : "";
-  if (now !== css) {
-    console.error("design/reference/tokens.css is out of date: run node scripts/tokens-build.mjs");
+  const stale = outputs.filter(([file, text]) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "") !== text).map(([file]) => path.relative(root, file));
+  if (stale.length) {
+    console.error(`out of date: ${stale.join(", ")}; run node scripts/tokens-build.mjs`);
     process.exit(1);
   }
-  console.log("tokens.css is up to date");
+  console.log("tokens and copies are up to date");
 } else {
-  fs.writeFileSync(out, css);
-  console.log(`wrote ${path.relative(root, out)}`);
+  for (const [file, text] of outputs) fs.writeFileSync(file, text);
+  console.log(`wrote ${outputs.map(([file]) => path.relative(root, file)).join(", ")}`);
 }

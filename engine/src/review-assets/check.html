@@ -2,34 +2,60 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>验收清单</title>
+<link rel="stylesheet" href="rk-tokens.css">
+<link rel="stylesheet" href="rk.css">
 <link rel="stylesheet" href="check.css">
+<script src="rk-icons.js"></script>
 </head>
 <body>
-<header class="top">
-  <div>
-    <div class="eyebrow" id="project"></div>
-    <h1 id="title">验收清单</h1>
-    <div class="muted" id="sub"></div>
-  </div>
-  <div class="top-actions">
-    <button id="try" class="btn">把它跑起来试用</button>
-    <button id="try-stop" class="btn" hidden>停止试用</button>
-  </div>
+<header class="rk-top">
+  <span class="rk-brand"><svg data-logo style="--ground:var(--rk-surface-0)"></svg><span>req<i>-</i>kit</span></span>
+  <span class="rk-top__sep rk-top__hide-sm"></span>
+  <span class="rk-top__title" id="title">验收清单</span>
+  <span class="rk-code" id="project" hidden></span>
+  <span class="rk-top__spacer"></span>
+  <span class="rk-cap rk-top__hide-sm" id="saved"></span>
+  <span class="rk-badge rk-badge--outline" id="readonly" hidden><svg class="ic" data-i="lock"></svg>只读</span>
+  <button class="rk-btn rk-btn--ghost rk-btn--sm" type="button" data-rk-theme title="切换深浅色" aria-label="切换深浅色"><svg class="ic" data-i="sun"></svg></button>
 </header>
-<main>
-  <section id="try-box" class="card" hidden></section>
-  <section id="notes" class="card notes" hidden></section>
-  <p class="muted intro">一条一条看：照着"前置条件"准备，按"操作"去做，看到的和"预期结果"一样就点<b>通过</b>；不一样点<b>不对</b>，写下看到了什么。流水线没验证或没通过的排在最前面。进度会自动保存。</p>
-  <ol id="items" class="items"></ol>
-</main>
-<footer class="bar">
-  <div class="summary" id="summary"></div>
-  <label class="reviewer">验收人 <input id="reviewer" placeholder="你的名字（可不填）" maxlength="60"></label>
-  <button id="submit" class="btn primary" disabled>提交验收结果</button>
+
+<div class="rk-layout">
+  <nav class="rk-side" id="nav" aria-label="验收项"></nav>
+  <main class="rk-main" id="main">
+    <div class="rk-head">
+      <span class="rk-eyebrow">Acceptance</span>
+      <h1>按验收标准逐条核对，再提交验收</h1>
+      <p id="sub"></p>
+      <p class="rk-cap">照着"前置条件"准备，按"操作"去做，看到的和"预期结果"一样就点"通过"；不一样点"不对"，写下看到了什么。流水线没验证或没通过的排在最前面。进度会自动保存。</p>
+    </div>
+    <section class="rk-card rk-card--sm" id="try-card">
+      <div class="rk-row" style="justify-content:space-between">
+        <span class="rk-card__label rk-card__label--data"><svg class="ic ic-sm" data-i="play"></svg>试用</span>
+        <span id="try-state"></span>
+      </div>
+      <div id="try-box"><p>在这个需求自己的工作区里把它跑起来，给出访问地址和提测说明里的测试账号、数据。</p></div>
+      <div class="rk-row">
+        <button class="rk-btn" id="try" type="button"><svg class="ic" data-i="play"></svg><span>把它跑起来试用</span></button>
+        <button class="rk-btn rk-btn--sm" id="try-stop" type="button" hidden>停止试用</button>
+      </div>
+    </section>
+    <section class="rk-callout rk-callout--note" id="notes" hidden></section>
+    <ol class="ck-items" id="items"></ol>
+  </main>
+</div>
+
+<footer class="rk-decide">
+  <div class="rk-decide__in">
+    <div class="rk-decide__sum"><b id="summary"></b><span class="rk-cap" id="summary-sub"></span></div>
+    <label class="rk-field">验收人<input class="rk-input" id="reviewer" placeholder="你的名字（可不填）" maxlength="60"></label>
+    <div class="rk-decide__acts">
+      <button class="rk-btn rk-btn--primary" id="submit" type="button" disabled><svg class="ic" data-i="clipboard-check"></svg><span>提交验收</span></button>
+    </div>
+  </div>
 </footer>
-<div id="toast" class="toast" hidden></div>
+<div class="rk-toast" id="toast" role="status" hidden></div>
 <script src="check.js"></script>
 </body>
 </html>

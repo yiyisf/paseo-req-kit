@@ -2,42 +2,57 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>代码审查</title>
+<link rel="stylesheet" href="rk-tokens.css">
+<link rel="stylesheet" href="rk.css">
 <link rel="stylesheet" href="code.css">
+<script src="rk-icons.js"></script>
 </head>
 <body>
-<header class="top">
-  <div>
-    <div class="eyebrow" id="project"></div>
-    <h1 id="title">代码审查</h1>
-    <div class="muted" id="sub"></div>
-  </div>
+<header class="rk-top">
+  <span class="rk-brand"><svg data-logo style="--ground:var(--rk-surface-0)"></svg><span>req<i>-</i>kit</span></span>
+  <span class="rk-top__sep rk-top__hide-sm"></span>
+  <span class="rk-top__title" id="title">代码审查</span>
+  <span class="rk-code" id="project" hidden></span>
+  <span class="rk-top__spacer"></span>
+  <span class="rk-cap rk-top__hide-sm" id="saved"></span>
+  <span class="rk-badge rk-badge--outline" id="readonly" hidden><svg class="ic" data-i="lock"></svg>只读</span>
+  <button class="rk-btn rk-btn--ghost rk-btn--sm" type="button" data-rk-theme title="切换深浅色" aria-label="切换深浅色"><svg class="ic" data-i="sun"></svg></button>
 </header>
-<section id="status" class="banner" hidden></section>
-<div class="layout">
-  <nav class="files" id="files" aria-label="改动的文件"></nav>
-  <main>
-    <section id="summary" class="card" hidden></section>
-    <section id="ai" class="card" hidden></section>
-    <p class="muted intro">点代码行写意见（只对这一行）；AI 的意见可以标<b>要改</b>或<b>不用改</b>。看完在下面选择<b>退回修改</b>（流水线会按意见改，改完再评审、再验证）或<b>评审通过</b>。进度会自动保存。</p>
-    <div id="diffs"></div>
-    <section class="card">
-      <h2>总体意见（可不填）</h2>
-      <textarea id="note" rows="3" placeholder="例如：整体可以，但导出接口要加权限校验"></textarea>
+
+<div class="rk-layout">
+  <nav class="rk-side" id="files" aria-label="改动的文件"></nav>
+  <main class="rk-main">
+    <div class="rk-banner" id="status" hidden></div>
+    <div class="rk-head">
+      <span class="rk-eyebrow">Code review</span>
+      <h1>看一下这次的改动，决定退回修改还是评审通过</h1>
+      <p id="sub"></p>
+      <p class="rk-cap">点代码行写意见（只对这一行）；AI 的意见可以标"要改"或"不用改"。退回后流水线会按意见修改，改完再评审、再验证。进度会自动保存。</p>
+    </div>
+    <section class="rk-card rk-card--sm" id="summary" hidden></section>
+    <section class="rk-card rk-card--sm" id="ai" hidden></section>
+    <div class="rk-col" id="diffs"></div>
+    <section class="rk-card rk-card--sm">
+      <label class="rk-field" for="note">总体意见（可不填）</label>
+      <textarea class="rk-input" id="note" rows="3" placeholder="例如：整体可以，但导出接口要加权限校验"></textarea>
     </section>
   </main>
 </div>
-<footer class="bar">
-  <div class="summary" id="count"></div>
-  <label class="field">审核人 <input id="reviewers" placeholder="@用户名，用逗号分开"></label>
-  <label class="field">评审人 <input id="reviewer" placeholder="你的名字" maxlength="60"></label>
-  <div class="actions">
-    <button id="changes" class="btn danger" disabled>退回修改</button>
-    <button id="approve" class="btn primary" disabled>评审通过</button>
+
+<footer class="rk-decide">
+  <div class="rk-decide__in">
+    <div class="rk-decide__sum"><b id="count"></b><span class="rk-cap" id="countsub"></span></div>
+    <label class="rk-field">审核人<input class="rk-input" id="reviewers" placeholder="@用户名，用逗号分开"></label>
+    <label class="rk-field">评审人<input class="rk-input" id="reviewer" placeholder="你的名字" maxlength="60"></label>
+    <div class="rk-decide__acts">
+      <button class="rk-btn rk-btn--danger-outline" id="changes" type="button" disabled><svg class="ic" data-i="undo-2"></svg><span>退回修改</span></button>
+      <button class="rk-btn rk-btn--primary" id="approve" type="button" disabled><svg class="ic" data-i="check"></svg><span>评审通过</span></button>
+    </div>
   </div>
 </footer>
-<div id="toast" class="toast" hidden></div>
+<div class="rk-toast" id="toast" role="status" hidden></div>
 <script src="code.js"></script>
 </body>
 </html>
